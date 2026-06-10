@@ -1,13 +1,14 @@
 {
 	"name": "bork",
 	"description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, and shipping across the dev cycle.",
-	"version": "2.7.0",
+	"version": "2.8.0",
 	"author": {
 		"name": "Matthew Batchelder",
 		"email": "borkweb@gmail.com"
 	},
 	"skills": [
 		"./skills/core/agents-md-lint",
+		"./skills/core/auto-scope",
 		"./skills/core/caveman",
 		"./skills/core/council",
 		"./skills/core/discernment",
