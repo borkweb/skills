@@ -58,6 +58,7 @@ Skills are organized into two buckets under `skills/`:
 - **writing-sql** — Enforces vertical SQL formatting for raw files, inline PHP, migrations, and framework query builders. No exceptions for short queries.
 - **writing-plans** — Concise writing style for plan documents. Strips filler, bans inflated adjectives, requires structured decisions.
 - **agents-md-lint** — Audits AI agent instruction files and removes facts discoverable from code.
+- **auto-scope** — Proactively scopes a coding task before implementation: names the relevant files, the areas to leave alone, and open scope questions. Tool-agnostic discovery (grepika/graphify/grep); self-skips trivial or single-file work.
 - **caveman** — Ultra-compressed response mode. Drops articles, filler, and hedging to cut tokens ~75%; intensity levels lite/full/ultra (plus wenyan variants).
 - **council** — Structured adversarial assessment with lenses, debate rounds, risk mapping, verdict.
 - **handoff** — Writes handoff documentation for picking up where you left off.

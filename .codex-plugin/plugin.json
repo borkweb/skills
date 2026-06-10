@@ -24,6 +24,7 @@
   ],
   "skills": [
     "./skills/core/agents-md-lint",
+    "./skills/core/auto-scope",
     "./skills/core/council",
     "./skills/core/handoff",
     "./skills/core/humanize",
