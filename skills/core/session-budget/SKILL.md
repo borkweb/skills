@@ -2,11 +2,12 @@
 name: session-budget
 description: >
   Assess whether compacting or clearing the current session is worth it right now,
-  then prepare a reinit-ready handoff that survives /clear. Not a threshold nag — it
-  X-rays context composition (how much is stale vs. still load-bearing), which only
-  the agent can see. Use when the user says "session budget", "should I compact",
-  "should I clear", "is this session getting heavy", "token budget", invokes
-  /session-budget, or when the budget hook requests a proactive assessment.
+  and whether a reinit-ready handoff that survives /clear would carry real value.
+  Not a threshold nag — it X-rays context composition (how much is stale vs. still
+  load-bearing), which only the agent can see. Use when the user says "session
+  budget", "should I compact", "should I clear", "is this session getting heavy",
+  "token budget", invokes /session-budget, or when the budget hook requests a
+  proactive assessment.
 allowed-tools: [Bash, Read, Write]
 ---
 
@@ -47,13 +48,35 @@ change it.
 Pick one, with one sentence of reasoning:
 
 - **NOT YET** — mostly load-bearing, or mid-thought. Stop; do not write a handoff.
-- **COMPACT + REINIT** — large and substantially stale, at a seam; work continues.
-- **CLEAR + REINIT** — next work is independent enough that even a compact carries
+- **COMPACT** — large and substantially stale, at a seam; work continues.
+- **CLEAR** — next work is independent enough that even a compact carries
   dead weight; a full reset is cleaner. CLEAR is the most destructive option, so
   hold it to a higher bar than COMPACT — only when the next work is genuinely
   disjoint from the current thread.
 
-## 3. On a REINIT verdict: write the handoff
+## 3. On COMPACT or CLEAR: is a handoff worth it?
+
+Compact/clear and the handoff are **separate decisions**. The verdict earns the
+`+ REINIT` suffix — and a staged handoff — only if it passes this gate. A handoff
+is worth staging only when it would carry **live state the next session cannot
+cheaply recover**: decisions or rationale recorded nowhere on disk, a multi-step
+plan with progress mid-flight, gotchas discovered but not written down, open
+questions or blockers.
+
+A handoff is **not** worth staging when:
+
+- The work is finished and durably recorded — merged PR, commits, plan docs. The
+  next session recovers everything from artifacts; a handoff just restates git.
+- The next work is fresh, with nothing carried over from this thread.
+- Everything it would say fits in a sentence or two. Don't stage a file for that —
+  put the sentence in your reply ("tell the next session: <X>") and stop.
+
+Litmus test: mentally draft the eight sections. If `Goal` + `Next steps` are one
+line and most of the rest would read `None.` or restate what git/disk already
+records, the handoff fails the gate. Give the verdict as plain **COMPACT** or
+**CLEAR**, say in one line why no handoff is needed, and skip section 4 entirely.
+
+## 4. On a REINIT verdict: write the handoff
 
 Compose a handoff using the eight sections from the `handoff` skill, in this order
 and with these exact headings: `# Handoff: <title>`, `## Goal`, `## Current state`,
@@ -103,22 +126,30 @@ node "/abs/path/to/mailbox.mjs" write "/tmp/handoff-1234567890.md"
 
 ## Modes
 
-**Manual** (invoked by the user or `/session-budget`): give the verdict, and on a
-REINIT verdict get an explicit go-ahead **before** writing the handoff. Then tell
-the user it is staged and they can run `/clear` (CLEAR) or `/compact` (COMPACT).
+**Manual** (invoked by the user or `/session-budget`): give the verdict, including
+whether the handoff gate passed. On a REINIT verdict get an explicit go-ahead
+**before** writing the handoff, then tell the user it is staged and they can run
+`/clear` (CLEAR) or `/compact` (COMPACT). On plain COMPACT or CLEAR, there is
+nothing to stage — give the verdict, the one-line reason no handoff is needed, and
+any carry-over sentence inline.
 
 **Proactive** (the budget hook injected a request to assess — the turn context will
 say so): run the X-ray silently. If the verdict is **NOT YET, produce no output at
-all** — stay invisible. Only on COMPACT + REINIT or CLEAR + REINIT: pre-write the
+all** — stay invisible. On COMPACT + REINIT or CLEAR + REINIT: pre-write the
 handoff immediately (no confirmation gate — the write is harmless and reversible),
 then surface a short note — the verdict, one line of why, and "handoff staged; run
-/clear (or /compact) when ready."
+/clear (or /compact) when ready." On plain COMPACT or CLEAR (gate failed): surface
+the same short note without staging anything — the verdict, one line of why, and
+that no handoff is needed.
 
 ## Guardrails
 
 - **You never run `/clear` or `/compact` yourself** — in either mode. You prepare;
   the user pulls the destructive trigger.
-- Never write a handoff on a NOT YET verdict.
+- Never write a handoff on a NOT YET verdict, or when the handoff gate fails.
+- Never stage a handoff whose sections are mostly `None.` or restate what git and
+  files on disk already record — that is noise the next session is forced to read.
+  "It can't hurt" is not a reason; a handoff must earn its load time.
 - In manual mode, never write without an explicit go-ahead. In proactive mode,
   pre-staging the handoff without confirmation is the expected behavior.
 - Do not re-read the transcript to assess; introspect what you already hold.

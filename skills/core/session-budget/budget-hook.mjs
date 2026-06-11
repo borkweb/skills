@@ -41,9 +41,10 @@ const mb = (size / 1_000_000).toFixed(1);
 const context =
   `[session-budget] This session's transcript is ~${mb} MB and context may be getting heavy. ` +
   `Run the session-budget skill in PROACTIVE mode now: assess context composition and act ONLY if the ` +
-  `verdict is COMPACT + REINIT or CLEAR + REINIT. If the verdict is NOT YET, do nothing and do not mention ` +
-  `this check. If action is warranted, pre-stage the reinit-ready handoff and tell the user it is staged so ` +
-  `they can run /clear or /compact.`;
+  `verdict is COMPACT or CLEAR. If the verdict is NOT YET, do nothing and do not mention this check. ` +
+  `If action is warranted, apply the skill's handoff-worth gate: pre-stage the reinit-ready handoff only ` +
+  `if it would carry state the next session cannot recover from disk/git; otherwise just tell the user ` +
+  `the verdict and that no handoff is needed. Either way, the user runs /clear or /compact themselves.`;
 
 process.stdout.write(`${JSON.stringify({
   hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context },
