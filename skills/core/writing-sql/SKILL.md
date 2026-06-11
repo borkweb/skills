@@ -9,6 +9,8 @@ description: >
   inline queries in PHP adapters/repositories, and any code review involving SQL.
   Enforces project SQL formatting conventions — no exceptions for short queries.
 user-invocable: false
+model: haiku
+effort: low
 ---
 
 # Writing SQL

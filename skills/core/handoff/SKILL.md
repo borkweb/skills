@@ -2,6 +2,8 @@
 name: handoff
 description: Compact the current conversation into a handoff document for another agent to pick up.
 argument-hint: "What will the next session be used for?"
+model: haiku
+effort: low
 ---
 
 Write a handoff document summarising the current conversation so a fresh agent can continue the work. Create the target path with `f=$(mktemp -t handoff) && mv "$f" "$f.md" && echo "$f.md"` so it ends in `.md` on both macOS and Linux (read the file before you write to it).

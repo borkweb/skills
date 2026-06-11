@@ -1,6 +1,8 @@
 ---
 name: agents-md-lint
 description: Audit and trim AI agent instruction files (AGENTS.md, CLAUDE.md, CONVENTIONS.md, .cursorrules, etc.) by testing which facts an AI agent can discover from code alone. Use when asked to lint, audit, optimize, prune, or trim any agent instruction file in a repository. Removes redundant documentation that wastes context tokens. Supports a dry-run mode that reports findings without modifying files.
+model: sonnet
+effort: medium
 ---
 
 # agents-md-lint
@@ -61,7 +63,7 @@ QUESTIONS:
 <numbered list of questions, one per extracted fact>
 ```
 
-Use a capable model (opus or equivalent) for reliable results.
+Use Sonnet or equivalent for reliable results without defaulting to the highest-cost model.
 
 ### 5. Score results
 

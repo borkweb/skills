@@ -2,6 +2,8 @@
 name: writing-commits
 description: "Use this skill to create git commits and write commit messages. Invoke it for ANY of these user goals: committing code changes, crafting or suggesting commit messages, describing diffs for commit purposes, or formatting commits in conventional/angular style. Common triggers: 'commit this', 'commit them', 'write a commit message', 'what should the commit message be', 'help me with the commit', or any variant where the user has finished coding and wants to record their changes in git. Also invoke when users mention pushing code and need the commit authored first, when they ask to split changes into separate commits, or when they ask to summarize what changed for a commit. Exclude: pull requests, code review, changelogs, reverting commits, git log analysis, writing docs about commit conventions."
 disable-model-invocation: true
+model: sonnet
+effort: low
 allowed-tools: [Bash, Read, Grep, Glob]
 ---
 
