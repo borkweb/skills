@@ -66,6 +66,7 @@ Skills are organized into two buckets under `skills/`:
 - **prototype** — Scaffolds a frontend prototype or a backend prototype with a disposable state machine.
 - **red-pen** — Strict editorial reviewer applying Orwell's rules and Practical Typography.
 - **review-security** — Deep security review grounded in 20 CVE-based pattern libraries (Heartbleed, Log4Shell, Next.js bypass, runc escape, xz backdoor, etc.). Callable standalone or as a reference from `/review`.
+- **session-budget** — X-rays context composition (stale vs. load-bearing), gives a compact/clear/leave-it verdict, and on greenlight writes a reinit-ready handoff to a consume-once `~/.agent-handoffs/` mailbox that the next session auto-loads after `/clear`. Node-based, portable across Claude Code and Codex; ships an optional Claude Code hook for proactive nudges. Run `node skills/core/session-budget/install.mjs` to set up the mailbox + directive + hook snippet.
 
 **`skills/gstack/`** (Collected) — workflow stack ported from gstack:
 
@@ -73,7 +74,7 @@ See [README.md](README.md) for the full list: plan-session, plan-deep-review, pl
 
 ### Available Commands (bork plugin)
 
-Skill entrypoints: commit, handoff, humanize, prototype, plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, review-security, qa, qa-only.
+Skill entrypoints: commit, handoff, humanize, prototype, session-budget, plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, review-security, qa, qa-only.
 
 Compound workflows: full-review (review → design-review → qa, with optional --security stage), preflight (fast pre-merge safety check), status (branch progress report).
 
