@@ -1,20 +1,25 @@
 #!/usr/bin/env node
+// Consume-once handoff mailbox. Usable two ways:
+//   - as a CLI:    node mailbox.mjs {write|reinit|show|consume|prune} ...
+//   - as a module: import { listFiles, field, age, tokenOf, consumeFile, prune } from './mailbox.mjs'
+// The SessionStart reinit hook imports the helpers so there is no duplicated logic.
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import {
   copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
   renameSync, rmSync, statSync,
 } from 'node:fs';
 
-const DIR = process.env.AGENT_HANDOFFS_DIR || join(homedir(), '.agent-handoffs');
+export const DIR = process.env.AGENT_HANDOFFS_DIR || join(homedir(), '.agent-handoffs');
 const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
-const hash = (cwd) => createHash('sha1').update(cwd).digest('hex').slice(0, 12);
-const tokenOf = (file) => basename(file).replace(/\.md$/, '').split('--').slice(1).join('--');
-const fileFor = (cwd, token) => join(DIR, `${hash(cwd)}--${token}.md`);
+export const hash = (cwd) => createHash('sha1').update(cwd).digest('hex').slice(0, 12);
+export const tokenOf = (file) => basename(file).replace(/\.md$/, '').split('--').slice(1).join('--');
+export const fileFor = (cwd, token) => join(DIR, `${hash(cwd)}--${token}.md`);
 
-function listFiles(cwd) {
+export function listFiles(cwd) {
   if (!existsSync(DIR)) return [];
   const prefix = `${hash(cwd)}--`;
   return readdirSync(DIR)
@@ -23,12 +28,12 @@ function listFiles(cwd) {
     .sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs); // newest first
 }
 
-function field(file, key) {
+export function field(file, key) {
   const m = readFileSync(file, 'utf8').match(new RegExp(`^${key}: (.*)$`, 'm'));
   return m ? m[1].trim() : '';
 }
 
-function age(file) {
+export function age(file) {
   const secs = (Date.now() - statSync(file).mtimeMs) / 1000;
   if (secs < 3600) return `${Math.floor(secs / 60)}m`;
   if (secs < 86400) return `${Math.floor(secs / 3600)}h`;
@@ -42,7 +47,7 @@ function genToken() {
   return `${t}-${Math.floor(Math.random() * 1e5)}`;
 }
 
-function prune() {
+export function prune() {
   if (!existsSync(DIR)) return;
   const now = Date.now();
   for (const f of readdirSync(DIR)) {
@@ -50,6 +55,10 @@ function prune() {
     const p = join(DIR, f);
     if (now - statSync(p).mtimeMs > TTL_MS) rmSync(p, { force: true });
   }
+}
+
+export function consumeFile(path) {
+  rmSync(path, { force: true });
 }
 
 function write(src, cwd) {
@@ -76,7 +85,7 @@ function show(token, cwd) {
 }
 
 function consume(token, cwd) {
-  rmSync(fileFor(cwd, token), { force: true });
+  consumeFile(fileFor(cwd, token));
 }
 
 function reinit(cwd) {
@@ -97,15 +106,18 @@ function reinit(cwd) {
   process.stdout.write(out);
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
-const cwdArg = (i) => rest[i] ?? process.cwd();
-switch (cmd) {
-  case 'write':   write(rest[0], cwdArg(1)); break;
-  case 'reinit':  reinit(cwdArg(0)); break;
-  case 'show':    show(rest[0], cwdArg(1)); break;
-  case 'consume': consume(rest[0], cwdArg(1)); break;
-  case 'prune':   prune(); break;
-  default:
-    process.stderr.write('usage: node mailbox.mjs {write|reinit|show|consume|prune} ...\n');
-    process.exit(2);
+// Run the CLI only when executed directly (node mailbox.mjs ...), not when imported.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const [cmd, ...rest] = process.argv.slice(2);
+  const cwdArg = (i) => rest[i] ?? process.cwd();
+  switch (cmd) {
+    case 'write':   write(rest[0], cwdArg(1)); break;
+    case 'reinit':  reinit(cwdArg(0)); break;
+    case 'show':    show(rest[0], cwdArg(1)); break;
+    case 'consume': consume(rest[0], cwdArg(1)); break;
+    case 'prune':   prune(); break;
+    default:
+      process.stderr.write('usage: node mailbox.mjs {write|reinit|show|consume|prune} ...\n');
+      process.exit(2);
+  }
 }

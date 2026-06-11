@@ -80,8 +80,11 @@ Validate before writing: four keys, exact names, no blank or multi-line values.
 Shorten a value rather than wrapping it, or the menu parser breaks.
 
 All mailbox file operations live in the bundled `mailbox.mjs` (Node). **Run it;
-never reimplement its logic here.** `install.mjs` printed its absolute installed
-path — use that.
+never reimplement its logic here.** You don't need to know where it is: the
+session-budget SessionStart hook injects a ready-to-use command into your context
+at session start — a line beginning `[session-budget] Handoff mailbox CLI is` that
+contains the exact `node "…/mailbox.mjs"` command. **Copy that `node "…"` fragment
+verbatim and append your subcommand** — don't rebuild the path yourself.
 
 Pick a writable temp path ending in `.md` — the helper **moves** it into the mailbox, so nothing is left behind. A cross-platform way to get one (works on Windows too, unlike `mktemp`):
 
@@ -89,10 +92,13 @@ Pick a writable temp path ending in `.md` — the helper **moves** it into the m
 node -e "const o=require('os'),p=require('path');process.stdout.write(p.join(o.tmpdir(),'handoff-'+Date.now()+'.md'))"
 ```
 
-Write the full doc to that path with the Write tool, then store it (cwd defaults to the project dir, so it is omitted):
+Write the full doc to that path with the Write tool, then store it by taking the
+injected `node "…/mailbox.mjs"` command and appending `write "<temp path>"` (cwd
+defaults to the project dir, so it is omitted):
 
 ```bash
-node "<installed path>/mailbox.mjs" write "<temp path>"
+# injected fragment + your args, e.g.:
+node "/abs/path/to/mailbox.mjs" write "/tmp/handoff-1234567890.md"
 ```
 
 ## Modes

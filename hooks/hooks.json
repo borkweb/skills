@@ -1,0 +1,29 @@
+{
+  "description": "session-budget: zero-config plugin hooks. SessionStart auto-loads a pending handoff (and always advertises the mailbox CLI path); UserPromptSubmit fires a throttled proactive budget nudge when context grows large.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/session-budget/reinit-hook.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/session-budget/budget-hook.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
