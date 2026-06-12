@@ -1,7 +1,7 @@
 {
   "name": "bork",
   "version": "2.10.1",
-  "description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, shipping.",
+  "description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, and shipping across the dev cycle.",
   "author": {
     "name": "Matthew Batchelder",
     "email": "borkweb@gmail.com",
@@ -25,7 +25,9 @@
   "skills": [
     "./skills/core/agents-md-lint",
     "./skills/core/auto-scope",
+    "./skills/core/caveman",
     "./skills/core/council",
+    "./skills/core/discernment",
     "./skills/core/handoff",
     "./skills/core/humanize",
     "./skills/core/prototype",
@@ -53,7 +55,7 @@
   "interface": {
     "displayName": "bork",
     "shortDescription": "My Original and Collected skills, agents, commands, and hooks.",
-    "longDescription": "Bork bundles my Original skills (commit writing, SQL formatting, plan writing, humanize, council, red-pen, prototype, handoff, agents-md-lint, review-security) with Collected skills ported from upstream sources like gstack (plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, qa, qa-only, design-review, design-consultation, investigate, ship, document-release). Includes supporting agents, commands, and hooks across the development cycle.",
+    "longDescription": "Bork bundles my Original skills (commit writing, SQL formatting, plan writing, humanize, council, caveman, discernment, red-pen, prototype, handoff, agents-md-lint, review-security, session-budget) with Collected skills ported from upstream sources like gstack (plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, qa, qa-only, design-review, design-consultation, investigate, ship, document-release). Includes supporting agents, commands, and hooks across the development cycle.",
     "developerName": "Matthew Batchelder",
     "category": "Coding",
     "capabilities": [
