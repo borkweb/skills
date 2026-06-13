@@ -54,7 +54,9 @@ the user can paste it manually; then offer to dispatch automatically.
 /goal: execute the architect spec for <slice>. Rules:
 
 PHASE 0 — Before any code, reply with your plan + EVERY disagreement you have,
-with reasons, citing real files in the repo. Silent compliance = failure. Silent
+with reasons, citing real files in the repo. Also record each unresolved
+disagreement under "## Open disagreements" in $OFFLOAD_HANDOFF (one line each) so
+the architect can rule on it next turn. Silent compliance = failure. Silent
 scope additions = failure.
 
 PHASE 1 — Freeze the shared contracts (schemas/interfaces) named below as committed
@@ -65,6 +67,7 @@ plus ONE reviewer agent that never writes feature code (it checks every lane
 against this spec + tests + the frozen contracts and returns APPROVE or a numbered
 defect list; nothing merges without APPROVE). Then commit + push each slice and
 update the session handoff at $OFFLOAD_HANDOFF:
+  - frontmatter "codex_session:": set it to your codex session/resume id (provenance).
   - "## Gate results": one line per frozen gate — pass/fail + the number + the
      reproduce command. No logs, no narrative. This is the ONLY thing graded.
   - "## Work summary": files edited (paths), commit SHAs + subjects, done/stubbed/
@@ -94,7 +97,8 @@ After printing the block, offer to launch codex. On yes:
    where to watch.
 
 **Safety:** dispatch runs codex with `--dangerously-bypass-approvals-and-sandbox`
-scoped to the repo — full local access in that directory. Say so when you offer to
+— this disables the sandbox entirely (full local access, not confined to the
+repo); it is merely launched from the repo dir. Say so plainly when you offer to
 launch; if the user declines, stop at the paste-ready block.
 
 ## Hard rules
