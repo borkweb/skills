@@ -8,7 +8,7 @@ description: >
   budget", "should I compact", "should I clear", "is this session getting heavy",
   "token budget", invokes /session-budget, or when the budget hook requests a
   proactive assessment.
-model: haiku
+model: sonnet
 effort: low
 allowed-tools: [Bash, Read, Write]
 ---

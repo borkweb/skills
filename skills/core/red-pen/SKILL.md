@@ -10,7 +10,7 @@ description: >
   errors like straight quotes, wrong dashes, and double spaces. Also use when
   the user asks you to be a "tough editor", "strict editor", or "copy editor",
   or wants feedback on prose quality rather than content or structure.
-model: haiku
+model: sonnet
 effort: low
 ---
 

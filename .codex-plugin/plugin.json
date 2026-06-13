@@ -1,6 +1,6 @@
 {
   "name": "bork",
-  "version": "2.11.0",
+  "version": "2.11.1",
   "description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, and shipping across the dev cycle.",
   "author": {
     "name": "Matthew Batchelder",

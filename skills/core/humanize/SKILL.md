@@ -10,7 +10,7 @@ description: |
   superficial -ing analyses, vague attributions, em dash overuse, rule of three,
   AI vocabulary words, negative parallelisms, hollow rhythm punches, verdict
   openers, cliched openings, and excessive signpost transitions.
-model: haiku
+model: sonnet
 effort: low
 allowed-tools:
   - Read

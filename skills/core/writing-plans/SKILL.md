@@ -2,7 +2,7 @@
 name: writing-plan-documents
 description: Use when writing any plan document — project plans, PRDs, proposals, implementation plans, or design docs. Applies as a writing style layer alongside other planning skills like superpowers:writing-plans.
 user-invocable: false
-model: haiku
+model: sonnet
 effort: low
 ---
 
