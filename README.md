@@ -40,6 +40,7 @@ Or as a Claude Code [plugin](https://code.claude.com/docs/en/plugins)
 | **council** | Runs structured adversarial assessment of ideas, plans, and proposals through selected lenses, debate rounds, risk mapping, and a verdict. |
 | **handoff** | Writes handoff documentation so agents can communicate with relevant context and pick up from an optimal place. |
 | **humanize** | Detects and removes AI writing patterns (inflated language, em dash overuse, rule of three, hollow rhythm punches, etc.) on inline text or a file path; rewrites files in place. |
+| **offload** | Architect-mode codex orchestration. Reads session-keyed handoffs from `~/.agent-handoffs/offload/`, arbitrates builder disagreements, judges gate results against frozen criteria, specs the next one-PR slice, and dispatches a builder block into a new tmux window (falls back to Terminal, then headless). The architect never writes implementation code; the human is the final judge. |
 | **prototype** | Scaffolds a frontend prototype or a backend prototype with a disposable state machine to test an idea. |
 | **red-pen** | Strict editorial reviewer applying Orwell's rules and Practical Typography. Catches passive voice, dead metaphors, straight quotes, wrong dashes, and other prose drift. |
 | **review-security** | Deep security review grounded in 20 CVE-based pattern libraries (Heartbleed, Log4Shell, Next.js bypass, runc escape, xz backdoor, etc.). Callable standalone or as a reference from `review`. |
@@ -81,6 +82,7 @@ Skills get an auto-generated invocation from the host agent — these commands a
 |---------|-------------|
 | `/commit` | Alias for `writing-commits`. Checks for unstaged changes, optionally stages them, then crafts the message. |
 | `/full-review` | Chains `review` → `design-review` → `qa` into one pipeline. Passes context forward between stages. Produces a combined ship-readiness verdict. `review-security` auto-inserts as Stage 2 when the diff touches security-sensitive code; force on with `--security` or off with `--no-security`. |
+| `/offload` | Run one architect turn: judge ready results, spec the next slice, emit and optionally dispatch the codex builder block. |
 | `/preflight` | Fast pre-merge safety check. Critical-only code review + smoke test + quick test run. Under 2 minutes. For small PRs where `/full-review` is overkill. |
 | `/status` | Read-only branch status and workflow progress report. Shows what's been done, what's left, and suggests the next step. |
 

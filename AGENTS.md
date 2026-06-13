@@ -67,6 +67,7 @@ Skills are organized into two buckets under `skills/`:
 - **red-pen** — Strict editorial reviewer applying Orwell's rules and Practical Typography.
 - **review-security** — Deep security review grounded in 20 CVE-based pattern libraries (Heartbleed, Log4Shell, Next.js bypass, runc escape, xz backdoor, etc.). Callable standalone or as a reference from `/review`.
 - **session-budget** — X-rays context composition (stale vs. load-bearing), gives a compact/clear/leave-it verdict, and — only when a handoff would carry state not recoverable from disk/git — writes a reinit-ready handoff to a consume-once `~/.agent-handoffs/` mailbox that the next session auto-loads after `/clear`. Node-based and zero-config: ships plugin hooks (`hooks/hooks.json`) — a SessionStart hook that auto-loads pending handoffs and advertises the mailbox CLI, plus a UserPromptSubmit hook for proactive budget nudges — that activate on install with no setup step. (Claude Code; Codex hook support TBD.)
+- **offload** — Architect-mode codex orchestration. Reads session-keyed handoffs from `~/.agent-handoffs/offload/`, arbitrates builder disagreements, judges gate results against frozen criteria, specs the next one-PR slice, and dispatches a builder block into a new tmux window (falls back to Terminal, then headless). The architect never writes implementation code; the human is the final judge.
 
 **`skills/gstack/`** (Collected) — workflow stack ported from gstack:
 
@@ -74,7 +75,7 @@ See [README.md](README.md) for the full list: plan-session, plan-deep-review, pl
 
 ### Available Commands (bork plugin)
 
-Skill entrypoints: commit, handoff, humanize, prototype, session-budget, plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, review-security, qa, qa-only.
+Skill entrypoints: commit, handoff, humanize, offload, prototype, session-budget, plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, review-security, qa, qa-only.
 
 Compound workflows: full-review (review → design-review → qa, with optional --security stage), preflight (fast pre-merge safety check), status (branch progress report).
 
@@ -86,6 +87,7 @@ Compound workflows: full-review (review → design-review → qa, with optional 
 
 - **pre-push** — Critical-only review gate before pushes (SQL injection, auth gaps, race conditions)
 - **post-merge** — Non-blocking reminders after merging to default branch (doc updates, missed VERSION bumps, open TODOS)
+- **offload-reinit** (SessionStart) — surfaces persistent codex-builder handoffs from `~/.agent-handoffs/offload/` for reattach
 
 ## Development Workflow
 
