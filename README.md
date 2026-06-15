@@ -37,6 +37,7 @@ Or as a Claude Code [plugin](https://code.claude.com/docs/en/plugins)
 | **agents-md-lint** | Audits AI agent instruction files (AGENTS.md, CLAUDE.md, etc.) and removes facts discoverable from code alone to save context tokens. |
 | **auto-scope** | Proactively scopes a coding task before implementation — names the handful of relevant files (read/edit these), the areas to leave alone, and open scope questions, so work doesn't start by reading the whole repo. Tool-agnostic discovery (grepika / graphify / grep); self-skips trivial or single-file work. |
 | **caveman** | Ultra-compressed response mode that drops articles, filler, and hedging to cut tokens ~75% while preserving technical accuracy. Intensity levels: lite / full / ultra (and wenyan variants). |
+| **complete** | Drives a goal to a merged endpoint by orchestrating the `offload` architect loop: runs contextual plan reviews (eng/design/devex), dispatches a codex builder slice-by-slice, waits for each via a backgrounded bridge (no Claude-side polling), judges raw gates, and merges to main when the goal is delivered. The architect never writes implementation code. |
 | **council** | Runs structured adversarial assessment of ideas, plans, and proposals through selected lenses, debate rounds, risk mapping, and a verdict. |
 | **handoff** | Writes handoff documentation so agents can communicate with relevant context and pick up from an optimal place. |
 | **humanize** | Detects and removes AI writing patterns (inflated language, em dash overuse, rule of three, hollow rhythm punches, etc.) on inline text or a file path; rewrites files in place. |
@@ -83,6 +84,7 @@ Skills get an auto-generated invocation from the host agent — these commands a
 | `/commit` | Alias for `writing-commits`. Checks for unstaged changes, optionally stages them, then crafts the message. |
 | `/full-review` | Chains `review` → `design-review` → `qa` into one pipeline. Passes context forward between stages. Produces a combined ship-readiness verdict. `review-security` auto-inserts as Stage 2 when the diff touches security-sensitive code; force on with `--security` or off with `--no-security`. |
 | `/offload` | Run one architect turn: judge ready results, spec the next slice, emit and optionally dispatch the codex builder block. |
+| `/complete` | Drive a goal to a merged endpoint — loops `/offload` slice-by-slice with contextual plan reviews, a push-based wait bridge (codex wakes the session, no polling), gate judging, and a final gate-passed merge to main. Confirms dispatch + merge autonomy once up front. |
 | `/preflight` | Fast pre-merge safety check. Critical-only code review + smoke test + quick test run. Under 2 minutes. For small PRs where `/full-review` is overkill. |
 | `/status` | Read-only branch status and workflow progress report. Shows what's been done, what's left, and suggests the next step. |
 

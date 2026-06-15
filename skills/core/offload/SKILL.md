@@ -31,7 +31,8 @@ implementation code. The repo's commits are the permanent code record; the
    slice** (skip to step 4), then dispatch.
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
    each with a one-line reason, recorded under *Decisions + why*. Clear the
-   resolved disagreements.
+   resolved disagreements. For a genuine judgment call (not a clear-cut ruling),
+   field it through `council` before deciding rather than guessing.
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only — ignore *Work summary* and any narrative when grading. **Spot-check:**
    re-run any gate you doubt via its reproduce command (you have Bash). Record the
@@ -39,8 +40,12 @@ implementation code. The repo's commits are the permanent code record; the
    prose set the verdict.
 4. **Write the next slice spec** under *Next slice*: one-PR-sized, hard acceptance
    criteria, explicit out-of-scope, and a mandate that the builder verify
-   APIs/formats against reality BEFORE coding. If gates for this slice aren't yet
-   frozen, freeze them under *Frozen gates* now (never edit them after results exist).
+   APIs/formats against reality BEFORE coding. For a non-trivial slice, run the
+   plan review(s) that fit the surface first — `plan-eng-review` (architecture/data
+   flow/concurrency), `plan-design-review` (UI), `plan-devex-review` (a developer-
+   facing contract: API/CLI/SDK/library/docs); more than one can apply. If gates for
+   this slice aren't yet frozen, freeze them under *Frozen gates* now (never edit
+   them after results exist).
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
 6. **Emit the builder block** (below), write it into *Next slice*, set
    `status: dispatched` via `… status "$HANDOFF" dispatched`, then dispatch.
@@ -56,8 +61,9 @@ the user can paste it manually; then offer to dispatch automatically.
 PHASE 0 — Before any code, reply with your plan + EVERY disagreement you have,
 with reasons, citing real files in the repo. Also record each unresolved
 disagreement under "## Open disagreements" in $OFFLOAD_HANDOFF (one line each) so
-the architect can rule on it next turn. Silent compliance = failure. Silent
-scope additions = failure.
+the architect can rule on it next turn. When a design question is genuinely
+ambiguous, resolve it with `$bork:council` before coding rather than guessing.
+Silent compliance = failure. Silent scope additions = failure.
 
 PHASE 1 — Freeze the shared contracts (schemas/interfaces) named below as committed
 repo files first. After freeze they are read-only for everyone, including you.
