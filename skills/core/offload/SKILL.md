@@ -3,8 +3,9 @@ name: offload
 description: >
   Make this Claude session the ARCHITECT and offload implementation to a codex
   (gpt-5.5) builder you can watch. Reads the session handoff, arbitrates the
-  builder's disagreements, judges raw gate results against frozen criteria, specs
-  the next one-PR slice, and emits + dispatches a builder block. The architect
+  builder's disagreements, judges raw gate results against frozen criteria plus an
+  independent `review` pass on each slice, specs the next one-PR slice, and emits +
+  dispatches a builder block. The architect
   never writes implementation code. Use when the user says "offload", "hand this
   to codex", "architect mode", "have codex build this", or invokes /offload.
 effort: high
@@ -35,9 +36,14 @@ implementation code. The repo's commits are the permanent code record; the
    field it through `council` before deciding rather than guessing.
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only — ignore *Work summary* and any narrative when grading. **Spot-check:**
-   re-run any gate you doubt via its reproduce command (you have Bash). Record the
-   verdict (and any human ruling) under *Decisions + why*. Never let the builder's
-   prose set the verdict.
+   re-run any gate you doubt via its reproduce command (you have Bash). Once the raw
+   gates pass, run `review` on the work this slice added (its commit range) as an
+   **independent acceptance check** — a **DO NOT LAND** verdict fails the slice no
+   matter how the gates read; spec a corrective slice for its blockers. **LAND WITH
+   CAUTION** → record the caveats and rule (proceed or correct). This is your own
+   gate, separate from the builder's internal reviewer agent. Record the gate verdict
+   and the review verdict (and any human ruling) under *Decisions + why*. Never let
+   the builder's prose set the verdict.
 4. **Write the next slice spec** under *Next slice*: one-PR-sized, hard acceptance
    criteria, explicit out-of-scope, and a mandate that the builder verify
    APIs/formats against reality BEFORE coding. For a non-trivial slice, run the
@@ -111,5 +117,6 @@ launch; if the user declines, stop at the paste-ready block.
 
 - You do not write implementation code. If tempted, write a tighter slice instead.
 - Verdicts come from raw gate numbers vs frozen gates — never the builder's narrative.
+- A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.
 - The handoff is session-scoped and never committed. Don't `git add` it.

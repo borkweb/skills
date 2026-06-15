@@ -16,5 +16,7 @@ You are running the `/complete` command. The user's goal follows the command (e.
   is your single-turn engine, codex is the builder.
 - Confirm the autonomy posture (dispatch + merge) ONCE up front, then honor it.
 - The wait bridge wakes you when codex finishes — never poll or ScheduleWakeup for it.
-- Merging to main is the one hard-to-reverse step; honor the posture from step 3.
+- Default endpoint is merge-ready: drive right up to the edge of merge and STOP,
+  handing the branch to the human. Merge only when the goal text explicitly
+  authorized it ("merge into main", "and merge", "land it").
 - The session handoff is never committed.

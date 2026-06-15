@@ -1,32 +1,39 @@
 ---
 name: complete
 description: >
-  Drive a goal to a merged endpoint by orchestrating the offload architect loop:
-  run contextual plan reviews, dispatch a codex builder slice-by-slice, wait for
-  each slice via a backgrounded bridge (no Claude-side polling), judge raw gates,
-  and merge to main when the goal is delivered. You stay the ARCHITECT and never
-  write implementation code. Use when the user says "complete", "drive this to
-  done", "ship X and merge to main", "run the whole loop", or invokes /complete.
+  Drive a goal to a merge-ready endpoint by orchestrating the offload architect
+  loop: run contextual plan reviews, dispatch a codex builder slice-by-slice, wait
+  for each slice via a backgrounded bridge (no Claude-side polling), judge raw gates
+  plus an independent `review` pass per slice, and run a final integration `review`.
+  STOPS at the edge of merge by default and hands to the human — only merges when
+  the goal text explicitly authorizes it. You stay the ARCHITECT and never write
+  implementation code. Use when the user says "complete", "drive this to done",
+  "take this to merge-ready", "run the whole loop", or invokes /complete.
 effort: high
 ---
 
 You are the **ARCHITECT/ORCHESTRATOR**. `offload` is your single-turn engine;
 codex (gpt-5.5) is the **BUILDER**. You never write implementation code — you spec
-slices, judge raw gate numbers, and drive the loop to a merged endpoint. The
-human is the final judge and the only one who authorizes the merge unless they
-pre-authorize it in step 3.
+slices, judge raw gate numbers, and drive the loop to **merge-ready**. The human is
+the final judge and the one who merges, unless the goal explicitly told you to.
 
 `/complete <goal>` wraps `offload` (one architect turn) in a loop. Everything
 `offload` does — handoff, arbitration, gate judging, builder block, dispatch —
 still happens; this skill adds the loop, contextual plan reviews, council policy,
-the wait bridge, and the final merge.
+the wait bridge, and the final readiness gate.
 
 ## 1. Resolve goal + endpoint
 
-Parse the user's goal. If it names "merge", "to completion", "ship it", or "done",
-the endpoint is **merged to main**. Otherwise the endpoint is the last spec'd
-slice passing its gates. Hold the goal text verbatim — you check remaining scope
-against it every turn.
+**The default endpoint is merge-ready, NOT merged.** Build every slice, pass each
+per-slice `review`, and land a clean final integration `review` — then STOP at the
+edge of merge and hand to the human with the branch and the exact merge command.
+
+Only set the endpoint to **merged** when the user's instructions explicitly
+authorize it — phrases like "merge into main", "and merge", "land it", "all the
+way to main", "merge it". A bare "complete", "to completion", "done", "ship it",
+or "run the loop" does **not** authorize a merge → stop at merge-ready. When in
+doubt, do not merge. Hold the goal text verbatim — you check remaining scope (and
+whether merge was authorized) against it every turn.
 
 ## 2. Contextual plan review (before the first gates are frozen)
 
@@ -47,14 +54,15 @@ Ask the user a single time (AskUserQuestion):
 
 - **Dispatch:** auto-dispatch each slice to codex without re-asking, or pause for
   an OK each turn?
-- **Merge:** auto-merge to main when gates pass and the goal is delivered, or pause
-  for an OK before merging?
+- **Merge** — ask this *only if* the goal authorized a merge (step 1): once the
+  final review is clean, auto-merge, or pause for an OK first? If the goal did not
+  authorize a merge, skip this question entirely — the endpoint is merge-ready and
+  you will stop there regardless.
 
 State the safety fact plainly: dispatch runs codex with
 `--dangerously-bypass-approvals-and-sandbox` — the sandbox is **off** (full local
 access), merely launched from the repo dir. Record the chosen posture; honor it
-for the rest of the loop. Merging to main is hard to reverse — if the user did not
-pre-authorize auto-merge, always confirm before the merge in step 6.
+for the rest of the loop.
 
 ## 4. The loop — one slice per iteration
 
@@ -73,10 +81,11 @@ c. On wake, read the background task's final `WAITER:` line and branch:
 d. Run the `offload` engine again (step a) — its step 0 picks up status
    results-ready and judges the raw gates against the frozen gates. Read the
    verdict it produces.
-e. Branch on the verdict:
-     gates fail            → relay defects; offload specs a corrective slice → (a)
-     gates pass, scope left → offload specs the next slice → (a)
-     gates pass, goal met   → go to step 6 (merge)
+e. Branch on the verdict. offload's per-slice verdict now bundles an independent
+   `review` acceptance check, so a DO NOT LAND counts as a failure here:
+     gates or review fail            → relay defects; offload specs a corrective slice → (a)
+     gates pass + review clean, scope left → offload specs the next slice → (a)
+     gates pass + review clean, goal met   → go to step 6 (finish)
 ```
 
 You are still inside this loop across every harness wake — a `WAITER:` line in a
@@ -107,16 +116,31 @@ design fork — field it through `council` before deciding, rather than guessing
 The builder block already instructs codex to resolve its own ambiguity via
 `$bork:council` before coding (see the offload builder block).
 
-## 6. Merge to main
+## 6. Finish — merge-ready by default, merge only if authorized
 
-Only when gates pass AND the goal text is fully delivered by merged commits:
+Reached when every slice's gates passed, its per-slice `review` was clean, AND the
+goal text is fully delivered by commits pushed to the branch.
 
-1. Confirm with the user unless they pre-authorized auto-merge in step 3.
-2. Integrate via the repo's standard path — the builder already commits + pushes
-   each slice, so this is the PR merge / fast-forward, not new code. Prefer `gh`
-   for a PR merge when the repo uses GitHub.
-3. End the handoff: `handoff.mjs end "$HANDOFF"`.
-4. Report: goal, slices shipped, commit SHAs, final gate results.
+1. **Final integration review — the readiness gate.** Run `review` on the FULL
+   branch diff against the base; per-slice reviews can't see cross-slice integration
+   issues. Treat the verdict as the gate:
+     - **SAFE TO LAND** → ready.
+     - **LAND WITH CAUTION** → ready, but carry the caveats into the report.
+     - **DO NOT LAND** → not ready. Feed the blockers back as a corrective slice
+       (return to step 4) and re-run this gate after it lands clean.
+   Nothing is merge-ready until this gate is green.
+
+2. **Default — STOP at merge-ready. Do NOT merge.** Report and hand to the human:
+     - goal, slices shipped, commit SHAs, final gate + review verdicts (and any
+       LAND WITH CAUTION caveats);
+     - the branch name and the exact merge command they can run.
+   Leave the handoff in place for the human's follow-up; do not end it.
+
+3. **Merge — ONLY if the goal explicitly authorized it (step 1).** Then: confirm
+   unless the user pre-authorized auto-merge in step 3; integrate via the repo's
+   standard path (the builder already commits + pushes each slice, so this is the
+   PR merge / fast-forward, not new code — prefer `gh` for a GitHub repo); end the
+   handoff (`handoff.mjs end "$HANDOFF"`); report as in step 2 plus the merge result.
 
 ## Hard rules
 
@@ -124,7 +148,11 @@ Only when gates pass AND the goal text is fully delivered by merged commits:
 - Never poll or ScheduleWakeup for codex — the wait bridge wakes you. A short-poll
   ScheduleWakeup here is wasted work.
 - Verdicts come from raw gate numbers vs frozen gates — never the builder's prose.
+- Nothing is merge-ready until every slice passed `review` and the final integration
+  `review` returns no DO NOT LAND. The review gate is not optional or skippable.
 - Never edit frozen gates after results exist (offload enforces this; don't route
   around it).
-- The merge is the one outward, hard-to-reverse step — honor the step-3 posture.
+- **Default is stop-at-merge-ready. Never merge unless the goal text explicitly
+  authorized it.** When the instruction is ambiguous about merging, stop and hand
+  to the human — do not merge.
 - The handoff is session-scoped and never committed. Don't `git add` it.
