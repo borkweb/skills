@@ -99,10 +99,15 @@ Claude side never polls. After each dispatch, run:
 
 ```
 Bash(run_in_background: true):
+  HANDOFF=$(node "<…>/offload/handoff.mjs" resolve "$PWD")
   bash "<core>/complete/wait-for-ready.sh" "$HANDOFF" codex-build
 ```
 
-Resolve `<core>` as the parent of the offload dir from the SessionStart
+Re-resolve `$HANDOFF` with the offload `resolve` subcommand here — shell variables
+do not survive the harness wake between dispatch and this bridge, and `resolve`
+deterministically returns this session's one canonical handoff (it refuses if
+`$CLAUDE_CODE_SESSION_ID` is empty — surface that, don't guess a path). Resolve
+`<core>` as the parent of the offload dir from the SessionStart
 `[offload]` line (i.e. `wait-for-ready.sh` sits next to the offload dir under
 `skills/core/`). The script blocks — via `fswatch` when available, else a cheap
 detached sleep-poll — until the handoff flips to `results-ready`, codex dies
@@ -156,3 +161,7 @@ goal text is fully delivered by commits pushed to the branch.
   authorized it.** When the instruction is ambiguous about merging, stop and hand
   to the human — do not merge.
 - The handoff is session-scoped and never committed. Don't `git add` it.
+- Re-resolve `$HANDOFF` via the offload `resolve` subcommand on every wake — never
+  carry a stale path or write to a handoff you don't own. An ownership `refusing:`
+  error from the CLI is the wrong-document tripwire: STOP and surface it, never
+  `--steal` past it.

@@ -19,15 +19,29 @@ implementation code. The repo's commits are the permanent code record; the
 
 - The SessionStart `[offload]` context line gives the absolute `node "<…>/handoff.mjs"`
   command — use it verbatim. Your session key is `$CLAUDE_CODE_SESSION_ID`.
-- If that context also surfaced an existing handoff: **reattach, don't recreate** —
-  run `… reattach "<path>" "$CLAUDE_CODE_SESSION_ID"` and use the returned path as
-  `$HANDOFF` for the rest of the session.
-- Otherwise initialize: `… init "$PWD" "$CLAUDE_CODE_SESSION_ID" "<project/slice title>"`
-  and hold the printed path as `$HANDOFF`.
+- **Always resolve YOUR handoff with `resolve`, every turn:**
+  `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD" "<project/slice title>")`. This derives
+  the one canonical path from `$CLAUDE_CODE_SESSION_ID`, creating it on the first turn
+  (the title is applied only at creation) and returning the same path on every later
+  turn. Shell variables do **not** survive between turns, so re-run `resolve` to recover
+  `$HANDOFF` rather than guessing a path or scanning `list`. `resolve` refuses (non-zero
+  exit) if `$CLAUDE_CODE_SESSION_ID` is empty — if that happens, STOP and surface it;
+  never fall back to a hand-built path.
+- **Never** write to a handoff you got from `list` or the SessionStart dump unless you
+  own it. `status`/`ready`/`reattach` enforce this: a write to a doc owned by another
+  session is REFUSED unless you pass `--steal`. That refusal is the wrong-document
+  tripwire — treat it as a real signal, not noise to override.
+- **Resuming a prior session's handoff** (e.g. after `/clear`): the SessionStart context
+  flags a doc from another session. Taking it over is deliberate — confirm it's the right
+  project, then `… reattach "<path>" "$CLAUDE_CODE_SESSION_ID" --steal`, and use the
+  returned path. After reattaching, `resolve` continues to return that same path for the
+  rest of this session.
 
 ## One architect turn
 
-0. **Pick up ready work.** Read `$HANDOFF`. If `status: results-ready`, judge it now.
+0. **Re-resolve `$HANDOFF` first** (shell state is gone between turns):
+   `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD")`. Then **pick up ready work** —
+   read `$HANDOFF`. If `status: results-ready`, judge it now.
 1. **First turn of a project:** if there is no prior work, write the first **Next
    slice** (skip to step 4), then dispatch.
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
@@ -85,6 +99,10 @@ update the session handoff at $OFFLOAD_HANDOFF:
   - "## Work summary": files edited (paths), commit SHAs + subjects, done/stubbed/
      deferred, blockers. Pointers, not artifacts — no diffs, no logs.
 Finally run: node "<handoff.mjs path from the [offload] line>" ready "$OFFLOAD_HANDOFF"
+  (This is ownership-guarded — it writes ONLY if $OFFLOAD_HANDOFF belongs to the
+  architect session exported into your env as $CLAUDE_CODE_SESSION_ID. Do NOT add
+  --steal and do NOT hand-edit the path. If it refuses, you are pointed at the wrong
+  document — STOP and report it; never route around the guard.)
 
 Five rules:
 1. The handoff + the commits are the memory — unrecorded work didn't happen.
@@ -120,3 +138,6 @@ launch; if the user declines, stop at the paste-ready block.
 - A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.
 - The handoff is session-scoped and never committed. Don't `git add` it.
+- Resolve `$HANDOFF` via `resolve` every turn; never hand-build a path or write to a
+  doc from `list` you don't own. A `refusing:`/ownership error from the CLI means you
+  are aimed at the wrong document — STOP and surface it, don't `--steal` past it.
