@@ -123,8 +123,9 @@ After printing the block, offer to launch codex. On yes:
    then write the block into `$f.md`.
 2. Run: `bash "<…>/skills/core/offload/dispatch.sh" "$PWD" "$f.md" "$HANDOFF" "$CLAUDE_CODE_SESSION_ID"`
    (resolve dispatch.sh next to the handoff.mjs path from the `[offload]` line).
-3. Relay the launcher's line (tmux window / Terminal / headless) so the user knows
-   where to watch.
+3. Relay the launcher's line (herdr tab / tmux window / Terminal / headless) so the
+   user knows where to watch. Inside a herdr TUI the builder lands in a new
+   `codex-build` tab; otherwise it falls back to tmux, then Terminal, then headless.
 
 **Safety:** dispatch runs codex with `--dangerously-bypass-approvals-and-sandbox`
 — this disables the sandbox entirely (full local access, not confined to the
