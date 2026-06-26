@@ -33,13 +33,28 @@ parse_pane_id() {
   fi
 }
 
+# Scrape the workspace_id out of `herdr pane current` JSON (socket fallback used only
+# when the injected env var is absent). Same jq-then-sed shape as parse_pane_id.
+parse_workspace_id() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.result.pane.workspace_id // empty'
+  else
+    sed -n 's/.*"workspace_id":"\([^"]*\)".*/\1/p'
+  fi
+}
+
 LAUNCHED=""
 
 # herdr TUI: create a dedicated tab and run the launch script in its pane. Only
 # taken when actually inside a herdr session (HERDR_ENV) with the CLI available.
 if [ -n "${HERDR_ENV:-}" ] && command -v herdr >/dev/null 2>&1; then
   LAUNCH=$(make_launch)
-  PANE=$(herdr tab create --cwd "$REPO" --label codex-build --no-focus 2>/dev/null | parse_pane_id)
+  # Land the builder tab in THIS session's workspace, not herdr's active/default one.
+  # herdr injects HERDR_WORKSPACE_ID into every pane; fall back to the current pane's
+  # workspace over the socket if it is somehow unset.
+  WORKSPACE="${HERDR_WORKSPACE_ID:-}"
+  [ -z "$WORKSPACE" ] && WORKSPACE=$(herdr pane current --current 2>/dev/null | parse_workspace_id)
+  PANE=$(herdr tab create ${WORKSPACE:+--workspace "$WORKSPACE"} --cwd "$REPO" --label codex-build --no-focus 2>/dev/null | parse_pane_id)
   if [ -n "$PANE" ]; then
     herdr pane run "$PANE" "bash $(printf %q "$LAUNCH")" >/dev/null 2>&1
     echo "dispatch: launched codex in new herdr tab 'codex-build' (pane $PANE) — switch with your herdr tab navigation."

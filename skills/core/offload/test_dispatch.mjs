@@ -29,6 +29,9 @@ echo "herdr $*" >> "${LOG}"
 if [ "$1" = "tab" ] && [ "$2" = "create" ]; then
   echo '{"result":{"root_pane":{"agent_status":"unknown","cwd":"/r","pane_id":"w9:p7","tab_id":"w9:t7","workspace_id":"w9"},"tab":{"tab_id":"w9:t7"},"type":"tab_created"}}'
 fi
+if [ "$1" = "pane" ] && [ "$2" = "current" ]; then
+  echo '{"result":{"pane":{"pane_id":"w5:p1","tab_id":"w5:t1","workspace_id":"w5"},"type":"pane_current"}}'
+fi
 `,
 );
 chmodSync(join(BIN, 'herdr'), 0o755);
@@ -46,20 +49,35 @@ const run = (extraEnv) => {
   rmSync(LOG, { force: true });
   execFileSync('bash', [DISPATCH, BOX, BLOCK, '/tmp/handoff.md', 'sess-Z'], {
     encoding: 'utf8',
-    // HERDR_ENV is cleared by default so a real herdr session in the test runner's
-    // env doesn't steal the branch; the herdr test opts back in explicitly.
-    env: { ...process.env, HERDR_ENV: '', PATH: `${BIN}:${process.env.PATH}`, ...extraEnv },
+    // HERDR_ENV / HERDR_WORKSPACE_ID are cleared by default so a real herdr session in
+    // the test runner's env doesn't steal the branch or workspace; herdr tests opt back
+    // in explicitly.
+    env: { ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '', PATH: `${BIN}:${process.env.PATH}`, ...extraEnv },
   });
   return readFileSync(LOG, 'utf8');
 };
 
 test('inside herdr -> creates a herdr tab and runs the launch script in its pane', () => {
   // HERDR_ENV set + tmux also set: herdr wins, tmux must NOT be touched.
-  const log = run({ HERDR_ENV: '1', TMUX: '/tmp/tmux-1,1,0' });
+  const log = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '/tmp/tmux-1,1,0' });
   assert.match(log, /^herdr tab create .*codex-build/m);
   // Runs the generated launch script in the pane the create JSON reported.
   assert.match(log, /^herdr pane run w9:p7 bash \S+\.sh/m);
   assert.doesNotMatch(log, /^tmux/m);
+});
+
+test('herdr tab lands in THIS session workspace from HERDR_WORKSPACE_ID', () => {
+  const log = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3' });
+  // The session's own workspace is passed through; no socket lookup needed.
+  assert.match(log, /^herdr tab create --workspace w3 .*codex-build/m);
+  assert.doesNotMatch(log, /^herdr pane current/m);
+});
+
+test('herdr workspace falls back to `pane current` when env var is unset', () => {
+  const log = run({ HERDR_ENV: '1' });
+  // No injected workspace -> resolve it over the socket, then target that workspace.
+  assert.match(log, /^herdr pane current/m);
+  assert.match(log, /^herdr tab create --workspace w5 .*codex-build/m);
 });
 
 test('inside tmux -> opens a new tmux window running codex', () => {
