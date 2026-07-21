@@ -67,7 +67,7 @@ Skills are organized into two buckets under `skills/`:
 - **red-pen** — Strict editorial reviewer applying Orwell's rules and Practical Typography.
 - **review-security** — Deep security review grounded in 20 CVE-based pattern libraries (Heartbleed, Log4Shell, Next.js bypass, runc escape, xz backdoor, etc.). Callable standalone or as a reference from `/review`.
 - **session-budget** — X-rays context composition (stale vs. load-bearing), gives a compact/clear/leave-it verdict, and — only when a handoff would carry state not recoverable from disk/git — writes a reinit-ready handoff to a consume-once `~/.agent-handoffs/` mailbox that the next session auto-loads after `/clear`. Node-based and zero-config: ships plugin hooks (`hooks/hooks.json`) — a SessionStart hook that auto-loads pending handoffs and advertises the mailbox CLI, plus a UserPromptSubmit hook for proactive budget nudges — that activate on install with no setup step. (Claude Code; Codex hook support TBD.)
-- **offload** — Architect-mode codex orchestration. Reads session-keyed handoffs from `~/.agent-handoffs/offload/`, arbitrates builder disagreements, judges gate results against frozen criteria, specs the next one-PR slice, and dispatches a builder block into a new tmux window (falls back to Terminal, then headless). The architect never writes implementation code; the human is the final judge.
+- **offload** — Architect-mode builder orchestration. The builder harness (codex/claude/opencode/pi/grok or a custom command) comes from `~/.borkweb-skills/config.json` — an ordered failover chain resolved by `harness.mjs` with quota-aware demotion via quota-axi; the skill prompts for and writes the config when missing. Reads session-keyed handoffs from `~/.agent-handoffs/offload/`, arbitrates builder disagreements, judges gate results against frozen criteria, specs the next one-PR slice, and dispatches a builder block into a new herdr tab/tmux window (falls back to Terminal, then headless). The architect never writes implementation code; the human is the final judge.
 
 **`skills/gstack/`** (Collected) — workflow stack ported from gstack:
 
@@ -87,7 +87,7 @@ Compound workflows: full-review (review → design-review → qa, with optional 
 
 - **pre-push** — Critical-only review gate before pushes (SQL injection, auth gaps, race conditions)
 - **post-merge** — Non-blocking reminders after merging to default branch (doc updates, missed VERSION bumps, open TODOS)
-- **offload-reinit** (SessionStart) — surfaces persistent codex-builder handoffs from `~/.agent-handoffs/offload/` for reattach
+- **offload-reinit** (SessionStart) — surfaces persistent builder handoffs from `~/.agent-handoffs/offload/` for reattach
 
 ## Development Workflow
 
