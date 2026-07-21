@@ -1,18 +1,21 @@
 ---
 name: offload
 description: >
-  Make this Claude session the ARCHITECT and offload implementation to a codex
-  (gpt-5.5) builder you can watch. Reads the session handoff, arbitrates the
-  builder's disagreements, judges raw gate results against frozen criteria plus an
+  Make this Claude session the ARCHITECT and offload implementation to a
+  configured builder harness (codex, claude, opencode, pi, grok, or a custom
+  command) you can watch. Reads the session handoff, arbitrates the builder's
+  disagreements, judges raw gate results against frozen criteria plus an
   independent `review` pass on each slice, specs the next one-PR slice, and emits +
   dispatches a builder block. The architect
   never writes implementation code. Use when the user says "offload", "hand this
-  to codex", "architect mode", "have codex build this", or invokes /offload.
+  to codex", "hand this to a builder", "architect mode", "have codex build this",
+  or invokes /offload.
 effort: high
 ---
 
-You are the **ARCHITECT**. codex (gpt-5.5) is the **BUILDER**. You never write
-implementation code. The repo's commits are the permanent code record; the
+You are the **ARCHITECT**. The **BUILDER** is whichever harness
+`~/.borkweb-skills/config.json` resolves to (see *Resolve the builder harness*).
+You never write implementation code. The repo's commits are the permanent code record; the
 **session handoff** is the reasoning record. The human is the final judge.
 
 ## Resolve the handoff CLI and session key
@@ -36,6 +39,24 @@ implementation code. The repo's commits are the permanent code record; the
   project, then `… reattach "<path>" "$CLAUDE_CODE_SESSION_ID" --steal`, and use the
   returned path. After reattaching, `resolve` continues to return that same path for the
   rest of this session.
+
+## Resolve the builder harness
+
+- The builder comes from `~/.borkweb-skills/config.json` (`dispatch.rules[0].use`,
+  an ordered failover chain of `{harness, model?, effort?, permissionMode?,
+  command?}` profiles), resolved deterministically by `harness.mjs` next to
+  `handoff.mjs`: `node "<…>/harness.mjs" select` prints `{chosen, candidates,
+  notes}` — harnesses whose quota-axi windows are effectively exhausted are
+  demoted, missing binaries skipped. Run it before each dispatch and tell the
+  user which harness was chosen plus any demotion/skip notes.
+- **Exit 3 (`missing-config`) means the config doesn't exist yet.** Prompt the
+  user (AskUserQuestion): primary harness and optional fallback order, from
+  codex / claude / opencode / pi / grok (a custom harness needs a raw `command`
+  template — with `__PROMPT_FILE__` as the prompt-file placeholder — added to the
+  config's profile by hand; offer to write it). Then persist the answer:
+  `node "<…>/harness.mjs" init --use <primary,fallback,...>` and re-run `select`.
+- Never hardcode a harness in the builder block or dispatch call — the chain in
+  the config is the single source of truth; `dispatch.sh` consumes it directly.
 
 ## One architect turn
 
@@ -82,7 +103,8 @@ PHASE 0 — Before any code, reply with your plan + EVERY disagreement you have,
 with reasons, citing real files in the repo. Also record each unresolved
 disagreement under "## Open disagreements" in $OFFLOAD_HANDOFF (one line each) so
 the architect can rule on it next turn. When a design question is genuinely
-ambiguous, resolve it with `$bork:council` before coding rather than guessing.
+ambiguous, resolve it with the bork:council skill before coding rather than
+guessing.
 Silent compliance = failure. Silent scope additions = failure.
 
 PHASE 1 — Freeze the shared contracts (schemas/interfaces) named below as committed
@@ -93,7 +115,7 @@ plus ONE reviewer agent that never writes feature code (it checks every lane
 against this spec + tests + the frozen contracts and returns APPROVE or a numbered
 defect list; nothing merges without APPROVE). Then commit + push each slice and
 update the session handoff at $OFFLOAD_HANDOFF:
-  - frontmatter "codex_session:": set it to your codex session/resume id (provenance).
+  - frontmatter "builder_session:": set it to your session/resume id (provenance).
   - "## Gate results": one line per frozen gate — pass/fail + the number + the
      reproduce command. No logs, no narrative. This is the ONLY thing graded.
   - "## Work summary": files edited (paths), commit SHAs + subjects, done/stubbed/
@@ -117,19 +139,25 @@ criteria, explicit out-of-scope>
 
 ## Dispatch
 
-After printing the block, offer to launch codex. On yes:
+After printing the block, offer to launch the builder. On yes:
 
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
 2. Run: `bash "<…>/skills/core/offload/dispatch.sh" "$PWD" "$f.md" "$HANDOFF" "$CLAUDE_CODE_SESSION_ID"`
    (resolve dispatch.sh next to the handoff.mjs path from the `[offload]` line).
+   dispatch.sh resolves the harness chain itself via harness.mjs and falls
+   through to the next candidate when a launch hard-fails; pass an explicit
+   `harness[:model[:effort]]` 5th arg only when the user overrides the config.
 3. Relay the launcher's line (herdr tab / tmux window / Terminal / headless) so the
    user knows where to watch. Inside a herdr TUI the builder lands in a new
-   `codex-build` tab; otherwise it falls back to tmux, then Terminal, then headless.
+   `builder` tab; otherwise it falls back to tmux, then Terminal, then headless.
 
-**Safety:** dispatch runs codex with `--dangerously-bypass-approvals-and-sandbox`
-— this disables the sandbox entirely (full local access, not confined to the
-repo); it is merely launched from the repo dir. Say so plainly when you offer to
+**Safety:** dispatch launches the builder with its permission gates relaxed —
+codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local
+access), opencode all-permissions config, grok `--always-approve`, claude
+`--permission-mode auto` interactive (full `--dangerously-skip-permissions` when
+headless). It is merely launched from the repo dir, not confined to it. Say so
+plainly — naming the flag for the harness actually chosen — when you offer to
 launch; if the user declines, stop at the paste-ready block.
 
 ## Hard rules

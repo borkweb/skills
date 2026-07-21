@@ -3,7 +3,7 @@ title:
 cwd:
 branch:
 claude_session:
-codex_session:
+builder_session:
 status:
 created:
 updated:

@@ -2,7 +2,7 @@
 // Persistent, session-keyed offload handoff. Reuses session-budget mailbox.mjs
 // helpers (via dir.mjs) for cwd hashing, listing, field parsing, age and prune —
 // but NOT the consume-once lifecycle: an offload handoff lives for the whole
-// session and is updated in place by the architect (Claude) and builder (codex).
+// session and is updated in place by the architect (Claude) and the dispatched builder.
 //
 //   node handoff.mjs resolve  <cwd>                       -> canonical path for $CLAUDE_CODE_SESSION_ID (create if missing)
 //   node handoff.mjs init     <cwd> <sessionId> [title]  -> ensure doc, print path
@@ -20,7 +20,7 @@
 // match that id is REFUSED (non-zero exit) unless `--steal` is passed. This makes
 // a silent wrong-document write impossible — the failure mode that motivated it
 // was the loop re-deriving a path under an empty/foreign session id (e.g. the
-// codex builder's own session) and clobbering or minting the wrong file.
+// builder's own session) and clobbering or minting the wrong file.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
