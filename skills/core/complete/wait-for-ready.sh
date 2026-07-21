@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Bridge codex completion -> a single harness wake-up for the /complete loop.
-# Codex ends its run with `handoff.mjs ready`, flipping the offload handoff to
+# Bridge builder completion -> a single harness wake-up for the /complete loop.
+# The builder ends its run with `handoff.mjs ready`, flipping the offload handoff to
 # status: results-ready. This script blocks OUTSIDE Claude's context until that
-# happens (or codex dies without reporting, or a backstop timeout fires), then
+# happens (or the builder dies without reporting, or a backstop timeout fires), then
 # exits with a final `WAITER:` line. Run it BACKGROUNDED from Claude
 # (Bash run_in_background); the harness re-invokes the session when it exits, so
 # the Claude side never polls and burns no tokens while waiting.
 #
 # Usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds]
-#   tmux_window      liveness target when inside tmux (default: codex-build)
+#   tmux_window      liveness target when inside tmux (default: builder)
 #   timeout_seconds  backstop so a wedged builder can't hang the loop (default 7200)
 #
-# Exit codes: 0 ready · 3 codex exited without ready · 4 timeout · 2 usage.
+# Exit codes: 0 ready · 3 builder exited without ready · 4 timeout · 2 usage.
 set -uo pipefail
 
 HANDOFF="${1:-}"
 [ -n "$HANDOFF" ] || { echo "WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds]"; exit 2; }
-WINDOW="${2:-codex-build}"
+WINDOW="${2:-builder}"
 TIMEOUT="${3:-7200}"
 POLL=5
 
@@ -32,7 +32,7 @@ window_present() {
   tmux list-windows -F '#{window_name}' 2>/dev/null | grep -qx "$WINDOW"
 }
 
-# Only trust "window vanished == codex done" once we've actually seen the window
+# Only trust "window vanished == builder done" once we've actually seen the window
 # appear; outside tmux we can't observe liveness, so the timeout is the safety net.
 saw_window=false
 window_present && saw_window=true
@@ -45,7 +45,7 @@ check() {
   if $saw_window && ! window_present; then
     s=$(status)
     if [ "$s" = "results-ready" ]; then echo "WAITER: ready"; exit 0; fi
-    echo "WAITER: codex-exited-without-ready (status=${s:-none})"; exit 3
+    echo "WAITER: builder-exited-without-ready (status=${s:-none})"; exit 3
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "WAITER: timeout after ${TIMEOUT}s (status=$(status))"; exit 4

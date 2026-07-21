@@ -2,7 +2,7 @@
 name: complete
 description: >
   Drive a goal to a merge-ready endpoint by orchestrating the offload architect
-  loop: run contextual plan reviews, dispatch a codex builder slice-by-slice, wait
+  loop: run contextual plan reviews, dispatch a configured builder harness slice-by-slice, wait
   for each slice via a backgrounded bridge (no Claude-side polling), judge raw gates
   plus an independent `review` pass per slice, and run a final integration `review`.
   STOPS at the edge of merge by default and hands to the human — only merges when
@@ -13,7 +13,9 @@ effort: high
 ---
 
 You are the **ARCHITECT/ORCHESTRATOR**. `offload` is your single-turn engine;
-codex (gpt-5.5) is the **BUILDER**. You never write implementation code — you spec
+the **BUILDER** is whichever harness `~/.borkweb-skills/config.json` resolves to
+(offload's `harness.mjs` picks it, with quota-aware failover). You never write
+implementation code — you spec
 slices, judge raw gate numbers, and drive the loop to **merge-ready**. The human is
 the final judge and the one who merges, unless the goal explicitly told you to.
 
@@ -52,31 +54,33 @@ review outcomes into the slice spec you hand to `offload`.
 
 Ask the user a single time (AskUserQuestion):
 
-- **Dispatch:** auto-dispatch each slice to codex without re-asking, or pause for
+- **Dispatch:** auto-dispatch each slice to the configured builder without re-asking, or pause for
   an OK each turn?
 - **Merge** — ask this *only if* the goal authorized a merge (step 1): once the
   final review is clean, auto-merge, or pause for an OK first? If the goal did not
   authorize a merge, skip this question entirely — the endpoint is merge-ready and
   you will stop there regardless.
 
-State the safety fact plainly: dispatch runs codex with
-`--dangerously-bypass-approvals-and-sandbox` — the sandbox is **off** (full local
-access), merely launched from the repo dir. Record the chosen posture; honor it
-for the rest of the loop.
+State the safety fact plainly: dispatch launches the builder with its permission
+gates relaxed — codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully
+off), opencode all-permissions config, grok `--always-approve`, claude
+`--permission-mode auto` interactive / full bypass headless — with full local
+access, merely launched from the repo dir. Name the flag for the harness actually
+chosen. Record the chosen posture; honor it for the rest of the loop.
 
 ## 4. The loop — one slice per iteration
 
 ```
 a. Invoke the `offload` skill for ONE architect turn. It arbitrates, judges any
    ready results, specs the next slice (freezing gates), emits the builder block,
-   sets status=dispatched, and dispatches codex. Honor the dispatch posture from
+   sets status=dispatched, and dispatches the builder. Honor the dispatch posture from
    step 3 — in pause mode, get the user's OK before offload dispatches.
 b. After dispatch, launch the WAIT BRIDGE backgrounded (below). Then stop your
    turn — do NOT poll, do NOT ScheduleWakeup. The harness re-invokes you when the
    bridge exits.
 c. On wake, read the background task's final `WAITER:` line and branch:
      WAITER: ready                       → go to (d)
-     WAITER: codex-exited-without-ready   → surface as a BLOCKER, pause, ask human
+     WAITER: builder-exited-without-ready → surface as a BLOCKER, pause, ask human
      WAITER: timeout …                    → surface, pause, ask human
 d. Run the `offload` engine again (step a) — its step 0 picks up status
    results-ready and judges the raw gates against the frozen gates. Read the
@@ -93,14 +97,14 @@ background result means resume here, not start over.
 
 ### The wait bridge (push, not poll)
 
-Codex already ends its run with `handoff.mjs ready`, flipping the handoff to
-`results-ready`. The bridge turns that file-write into a harness wake-up so the
+The builder already ends its run with `handoff.mjs ready`, flipping the handoff
+to `results-ready`. The bridge turns that file-write into a harness wake-up so the
 Claude side never polls. After each dispatch, run:
 
 ```
 Bash(run_in_background: true):
   HANDOFF=$(node "<…>/offload/handoff.mjs" resolve "$PWD")
-  bash "<core>/complete/wait-for-ready.sh" "$HANDOFF" codex-build
+  bash "<core>/complete/wait-for-ready.sh" "$HANDOFF" builder
 ```
 
 Re-resolve `$HANDOFF` with the offload `resolve` subcommand here — shell variables
@@ -110,16 +114,16 @@ deterministically returns this session's one canonical handoff (it refuses if
 `<core>` as the parent of the offload dir from the SessionStart
 `[offload]` line (i.e. `wait-for-ready.sh` sits next to the offload dir under
 `skills/core/`). The script blocks — via `fswatch` when available, else a cheap
-detached sleep-poll — until the handoff flips to `results-ready`, codex dies
-without reporting, or a backstop timeout fires, then exits with a final `WAITER:`
+detached sleep-poll — until the handoff flips to `results-ready`, the builder
+dies without reporting, or a backstop timeout fires, then exits with a final `WAITER:`
 line. All of that runs outside your context: zero tokens until it wakes you.
 
 ## 5. Field questions through council
 
 When you hit a genuine judgment call — an arbitration ruling, a scope dispute, a
 design fork — field it through `council` before deciding, rather than guessing.
-The builder block already instructs codex to resolve its own ambiguity via
-`$bork:council` before coding (see the offload builder block).
+The builder block already instructs the builder to resolve its own ambiguity via
+the bork:council skill before coding (see the offload builder block).
 
 ## 6. Finish — merge-ready by default, merge only if authorized
 
@@ -150,7 +154,7 @@ goal text is fully delivered by commits pushed to the branch.
 ## Hard rules
 
 - You never write implementation code. If tempted, hand a tighter slice to offload.
-- Never poll or ScheduleWakeup for codex — the wait bridge wakes you. A short-poll
+- Never poll or ScheduleWakeup for the builder — the wait bridge wakes you. A short-poll
   ScheduleWakeup here is wasted work.
 - Verdicts come from raw gate numbers vs frozen gates — never the builder's prose.
 - Nothing is merge-ready until every slice passed `review` and the final integration

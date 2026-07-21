@@ -13,9 +13,10 @@ You are running the `/complete` command. The user's goal follows the command (e.
 ## Notes
 
 - You are the ARCHITECT/ORCHESTRATOR; you never write implementation code. `offload`
-  is your single-turn engine, codex is the builder.
+  is your single-turn engine; the configured builder harness (from
+  `~/.borkweb-skills/config.json`) is the builder.
 - Confirm the autonomy posture (dispatch + merge) ONCE up front, then honor it.
-- The wait bridge wakes you when codex finishes — never poll or ScheduleWakeup for it.
+- The wait bridge wakes you when the builder finishes — never poll or ScheduleWakeup for it.
 - Default endpoint is merge-ready: drive right up to the edge of merge and STOP,
   handing the branch to the human. Merge only when the goal text explicitly
   authorized it ("merge into main", "and merge", "land it").
