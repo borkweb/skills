@@ -1,4 +1,5 @@
-// test_dispatch.mjs — stub tmux/codex/osascript on PATH and assert branch selection.
+// test_dispatch.mjs — stub frontends + harness binaries on PATH and assert
+// candidate selection, template contents, and frontend branch selection.
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,7 +21,11 @@ const stub = (name) => {
   writeFileSync(p, `#!/usr/bin/env bash\necho "${name} $*" >> "${LOG}"\n`);
   chmodSync(p, 0o755);
 };
-['tmux', 'codex', 'osascript'].forEach(stub);
+['tmux', 'codex', 'claude', 'osascript'].forEach(stub);
+// Real quota-axi may be reachable via the inherited PATH; shadow it so candidate
+// ordering never depends on the host machine's live quota state.
+writeFileSync(join(BIN, 'quota-axi'), '#!/usr/bin/env bash\nexit 1\n');
+chmodSync(join(BIN, 'quota-axi'), 0o755);
 // herdr is stubbed to log calls and emit the `tab create` JSON the script parses.
 writeFileSync(
   join(BIN, 'herdr'),
@@ -45,57 +50,147 @@ const unameReports = (os) => {
 const BLOCK = join(BOX, 'block.md');
 writeFileSync(BLOCK, 'BUILDER BLOCK CONTENTS\n');
 
-const run = (extraEnv) => {
+// Constrained PATH: stubs first, node's own dir (dispatch shells out to node),
+// then system dirs only — the host's real harness binaries (pi, codex, ...)
+// must never leak into candidate resolution.
+const TEST_PATH = `${BIN}:${dirname(process.execPath)}:/usr/bin:/bin`;
+
+// Config fixture consumed by harness.mjs via $BORKWEB_SKILLS_CONFIG.
+const CONFIG = join(BOX, 'config.json');
+const writeConfig = (use) => writeFileSync(CONFIG, JSON.stringify({
+  dispatch: { rules: [{ when: 'builder dispatch', use, why: 'test' }] },
+}));
+writeConfig([{ harness: 'codex' }]);
+
+const run = (extraEnv, args = []) => {
   rmSync(LOG, { force: true });
-  execFileSync('bash', [DISPATCH, BOX, BLOCK, '/tmp/handoff.md', 'sess-Z'], {
-    encoding: 'utf8',
-    // HERDR_ENV / HERDR_WORKSPACE_ID are cleared by default so a real herdr session in
-    // the test runner's env doesn't steal the branch or workspace; herdr tests opt back
-    // in explicitly.
-    env: { ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '', PATH: `${BIN}:${process.env.PATH}`, ...extraEnv },
-  });
-  return readFileSync(LOG, 'utf8');
+  const stdout = execFileSync(
+    'bash', [DISPATCH, BOX, BLOCK, '/tmp/handoff.md', 'sess-Z', ...args],
+    {
+      encoding: 'utf8',
+      // HERDR_ENV / HERDR_WORKSPACE_ID are cleared by default so a real herdr
+      // session in the test runner's env doesn't steal the branch or workspace;
+      // herdr tests opt back in explicitly.
+      env: {
+        ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
+        BORKWEB_SKILLS_CONFIG: CONFIG,
+        PATH: TEST_PATH, ...extraEnv,
+      },
+    },
+  );
+  let log = '';
+  try { log = readFileSync(LOG, 'utf8'); } catch {}
+  return { log, stdout };
 };
 
-test('inside herdr -> creates a herdr tab and runs the launch script in its pane', () => {
+// The launch-script path is logged by the frontend stub; read its contents to
+// assert the actual harness command dispatched into the pane/window.
+const launchScriptOf = (log) => {
+  const m = log.match(/bash (\S+\.sh)/);
+  assert.ok(m, `no launch script in log:\n${log}`);
+  return readFileSync(m[1], 'utf8');
+};
+
+test('inside herdr -> creates a herdr tab labeled builder', () => {
   // HERDR_ENV set + tmux also set: herdr wins, tmux must NOT be touched.
-  const log = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '/tmp/tmux-1,1,0' });
-  assert.match(log, /^herdr tab create .*codex-build/m);
-  // Runs the generated launch script in the pane the create JSON reported.
+  const { log } = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '/tmp/tmux-1,1,0' });
+  assert.match(log, /^herdr tab create .*builder/m);
   assert.match(log, /^herdr pane run w9:p7 bash \S+\.sh/m);
   assert.doesNotMatch(log, /^tmux/m);
 });
 
 test('herdr tab lands in THIS session workspace from HERDR_WORKSPACE_ID', () => {
-  const log = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3' });
-  // The session's own workspace is passed through; no socket lookup needed.
-  assert.match(log, /^herdr tab create --workspace w3 .*codex-build/m);
+  const { log } = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3' });
+  assert.match(log, /^herdr tab create --workspace w3 .*builder/m);
   assert.doesNotMatch(log, /^herdr pane current/m);
 });
 
 test('herdr workspace falls back to `pane current` when env var is unset', () => {
-  const log = run({ HERDR_ENV: '1' });
-  // No injected workspace -> resolve it over the socket, then target that workspace.
+  const { log } = run({ HERDR_ENV: '1' });
   assert.match(log, /^herdr pane current/m);
-  assert.match(log, /^herdr tab create --workspace w5 .*codex-build/m);
+  assert.match(log, /^herdr tab create --workspace w5 .*builder/m);
 });
 
-test('inside tmux -> opens a new tmux window running codex', () => {
-  const log = run({ TMUX: '/tmp/tmux-1,1,0' });
+test('inside tmux -> opens a builder window running the configured harness', () => {
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
   assert.match(log, /^tmux new-window/m);
-  assert.match(log, /codex-build/);
-  // The window runs a generated launch script, not an inline codex command.
-  assert.match(log, /bash \S+\.sh/);
+  assert.match(log, /builder/);
+  assert.match(launchScriptOf(log), /codex .*--dangerously-bypass-approvals-and-sandbox/);
+});
+
+test('claude profile launches with --permission-mode auto by default', () => {
+  writeConfig([{ harness: 'claude' }]);
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  assert.match(launchScriptOf(log), /claude --permission-mode auto/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('per-profile permissionMode overrides the claude default', () => {
+  writeConfig([{ harness: 'claude', permissionMode: 'acceptEdits' }]);
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  assert.match(launchScriptOf(log), /claude --permission-mode acceptEdits/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('model and effort flow into the codex command', () => {
+  writeConfig([{ harness: 'codex', model: 'gpt-5.5', effort: 'high' }]);
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  const script = launchScriptOf(log);
+  assert.match(script, /codex -m gpt-5\.5 --config model_reasoning_effort=high/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('first candidate missing from PATH falls through to the next', () => {
+  // pi is not stubbed -> harness.mjs skips it; claude launches.
+  writeConfig([{ harness: 'pi' }, { harness: 'claude' }]);
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  assert.match(launchScriptOf(log), /claude --permission-mode auto/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('explicit profile-spec argument bypasses config resolution', () => {
+  rmSync(CONFIG, { force: true }); // no config at all — override must not need it
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' }, ['claude:opus']);
+  assert.match(launchScriptOf(log), /claude --permission-mode auto --model opus/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('custom command profile is used verbatim with __PROMPT_FILE__ substituted', () => {
+  stub('mytool');
+  writeConfig([{ harness: 'mytool', command: 'mytool --yolo "$(cat __PROMPT_FILE__)"' }]);
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  const script = launchScriptOf(log);
+  assert.match(script, /mytool --yolo/);
+  assert.ok(script.includes(BLOCK), 'prompt file path substituted');
+  writeConfig([{ harness: 'codex' }]);
 });
 
 test('no tmux on Darwin -> osascript Terminal fallback', () => {
   unameReports('Darwin');
-  const log = run({ TMUX: '' });
+  const { log } = run({ TMUX: '' });
   assert.match(log, /^osascript/m);
 });
 
 test('no tmux, non-Darwin -> headless codex exec', () => {
   unameReports('Linux');
-  const log = run({ TMUX: '' });
+  const { log } = run({ TMUX: '' });
   assert.match(log, /^codex exec/m);
+});
+
+test('headless claude uses -p with full bypass, not auto mode', () => {
+  unameReports('Linux');
+  writeConfig([{ harness: 'claude' }]);
+  const { log } = run({ TMUX: '' });
+  assert.match(log, /^claude -p --dangerously-skip-permissions/m);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('headless path skips interactive-only harnesses for the next candidate', () => {
+  unameReports('Linux');
+  stub('grok'); // on PATH so select keeps it, but it has no headless form
+  writeConfig([{ harness: 'grok' }, { harness: 'codex' }]);
+  const { log } = run({ TMUX: '' });
+  assert.doesNotMatch(log, /^grok/m);
+  assert.match(log, /^codex exec/m);
+  writeConfig([{ harness: 'codex' }]);
 });

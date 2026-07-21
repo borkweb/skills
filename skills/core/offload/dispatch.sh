@@ -1,24 +1,106 @@
 #!/usr/bin/env bash
-# Launch a codex builder session seeded with a builder-block file, full-auto and
-# scoped to the repo. Priority: herdr tab (when inside a herdr TUI) -> tmux window
-# -> Terminal.app (macOS) -> headless. Interactive frontends run a generated launch
-# script so no env/prompt has to be escaped through the frontend's quoting layers.
-# Usage: dispatch.sh <repo_dir> <block_file> <handoff_path> <session_id>
+# Launch a builder session seeded with a builder-block file, full-auto and
+# launched from the repo dir. The builder HARNESS comes from the borkweb-skills
+# config via harness.mjs (ordered failover chain, quota-aware); a candidate that
+# cannot be launched falls through to the next. Frontend priority per candidate:
+# herdr tab (inside a herdr TUI) -> tmux window -> Terminal.app (macOS) -> headless.
+# Interactive frontends run a generated launch script so no env/prompt has to be
+# escaped through the frontend's quoting layers.
+# Usage: dispatch.sh <repo_dir> <block_file> <handoff_path> <session_id> [<profile-spec>]
+#   profile-spec (optional): harness[:model[:effort]] — bypasses config resolution.
 set -euo pipefail
 
-REPO="$1"; BLOCK="$2"; HANDOFF="${3:-}"; SID="${4:-}"
+REPO="$1"; BLOCK="$2"; HANDOFF="${3:-}"; SID="${4:-}"; OVERRIDE="${5:-}"
 [ -f "$BLOCK" ] || { echo "dispatch: block file not found: $BLOCK" >&2; exit 1; }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Write a self-contained launch script (cd + env + codex). Everything is escaped
-# once here with printf %q; the frontends only ever run `bash <launch>`.
+# Candidate lines: harness<TAB>model<TAB>effort<TAB>permissionMode<TAB>command
+# ('-' = unset), best-first — the harness.mjs `select --plain` contract.
+if [ -n "$OVERRIDE" ]; then
+  IFS=: read -r o_h o_m o_e <<< "$OVERRIDE"
+  CANDIDATES=$(printf '%s\t%s\t%s\t-\t-\n' "$o_h" "${o_m:--}" "${o_e:--}")
+else
+  CANDIDATES=$(node "$SCRIPT_DIR/harness.mjs" select --plain)
+fi
+
+# The verified interactive launch command per harness (prompt = block contents).
+# claude defaults to --permission-mode auto: routine work auto-approves, genuinely
+# risky commands still gate, and the builder tab is watchable so a rare prompt is
+# answerable (the wait bridge's timeout is the backstop). permissionMode in the
+# config profile overrides it.
+interactive_cmd() {
+  # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the builder pane, not here
+  local h="$1" model="$2" effort="$3" pmode="$4" m="" e="" pm="auto"
+  [ "$model" != "-" ] && m="$model"
+  [ "$effort" != "-" ] && e="$effort"
+  [ "$pmode" != "-" ] && pm="$pmode"
+  case "$h" in
+    codex)
+      printf 'codex %s%s--dangerously-bypass-approvals-and-sandbox "$(cat %s)"' \
+        "${m:+-m $(printf %q "$m") }" \
+        "${e:+--config model_reasoning_effort=$(printf %q "$e") }" \
+        "$(printf %q "$BLOCK")" ;;
+    claude)
+      printf 'claude --permission-mode %s %s"$(cat %s)"' \
+        "$(printf %q "$pm")" "${m:+--model $(printf %q "$m") }" "$(printf %q "$BLOCK")" ;;
+    opencode)
+      printf 'OPENCODE_CONFIG_CONTENT=%s opencode %s--prompt "$(cat %s)"' \
+        "$(printf %q '{"permission":{"*":"allow"}}')" \
+        "${m:+--model $(printf %q "$m") }" "$(printf %q "$BLOCK")" ;;
+    pi)
+      printf 'pi %s"$(cat %s)"' "${m:+--model $(printf %q "$m") }" "$(printf %q "$BLOCK")" ;;
+    grok)
+      printf 'grok --always-approve %s"$(cat %s)"' \
+        "${m:+--model $(printf %q "$m") }" "$(printf %q "$BLOCK")" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Substitute the block path into a raw `command` template from the config.
+build_custom() {
+  local template="$1"
+  printf '%s' "${template//__PROMPT_FILE__/$(printf %q "$BLOCK")}"
+}
+
+# Headless form per harness; fails for interactive-only harnesses (pi, grok)
+# unless the profile carries a raw command. claude -p cannot answer permission
+# prompts, so auto mode would strand the run — headless claude keeps full bypass.
+run_headless() {
+  local h="$1" model="$2" effort="$3" custom="$4" out m="" e=""
+  [ "$model" != "-" ] && m="$model"
+  [ "$effort" != "-" ] && e="$effort"
+  out=$(mktemp -t offload-result.XXXXXX) && mv "$out" "$out.md" && out="$out.md"
+  case "$h" in
+    codex)
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+          codex exec ${m:+-m "$m"} ${e:+--config "model_reasoning_effort=$e"} \
+            --dangerously-bypass-approvals-and-sandbox -C "$REPO" \
+            --output-last-message "$out" - < "$BLOCK" ) ;;
+    claude)
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+          claude -p --dangerously-skip-permissions ${m:+--model "$m"} \
+            "$(cat "$BLOCK")" > "$out" ) ;;
+    opencode)
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+          opencode run ${m:+--model "$m"} "$(cat "$BLOCK")" > "$out" ) ;;
+    *)
+      [ "$custom" = "-" ] && return 1
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+          bash -c "$(build_custom "$custom")" > "$out" ) ;;
+  esac && echo "dispatch: ran $h headless; builder's final message at $out"
+}
+
+# Write a self-contained launch script (cd + env + harness command). Everything
+# is escaped once here; the frontends only ever run `bash <launch>`.
 make_launch() {
-  local f; f=$(mktemp -t offload-launch.XXXXXX) && mv "$f" "$f.sh" && f="$f.sh"
+  local cmd="$1" f
+  f=$(mktemp -t offload-launch.XXXXXX) && mv "$f" "$f.sh" && f="$f.sh"
   {
     echo '#!/usr/bin/env bash'
     echo "cd $(printf %q "$REPO")"
     echo "export OFFLOAD_HANDOFF=$(printf %q "$HANDOFF")"
     echo "export CLAUDE_CODE_SESSION_ID=$(printf %q "$SID")"
-    echo "exec codex --dangerously-bypass-approvals-and-sandbox \"\$(cat $(printf %q "$BLOCK"))\""
+    echo "exec $cmd"
   } > "$f"
   echo "$f"
 }
@@ -43,42 +125,56 @@ parse_workspace_id() {
   fi
 }
 
-LAUNCHED=""
-
-# herdr TUI: create a dedicated tab and run the launch script in its pane. Only
-# taken when actually inside a herdr session (HERDR_ENV) with the CLI available.
-if [ -n "${HERDR_ENV:-}" ] && command -v herdr >/dev/null 2>&1; then
-  LAUNCH=$(make_launch)
-  # Land the builder tab in THIS session's workspace, not herdr's active/default one.
-  # herdr injects HERDR_WORKSPACE_ID into every pane; fall back to the current pane's
-  # workspace over the socket if it is somehow unset.
-  WORKSPACE="${HERDR_WORKSPACE_ID:-}"
-  [ -z "$WORKSPACE" ] && WORKSPACE=$(herdr pane current --current 2>/dev/null | parse_workspace_id)
-  PANE=$(herdr tab create ${WORKSPACE:+--workspace "$WORKSPACE"} --cwd "$REPO" --label codex-build --no-focus 2>/dev/null | parse_pane_id)
-  if [ -n "$PANE" ]; then
-    herdr pane run "$PANE" "bash $(printf %q "$LAUNCH")" >/dev/null 2>&1
-    echo "dispatch: launched codex in new herdr tab 'codex-build' (pane $PANE) — switch with your herdr tab navigation."
-    LAUNCHED=1
-  else
+# Try the interactive frontends for one candidate's launch script.
+# Returns 0 when a frontend accepted the launch, 1 when none is available.
+launch_interactive() {
+  local launch="$1" h="$2"
+  # herdr TUI: create a dedicated tab and run the launch script in its pane. Only
+  # taken when actually inside a herdr session (HERDR_ENV) with the CLI available.
+  if [ -n "${HERDR_ENV:-}" ] && command -v herdr >/dev/null 2>&1; then
+    # Land the builder tab in THIS session's workspace, not herdr's active/default
+    # one. herdr injects HERDR_WORKSPACE_ID into every pane; fall back to the
+    # current pane's workspace over the socket if it is somehow unset.
+    local workspace="${HERDR_WORKSPACE_ID:-}" pane
+    [ -z "$workspace" ] && workspace=$(herdr pane current --current 2>/dev/null | parse_workspace_id)
+    pane=$(herdr tab create ${workspace:+--workspace "$workspace"} --cwd "$REPO" --label builder --no-focus 2>/dev/null | parse_pane_id)
+    if [ -n "$pane" ]; then
+      herdr pane run "$pane" "bash $(printf %q "$launch")" >/dev/null 2>&1
+      echo "dispatch: launched $h in new herdr tab 'builder' (pane $pane) — switch with your herdr tab navigation."
+      return 0
+    fi
     echo "dispatch: herdr detected but 'tab create' failed; falling back to tmux/Terminal/headless." >&2
   fi
-fi
-
-if [ -z "$LAUNCHED" ]; then
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    LAUNCH=$(make_launch)
-    tmux new-window -c "$REPO" -n codex-build "bash $(printf %q "$LAUNCH")"
-    echo "dispatch: launched codex in new tmux window 'codex-build' — switch with your tmux prefix + window number."
-  elif [ "$(uname)" = "Darwin" ] && command -v osascript >/dev/null 2>&1; then
-    LAUNCH=$(make_launch)
-    # LAUNCH is an mktemp path (no spaces/quotes), safe to embed in the AppleScript string.
-    osascript -e "tell application \"Terminal\" to do script \"bash ${LAUNCH}\""
-    echo "dispatch: launched codex in a new Terminal.app window."
-  else
-    OUT=$(mktemp -t offload-result.XXXXXX) && mv "$OUT" "$OUT.md" && OUT="$OUT.md"
-    ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
-        codex exec --dangerously-bypass-approvals-and-sandbox -C "$REPO" \
-          --output-last-message "$OUT" - < "$BLOCK" )
-    echo "dispatch: ran codex headless; builder's final message at $OUT"
+    tmux new-window -c "$REPO" -n builder "bash $(printf %q "$launch")"
+    echo "dispatch: launched $h in new tmux window 'builder' — switch with your tmux prefix + window number."
+    return 0
   fi
-fi
+  if [ "$(uname)" = "Darwin" ] && command -v osascript >/dev/null 2>&1; then
+    # launch is an mktemp path (no spaces/quotes), safe to embed in the AppleScript string.
+    osascript -e "tell application \"Terminal\" to do script \"bash ${launch}\""
+    echo "dispatch: launched $h in a new Terminal.app window."
+    return 0
+  fi
+  return 1
+}
+
+LAUNCHED=""
+while IFS=$'\t' read -r h m e pm custom; do
+  [ -n "$h" ] || continue
+  if [ "${custom:--}" != "-" ]; then
+    CMD=$(build_custom "$custom")
+  elif ! command -v "$h" >/dev/null 2>&1; then
+    echo "dispatch: $h not on PATH; trying next candidate" >&2
+    continue
+  elif ! CMD=$(interactive_cmd "$h" "$m" "$e" "${pm:--}"); then
+    echo "dispatch: no launch template for '$h'; trying next candidate" >&2
+    continue
+  fi
+  LAUNCH=$(make_launch "$CMD")
+  if launch_interactive "$LAUNCH" "$h"; then LAUNCHED="$h"; break; fi
+  if run_headless "$h" "$m" "$e" "${custom:--}"; then LAUNCHED="$h"; break; fi
+  echo "dispatch: $h could not be launched headless; trying next candidate" >&2
+done <<< "$CANDIDATES"
+
+[ -n "$LAUNCHED" ] || { echo "dispatch: no configured harness could be launched" >&2; exit 1; }
