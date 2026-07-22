@@ -24,7 +24,8 @@ updated:
 
 ## Work summary
 <!-- FOR CONTINUATION, NOT GRADED. Files edited (paths), commit SHAs + subjects,
-     done / stubbed / deferred, blockers. Pointers, not artifacts — no diffs. -->
+     done / stubbed / deferred, blockers. Pointers, not artifacts — no diffs.
+     Caveman-terse prose. -->
 
 ## Next slice
 <!-- Architect → builder: one-PR-sized spec, hard acceptance criteria, explicit

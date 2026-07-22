@@ -99,6 +99,13 @@ the user can paste it manually; then offer to dispatch automatically.
 ```
 /goal: execute the architect spec for <slice>. Rules:
 
+COMMS — caveman mode, level full, for ALL prose you and your subagents emit:
+plan, disagreements, handoff notes, agent-to-agent chatter, final report.
+Drop articles/filler/hedging; fragments OK; short synonyms; technical terms +
+error strings exact. Write NORMAL: code, commit messages, PR text, gate-result
+lines (keep required format), safety warnings, and any sentence where
+compression creates ambiguity. All substance stays; only fluff dies.
+
 PHASE 0 — Before any code, reply with your plan + EVERY disagreement you have,
 with reasons, citing real files in the repo. Also record each unresolved
 disagreement under "## Open disagreements" in $OFFLOAD_HANDOFF (one line each) so
