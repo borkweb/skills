@@ -1,6 +1,6 @@
 // test_dispatch.mjs — stub frontends + harness binaries on PATH and assert
 // candidate selection, template contents, and frontend branch selection.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -193,4 +193,46 @@ test('headless path skips interactive-only harnesses for the next candidate', ()
   assert.doesNotMatch(log, /^grok/m);
   assert.match(log, /^codex exec/m);
   writeConfig([{ harness: 'codex' }]);
+});
+
+// --- duplicate-builder guard (one handoff owns at most one builder) ---
+const MARKER = '/tmp/handoff.md.builder';
+const cleanMarker = () => rmSync(MARKER, { force: true });
+
+test('refuses to launch when a live builder marker already exists', () => {
+  unameReports('Linux');
+  writeFileSync(MARKER, `${process.pid}\n`); // node itself: a definitely-live pid
+  let threw = false;
+  try {
+    run({ TMUX: '' });
+  } catch (err) {
+    threw = true;
+    assert.strictEqual(err.status, 2, 'expected exit code 2 on duplicate refusal');
+    assert.match(String(err.stderr), /a builder is already running for this handoff/);
+  } finally {
+    cleanMarker();
+  }
+  assert.ok(threw, 'dispatch should have refused (nonzero exit) with a live marker');
+});
+
+test('clears a stale marker (dead pid) and proceeds to launch', () => {
+  unameReports('Linux');
+  writeFileSync(MARKER, '2147480000\n'); // an unused, dead pid
+  const { log } = run({ TMUX: '' });
+  assert.match(log, /^codex exec/m, 'should launch after clearing the stale marker');
+  cleanMarker();
+});
+
+test('OFFLOAD_FORCE=1 replaces a running builder instead of refusing', () => {
+  unameReports('Linux');
+  // A real, live but harmless child we are willing to see killed.
+  const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+  writeFileSync(MARKER, `${child.pid}\n`);
+  try {
+    const { log } = run({ TMUX: '', OFFLOAD_FORCE: '1' });
+    assert.match(log, /^codex exec/m, 'should launch after force-replacing');
+  } finally {
+    try { process.kill(child.pid, 'SIGKILL'); } catch {}
+    cleanMarker();
+  }
 });

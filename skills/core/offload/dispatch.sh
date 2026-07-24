@@ -69,6 +69,9 @@ run_headless() {
   local h="$1" model="$2" effort="$3" custom="$4" out m="" e=""
   [ "$model" != "-" ] && m="$model"
   [ "$effort" != "-" ] && e="$effort"
+  # Register this run as the live builder for the handoff; clear on exit so a
+  # later dispatch's guard sees it finish (parity with the interactive path).
+  [ -n "$MARKER" ] && { echo $$ > "$MARKER"; trap 'rm -f "$MARKER"' EXIT; }
   out=$(mktemp -t offload-result.XXXXXX) && mv "$out" "$out.md" && out="$out.md"
   case "$h" in
     codex)
@@ -92,6 +95,10 @@ run_headless() {
 
 # Write a self-contained launch script (cd + env + harness command). Everything
 # is escaped once here; the frontends only ever run `bash <launch>`.
+# When a builder MARKER is set, the script records its own pid to the marker and
+# clears it on exit (so a later dispatch can tell a live builder from a finished
+# one) — which requires NOT exec'ing the harness, so the EXIT trap survives to
+# clean up. With no marker it exec's as before.
 make_launch() {
   local cmd="$1" f
   f=$(mktemp -t offload-launch.XXXXXX) && mv "$f" "$f.sh" && f="$f.sh"
@@ -100,7 +107,13 @@ make_launch() {
     echo "cd $(printf %q "$REPO")"
     echo "export OFFLOAD_HANDOFF=$(printf %q "$HANDOFF")"
     echo "export CLAUDE_CODE_SESSION_ID=$(printf %q "$SID")"
-    echo "exec $cmd"
+    if [ -n "$MARKER" ]; then
+      printf 'echo $$ > %s\n' "$(printf %q "$MARKER")"
+      printf 'trap %s EXIT\n' "$(printf %q "rm -f $MARKER")"
+      echo "$cmd"
+    else
+      echo "exec $cmd"
+    fi
   } > "$f"
   echo "$f"
 }
@@ -158,6 +171,34 @@ launch_interactive() {
   fi
   return 1
 }
+
+# One handoff owns at most one builder. Refuse to launch a duplicate while a
+# prior builder for this handoff is still alive — the failure mode where a
+# second builder races the first and corrupts a freeze. The marker holds the
+# live builder's pid; a stale marker (dead pid) is cleared and we proceed.
+# OFFLOAD_FORCE=1 replaces a running builder instead of refusing.
+MARKER=""
+if [ -n "$HANDOFF" ]; then
+  MARKER="$HANDOFF.builder"
+  if [ -f "$MARKER" ]; then
+    OLD_PID=$(cat "$MARKER" 2>/dev/null || true)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+      if [ "${OFFLOAD_FORCE:-}" = "1" ]; then
+        echo "dispatch: OFFLOAD_FORCE=1 — replacing running builder (pid $OLD_PID)" >&2
+        kill "$OLD_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$OLD_PID" 2>/dev/null || true
+        rm -f "$MARKER"
+      else
+        echo "dispatch: a builder is already running for this handoff (pid $OLD_PID)." >&2
+        echo "dispatch: stop it first, or set OFFLOAD_FORCE=1 to replace it — refusing to launch a duplicate." >&2
+        exit 2
+      fi
+    else
+      rm -f "$MARKER"  # stale marker from a builder that already exited
+    fi
+  fi
+fi
 
 LAUNCHED=""
 while IFS=$'\t' read -r h m e pm custom; do
