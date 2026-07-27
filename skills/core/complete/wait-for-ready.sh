@@ -28,41 +28,196 @@
 #   WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]
 set -uo pipefail
 
+usage() {
+  echo "WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]"
+}
+
+waiter_handoff_from_command() {
+  local command="$1" first second
+  local -a argv=()
+  read -r -a argv <<< "$command"
+  [ "${#argv[@]}" -gt 0 ] || return 1
+  first="${argv[0]##*/}"
+  second="${argv[1]:-}"
+  case "$first" in
+    wait-for-ready.sh)
+      [ "${#argv[@]}" -gt 1 ] && printf '%s\n' "${argv[1]}"
+      ;;
+    bash|sh|zsh)
+      [ "${second##*/}" = "wait-for-ready.sh" ] &&
+        [ "${#argv[@]}" -gt 2 ] &&
+        printf '%s\n' "${argv[2]}"
+      ;;
+  esac
+}
+
+reap_stale_waiters() {
+  local candidate_pid command handoff marker_pid stale
+  while read -r candidate_pid command; do
+    [ -n "${candidate_pid:-}" ] || continue
+    [ "$candidate_pid" != "$$" ] || continue
+    handoff=$(waiter_handoff_from_command "$command")
+    [ -n "${handoff:-}" ] || continue
+    [ "${handoff#--}" = "$handoff" ] || continue
+
+    stale=false
+    if [ ! -f "$handoff" ]; then
+      stale=true
+    elif [ -f "$handoff.builder" ]; then
+      marker_pid=$(cat "$handoff.builder" 2>/dev/null || true)
+      case "$marker_pid" in
+        ''|*[!0-9]*) stale=true ;;
+        *) kill -0 "$marker_pid" 2>/dev/null || stale=true ;;
+      esac
+    fi
+
+    if $stale && kill "$candidate_pid" 2>/dev/null; then
+      echo "WAITER: reaped pid=$candidate_pid handoff=$handoff"
+    fi
+  done < <(ps -axo pid=,command= 2>/dev/null)
+}
+
+if [ "${1:-}" = "--reap" ]; then
+  reap_stale_waiters
+  exit 0
+fi
+
 HANDOFF="${1:-}"
-[ -n "$HANDOFF" ] || { echo "WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds]"; exit 2; }
-WINDOW="${2:-builder}"
+[ -n "$HANDOFF" ] || { usage; exit 2; }
+# Positional argument 2 remains accepted for caller compatibility.
+: "${2:-builder}"
 TIMEOUT="${3:-7200}"
-POLL=5
+IDLE_SECONDS=${4:-600}
+GRACE="${WFR_GRACE:-90}"
+POLL="${WFR_POLL:-5}"
+IDLE_CPU_CENTIS="${WFR_IDLE_CPU_CENTIS:-200}"
+MARKER="$HANDOFF.builder"
 
 status() {
   [ -f "$HANDOFF" ] || return 0
-  grep -m1 '^status:' "$HANDOFF" 2>/dev/null | sed 's/^status:[[:space:]]*//;s/[[:space:]]*$//'
+  grep -m1 '^status:' "$HANDOFF" 2>/dev/null |
+    sed 's/^status:[[:space:]]*//;s/[[:space:]]*$//' || true
 }
 
-in_tmux() { [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; }
-
-window_present() {
-  in_tmux || return 1
-  tmux list-windows -F '#{window_name}' 2>/dev/null | grep -qx "$WINDOW"
+status_label() {
+  local value
+  value=$(status)
+  printf '%s\n' "${value:-none}"
 }
 
-# Only trust "window vanished == builder done" once we've actually seen the window
-# appear; outside tmux we can't observe liveness, so the timeout is the safety net.
-saw_window=false
-window_present && saw_window=true
+builder_alive() {
+  local pid
+  [ -f "$MARKER" ] || return 1
+  pid=$(cat "$MARKER" 2>/dev/null || true)
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s\n' "$pid"
+}
 
-deadline=$(( $(date +%s) + TIMEOUT ))
+cpu_centis() {
+  local root_pid="$1"
+  ps -axo pid=,ppid=,time= 2>/dev/null |
+    awk -v root="$root_pid" '
+      {
+        pid[NR] = $1
+        ppid[NR] = $2
+        cpu[NR] = $3
+        if ($1 == root) selected[$1] = 1
+      }
+      END {
+        changed = 1
+        while (changed) {
+          changed = 0
+          for (i = 1; i <= NR; i++) {
+            if (!selected[pid[i]] && selected[ppid[i]]) {
+              selected[pid[i]] = 1
+              changed = 1
+            }
+          }
+        }
+        total = 0
+        for (i = 1; i <= NR; i++) {
+          if (!selected[pid[i]]) continue
+          fields = split(cpu[i], part, ":")
+          if (fields == 2) {
+            seconds = (part[1] * 60) + part[2]
+          } else if (fields == 3) {
+            seconds = (part[1] * 3600) + (part[2] * 60) + part[3]
+          } else {
+            seconds = part[1]
+          }
+          total += seconds
+        }
+        printf "%.0f\n", total * 100
+      }
+    '
+}
+
+cpu_seconds() {
+  awk -v centis="$1" 'BEGIN { printf "%.2f", centis / 100 }'
+}
+
+started_at=$(date +%s)
+deadline=$(( started_at + TIMEOUT ))
+saw_marker=false
+[ -f "$MARKER" ] && saw_marker=true
+idle_pid=""
+idle_started=0
+idle_cpu_base=0
 
 check() {
-  local s; s=$(status)
-  if [ "$s" = "results-ready" ]; then echo "WAITER: ready"; exit 0; fi
-  if $saw_window && ! window_present; then
-    s=$(status)
-    if [ "$s" = "results-ready" ]; then echo "WAITER: ready"; exit 0; fi
-    echo "WAITER: builder-exited-without-ready (status=${s:-none})"; exit 3
+  local now current_status pid cpu delta
+  now=$(date +%s)
+
+  if [ ! -f "$HANDOFF" ]; then
+    echo "WAITER: handoff-deleted (status=none)"
+    exit 3
   fi
-  if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "WAITER: timeout after ${TIMEOUT}s (status=$(status))"; exit 4
+
+  current_status=$(status)
+  if [ "$current_status" = "results-ready" ]; then
+    echo "WAITER: ready"
+    exit 0
+  fi
+
+  [ -f "$MARKER" ] && saw_marker=true
+  if $saw_marker; then
+    if ! pid=$(builder_alive); then
+      current_status=$(status)
+      if [ "$current_status" = "results-ready" ]; then
+        echo "WAITER: ready"
+        exit 0
+      fi
+      echo "WAITER: builder-exited-without-ready (status=${current_status:-none})"
+      exit 3
+    fi
+
+    cpu=$(cpu_centis "$pid")
+    cpu="${cpu:-0}"
+    if [ "$idle_pid" != "$pid" ]; then
+      idle_pid="$pid"
+      idle_started="$now"
+      idle_cpu_base="$cpu"
+    else
+      delta=$(( cpu - idle_cpu_base ))
+      if [ "$delta" -gt "$IDLE_CPU_CENTIS" ]; then
+        idle_started="$now"
+        idle_cpu_base="$cpu"
+      elif [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
+        echo "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})"
+        exit 5
+      fi
+    fi
+  elif [ $(( now - started_at )) -ge "$GRACE" ]; then
+    echo "WAITER: never-started after $(( now - started_at ))s (status=${current_status:-none})"
+    exit 3
+  fi
+
+  if [ "$now" -ge "$deadline" ]; then
+    echo "WAITER: timeout after ${TIMEOUT}s (status=$(status_label))"
+    exit 4
   fi
 }
 

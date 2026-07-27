@@ -82,6 +82,7 @@ c. On wake, read the background task's final `WAITER:` line and branch:
      WAITER: ready                       → go to (d)
      WAITER: builder-exited-without-ready → surface as a BLOCKER, pause, ask human
      WAITER: timeout …                    → surface, pause, ask human
+     WAITER: builder-idle …               → builder alive but stalled: read the builder pane, judge blocked vs. slow, then answer it / re-dispatch / relaunch the bridge and keep waiting
 d. Run the `offload` engine again (step a) — its step 0 picks up status
    results-ready and judges the raw gates against the frozen gates. Read the
    verdict it produces.

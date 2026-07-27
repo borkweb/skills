@@ -172,6 +172,44 @@ launch_interactive() {
   return 1
 }
 
+waiter_handoff_from_command() {
+  local command="$1" first second
+  local -a argv=()
+  read -r -a argv <<< "$command"
+  [ "${#argv[@]}" -gt 0 ] || return 1
+  first="${argv[0]##*/}"
+  second="${argv[1]:-}"
+  case "$first" in
+    wait-for-ready.sh)
+      [ "${#argv[@]}" -gt 1 ] || return 1
+      printf '%s\n' "${argv[1]}"
+      return 0
+      ;;
+    bash|sh|zsh)
+      [ "${second##*/}" = "wait-for-ready.sh" ] || return 1
+      [ "${#argv[@]}" -gt 2 ] || return 1
+      printf '%s\n' "${argv[2]}"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+stop_existing_bridges() {
+  local candidate_pid command bridge_handoff
+  [ -n "$HANDOFF" ] || return 0
+  while read -r candidate_pid command; do
+    [ -n "${candidate_pid:-}" ] || continue
+    if ! bridge_handoff=$(waiter_handoff_from_command "$command"); then
+      continue
+    fi
+    [ "$bridge_handoff" = "$HANDOFF" ] || continue
+    if kill "$candidate_pid" 2>/dev/null; then
+      echo "dispatch: stopped existing wait bridge for this handoff (pid $candidate_pid)"
+    fi
+  done < <(ps -axo pid=,command= 2>/dev/null)
+}
+
 # One handoff owns at most one builder. Refuse to launch a duplicate while a
 # prior builder for this handoff is still alive — the failure mode where a
 # second builder races the first and corrupts a freeze. The marker holds the
@@ -199,6 +237,8 @@ if [ -n "$HANDOFF" ]; then
     fi
   fi
 fi
+
+stop_existing_bridges
 
 LAUNCHED=""
 while IFS=$'\t' read -r h m e pm custom; do
