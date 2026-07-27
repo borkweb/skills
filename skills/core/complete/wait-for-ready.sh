@@ -13,6 +13,7 @@
 #   tmux_window is accepted and ignored for caller compatibility.
 #   Defaults: timeout 7200s, idle 600s, WFR_GRACE=90s, WFR_POLL=5s,
 #   WFR_IDLE_CPU_CENTIS=200. Marker path is always "$HANDOFF.builder".
+#   WFR_CPU_EXCLUDE defaults to SkyComputerUseClient|node_repl|mcp-context-a8c.
 #
 # Exit codes: 0 ready/reap · 2 usage · 3 builder unavailable/handoff deleted ·
 #   4 timeout · 5 builder idle.
@@ -117,13 +118,17 @@ builder_alive() {
 }
 
 cpu_centis() {
-  local root_pid="$1"
-  ps -axo pid=,ppid=,time= 2>/dev/null |
-    awk -v root="$root_pid" '
+  local root_pid="$1" exclude="${WFR_CPU_EXCLUDE:-SkyComputerUseClient|node_repl|mcp-context-a8c}"
+  ps -ww -axo pid=,ppid=,time=,command= 2>/dev/null |
+    awk -v root="$root_pid" -v exclude="$exclude" '
       {
         pid[NR] = $1
         ppid[NR] = $2
         cpu[NR] = $3
+        command[NR] = ""
+        for (field = 4; field <= NF; field++) {
+          command[NR] = command[NR] (field == 4 ? "" : " ") $field
+        }
         if ($1 == root) selected[$1] = 1
       }
       END {
@@ -131,8 +136,16 @@ cpu_centis() {
         while (changed) {
           changed = 0
           for (i = 1; i <= NR; i++) {
-            if (!selected[pid[i]] && selected[ppid[i]]) {
-              selected[pid[i]] = 1
+            if (selected[pid[i]] || excluded[pid[i]]) continue
+            if (excluded[ppid[i]]) {
+              excluded[pid[i]] = 1
+              changed = 1
+            } else if (selected[ppid[i]]) {
+              if (command[i] ~ exclude) {
+                excluded[pid[i]] = 1
+              } else {
+                selected[pid[i]] = 1
+              }
               changed = 1
             }
           }

@@ -51,6 +51,38 @@ start_busy_builder() {
   track_pid "$BUILDER_PID"
 }
 
+start_noisy_sidecar_builder() {
+  local sidecar="$TEST_ROOT/SkyComputerUseClient"
+  printf '%s\n' '#!/bin/sh' 'while :; do :; done' > "$sidecar"
+  chmod +x "$sidecar"
+  (
+    sleep 999 &
+    idle_child=$!
+    "$sidecar" &
+    sidecar_child=$!
+    trap 'kill "$idle_child" "$sidecar_child" 2>/dev/null || true; wait "$idle_child" "$sidecar_child" 2>/dev/null || true' EXIT
+    trap 'exit 0' TERM INT
+    wait "$idle_child"
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+}
+
+start_light_work_builder() {
+  (
+    trap 'exit 0' TERM INT
+    while :; do
+      i=0
+      while [ "$i" -lt 20000 ]; do
+        i=$(( i + 1 ))
+      done
+      sleep 1
+    done
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+}
+
 run_waiter_capped() {
   local output="$1" cap="$2" waiter_pid watchdog_pid watchdog_flag rc
   shift 2
@@ -207,6 +239,68 @@ case_handoff_deleted() {
     fail_case "missing handoff-deleted"
 }
 
+case_idle_with_noisy_sidecar() {
+  local handoff output started elapsed rc
+  handoff=$(new_handoff idle-with-noisy-sidecar)
+  output="$TEST_ROOT/idle-with-noisy-sidecar.out"
+  start_noisy_sidecar_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  started=$(date +%s)
+
+  run_waiter_capped "$output" 12 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
+    "$WAITER" "$handoff" builder 30 8
+  rc=$?
+  elapsed=$(( $(date +%s) - started ))
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 5 ] || { fail_case "exit=$rc expected=5"; return 1; }
+  [ "$elapsed" -le 20 ] ||
+    { fail_case "elapsed=${elapsed}s expected<=20s"; return 1; }
+  grep -q 'WAITER: builder-idle' "$output" ||
+    fail_case "missing builder-idle"
+}
+
+case_production_ratio() {
+  local handoff output updater rc
+
+  handoff=$(new_handoff production-ratio-idle)
+  output="$TEST_ROOT/production-ratio-idle.out"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  run_waiter_capped "$output" 12 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=3 \
+    "$WAITER" "$handoff" builder 20 8
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 5 ] ||
+    { fail_case "idle sub-case exit=$rc expected=5"; return 1; }
+  grep -q 'WAITER: builder-idle' "$output" ||
+    { fail_case "idle sub-case missing builder-idle"; return 1; }
+
+  handoff=$(new_handoff production-ratio-working)
+  output="$TEST_ROOT/production-ratio-working.out"
+  start_light_work_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 9
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 15 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=3 \
+    "$WAITER" "$handoff" builder 20 8
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] ||
+    { fail_case "working sub-case exit=$rc expected=0"; return 1; }
+  ! grep -q 'WAITER: builder-idle' "$output" ||
+    { fail_case "working sub-case reported idle"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "working sub-case missing WAITER: ready"
+}
+
 run_case() {
   local name="$1" function_name="$2"
   CASE_ERROR=""
@@ -225,6 +319,8 @@ run_case never-started case_never_started
 run_case idle case_idle
 run_case busy-not-idle case_busy_not_idle
 run_case handoff-deleted case_handoff_deleted
+run_case idle-with-noisy-sidecar case_idle_with_noisy_sidecar
+run_case production-ratio case_production_ratio
 
 echo "TESTS: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
