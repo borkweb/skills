@@ -312,7 +312,6 @@ docs: update documentation to match shipped changes
 - ARCHITECTURE.md: updated component diagram to reflect new service layer
 - CHANGELOG.md: polished voice for v2.3.0 entry
 
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>
 EOF
 )"
 ```
