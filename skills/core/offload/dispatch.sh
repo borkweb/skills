@@ -10,8 +10,112 @@
 #   profile-spec (optional): harness[:model[:effort]] — bypasses config resolution.
 set -euo pipefail
 
-REPO="$1"; BLOCK="$2"; HANDOFF="${3:-}"; SID="${4:-}"; OVERRIDE="${5:-}"
-[ -f "$BLOCK" ] || { echo "dispatch: block file not found: $BLOCK" >&2; exit 1; }
+usage() {
+  printf '%s\n' \
+    'Usage: dispatch.sh <repo_dir> <block_file> <handoff_path> <session_id> [<profile-spec>]' \
+    '  profile-spec (optional): harness[:model[:effort]] — bypasses config resolution.' >&2
+}
+
+validation_error() {
+  echo "$1" >&2
+  usage
+  exit 2
+}
+
+resolve_existing_path() {
+  local path="$1" dir base link
+  while [ -L "$path" ]; do
+    link=$(readlink "$path")
+    if [[ "$link" = /* ]]; then
+      path="$link"
+    else
+      case "$path" in
+        */*) path="${path%/*}/$link" ;;
+        *) path="$link" ;;
+      esac
+    fi
+  done
+  case "$path" in
+    */*)
+      dir="${path%/*}"
+      base="${path##*/}"
+      [ -n "$dir" ] || dir="/"
+      ;;
+    *)
+      dir="."
+      base="$path"
+      ;;
+  esac
+  dir=$(cd -P -- "$dir" 2>/dev/null && pwd) || return 1
+  printf '%s/%s\n' "${dir%/}" "$base"
+}
+
+validate_args() {
+  local arg handoff_parent
+
+  for arg in "$@"; do
+    case "$arg" in
+      -*)
+        validation_error "dispatch: '$arg' looks like a flag; dispatch.sh takes positional args only"
+        ;;
+    esac
+  done
+
+  if [ "$#" -lt 4 ] || [ "$#" -gt 5 ]; then
+    validation_error "dispatch: expected 4 or 5 positional arguments; got $#"
+  fi
+
+  REPO="$1"
+  BLOCK="$2"
+  HANDOFF="$3"
+  SID="$4"
+  OVERRIDE="${5:-}"
+
+  [ -d "$REPO" ] ||
+    validation_error "dispatch: repo directory not found: $REPO"
+  [ -f "$BLOCK" ] ||
+    validation_error "dispatch: block file not found or not a regular file: $BLOCK"
+  [ -r "$BLOCK" ] ||
+    validation_error "dispatch: block file not readable: $BLOCK"
+  [ -s "$BLOCK" ] ||
+    validation_error "dispatch: block file is empty: $BLOCK"
+  [ -f "$HANDOFF" ] ||
+    validation_error "dispatch: handoff file not found or not a regular file: $HANDOFF"
+
+  case "$HANDOFF" in
+    */*)
+      handoff_parent="${HANDOFF%/*}"
+      [ -n "$handoff_parent" ] || handoff_parent="/"
+      ;;
+    *) handoff_parent="." ;;
+  esac
+  [ -d "$handoff_parent" ] && [ -w "$handoff_parent" ] ||
+    validation_error "dispatch: handoff parent directory not writable: $handoff_parent"
+
+  RESOLVED_REPO=$(cd -P -- "$REPO" 2>/dev/null && pwd) ||
+    validation_error "dispatch: could not resolve repo directory: $REPO"
+  RESOLVED_BLOCK=$(resolve_existing_path "$BLOCK") ||
+    validation_error "dispatch: could not resolve block file: $BLOCK"
+  RESOLVED_HANDOFF=$(resolve_existing_path "$HANDOFF") ||
+    validation_error "dispatch: could not resolve handoff file: $HANDOFF"
+
+  [ "$RESOLVED_BLOCK" != "$RESOLVED_HANDOFF" ] ||
+    validation_error "dispatch: block file and handoff file must be different paths"
+  [ -n "$SID" ] ||
+    validation_error "dispatch: session id must not be empty"
+  case "$SID" in
+    */*) validation_error "dispatch: session id must not contain '/': $SID" ;;
+  esac
+}
+
+validate_args "$@"
+
+if [ "${OFFLOAD_DRY_RUN:-}" = "1" ]; then
+  printf 'REPO=%s\nBLOCK=%s\nHANDOFF=%s\nSID=%s\n' \
+    "$RESOLVED_REPO" "$RESOLVED_BLOCK" "$RESOLVED_HANDOFF" "$SID"
+  exit 0
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Candidate lines: harness<TAB>model<TAB>effort<TAB>permissionMode<TAB>command
@@ -20,7 +124,7 @@ if [ -n "$OVERRIDE" ]; then
   IFS=: read -r o_h o_m o_e <<< "$OVERRIDE"
   CANDIDATES=$(printf '%s\t%s\t%s\t-\t-\n' "$o_h" "${o_m:--}" "${o_e:--}")
 else
-  CANDIDATES=$(node "$SCRIPT_DIR/harness.mjs" select --plain)
+  CANDIDATES=$(node "$SCRIPT_DIR"/harness.mjs select --plain)
 fi
 
 # The verified interactive launch command per harness (prompt = block contents).
@@ -172,6 +276,44 @@ launch_interactive() {
   return 1
 }
 
+waiter_handoff_from_command() {
+  local command="$1" first second
+  local -a argv=()
+  read -r -a argv <<< "$command"
+  [ "${#argv[@]}" -gt 0 ] || return 1
+  first="${argv[0]##*/}"
+  second="${argv[1]:-}"
+  case "$first" in
+    wait-for-ready.sh)
+      [ "${#argv[@]}" -gt 1 ] || return 1
+      printf '%s\n' "${argv[1]}"
+      return 0
+      ;;
+    bash|sh|zsh)
+      [ "${second##*/}" = "wait-for-ready.sh" ] || return 1
+      [ "${#argv[@]}" -gt 2 ] || return 1
+      printf '%s\n' "${argv[2]}"
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+stop_existing_bridges() {
+  local candidate_pid command bridge_handoff
+  [ -n "$HANDOFF" ] || return 0
+  while read -r candidate_pid command; do
+    [ -n "${candidate_pid:-}" ] || continue
+    if ! bridge_handoff=$(waiter_handoff_from_command "$command"); then
+      continue
+    fi
+    [ "$bridge_handoff" = "$HANDOFF" ] || continue
+    if kill "$candidate_pid" 2>/dev/null; then
+      echo "dispatch: stopped existing wait bridge for this handoff (pid $candidate_pid)"
+    fi
+  done < <(ps -axo pid=,command= 2>/dev/null)
+}
+
 # One handoff owns at most one builder. Refuse to launch a duplicate while a
 # prior builder for this handoff is still alive — the failure mode where a
 # second builder races the first and corrupts a freeze. The marker holds the
@@ -199,6 +341,8 @@ if [ -n "$HANDOFF" ]; then
     fi
   fi
 fi
+
+stop_existing_bridges
 
 LAUNCHED=""
 while IFS=$'\t' read -r h m e pm custom; do
