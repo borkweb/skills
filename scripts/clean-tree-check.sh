@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check whether the working tree is clean.
 # Exits 0 (clean) or 1 (dirty). On dirty, prints the short status to stdout.
-# Used by: qa, design-review, document-release.
+# Used by: qa, design-review.
 
 set -u
 

@@ -3,9 +3,8 @@
 # Order: existing PR target -> repo default branch -> "main".
 # Prints the branch name to stdout. Always exits 0 (always returns something usable).
 #
-# Used by: ship, review, review-security, design-review, document-release,
-# qa, qa-only, plan-deep-review, plan-eng-review, plan-design-review,
-# plan-devex-review, autoplan.
+# Used by: review, review-security, design-review, qa, qa-only,
+# plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review.
 
 set -u
 

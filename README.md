@@ -28,7 +28,6 @@ Or as a Claude Code [plugin](https://code.claude.com/docs/en/plugins)
 3. Run `/plan-eng-review` on any plan
 4. Run `/review` on any branch with changes
 5. Run `/qa` on your staging URL
-6. Run `/ship` to merge, run tests, and open the PR
 
 ## Original and collected skills (`skills/core/`)
 
@@ -56,14 +55,12 @@ Workflow stack ported from gstack and adapted. Together the skills cover a full 
 
 Think → Plan → Build → Review → Test → Ship
 
-Each skill feeds into the next. `plan-session` writes a design doc that `plan-deep-review` reads. `plan-eng-review` writes a test plan that `qa` picks up. `review` catches bugs that `ship` verifies are fixed. Nothing falls through the cracks because every step knows what came before it.
+Each skill feeds into the next. `plan-session` writes a design doc that `plan-deep-review` reads. `plan-eng-review` writes a test plan that `qa` picks up. `review` catches bugs before they land. Nothing falls through the cracks because every step knows what came before it.
 
 | Skill | Specialist | Description |
 |-------|------------|-------------|
-| **autoplan** | Plan Pipeline | Auto-review pipeline. Chains plan-deep-review → plan-design-review → plan-eng-review → plan-devex-review at full depth, auto-deciding intermediate AskUserQuestion calls via 6 principles. Surfaces taste decisions and user challenges at one Final Approval Gate. |
 | **design-consultation** | Design Partner | Design system consultation — proposes aesthetic, typography, color, layout, spacing, and motion as a coherent package. Generates font+color preview pages and writes DESIGN.md. |
 | **design-review** | Designer Who Codes | Designer's eye QA on live sites. 10-category audit (~80 items), letter grades, AI slop detection. Fixes issues in source code with atomic commits and before/after verification. |
-| **document-release** | Doc Editor | Post-ship documentation sync. Reads all project docs, cross-references the diff, auto-updates factual content, polishes CHANGELOG voice, cleans up TODOS, and optionally bumps VERSION. |
 | **investigate** | Debugger | Systematic debugging with root cause investigation. Five phases: collect symptoms, pattern analysis, hypothesis testing, implementation, verification. Iron Law: no fixes without root cause. |
 | **plan-deep-review** | Product Owner | Deep plan review with four modes (Scope Expansion, Selective Expansion, Hold Scope, Scope Reduction). Challenges premises, maps failure modes, reviews architecture/security/performance/deployment. |
 | **plan-design-review** | Senior Designer | Designer's eye plan review. Rates design dimensions 0-10, explains what would make each a 10, then fixes the plan to get there. Covers info architecture, interaction states, user journey, AI slop risk, responsive, and accessibility. |
@@ -73,7 +70,6 @@ Each skill feeds into the next. `plan-session` writes a design doc that `plan-de
 | **qa** | QA Lead | Systematic QA testing with fix loop. Three tiers (Quick/Standard/Exhaustive), diff-aware mode, health scoring, framework-specific guidance. Fixes bugs atomically with before/after evidence. |
 | **qa-only** | QA Reporter | Report-only QA testing — finds and documents bugs with screenshots and health scores but never fixes anything. Same modes and rubric as qa. |
 | **review** | Staff Engineer | Pre-landing PR review. Two-pass analysis (critical + informational) for SQL safety, race conditions, LLM trust boundaries, enum completeness, and more. Fix-first: auto-fixes mechanical issues, asks about ambiguous ones. |
-| **ship** | Release Engineer | Fully automated ship workflow: merge base, run tests, pre-landing review, plan completion audit, version bump, CHANGELOG, bisectable commits, push, create PR. |
 
 ## Commands
 
@@ -99,7 +95,6 @@ Skills get an auto-generated invocation from the host agent — these commands a
 | Hook | Event | Description |
 |------|-------|-------------|
 | **pre-push** | Before `git push` | Runs critical-only review (SQL injection, auth gaps, race conditions) before any push. Blocks on critical issues. Under 30 seconds. |
-| **post-merge** | After `git merge` on default branch | Non-blocking reminders: nudges about `/document-release` when API/config/schema files changed. Also flags missed VERSION bumps and open TODOS items. |
 
 ## Credits
 

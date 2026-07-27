@@ -39,10 +39,8 @@
     "./skills/core/writing-commits",
     "./skills/core/writing-plans",
     "./skills/core/writing-sql",
-    "./skills/gstack/autoplan",
     "./skills/gstack/design-consultation",
     "./skills/gstack/design-review",
-    "./skills/gstack/document-release",
     "./skills/gstack/investigate",
     "./skills/gstack/plan-deep-review",
     "./skills/gstack/plan-design-review",
@@ -51,13 +49,12 @@
     "./skills/gstack/plan-session",
     "./skills/gstack/qa",
     "./skills/gstack/qa-only",
-    "./skills/gstack/review",
-    "./skills/gstack/ship"
+    "./skills/gstack/review"
   ],
   "interface": {
     "displayName": "bork",
     "shortDescription": "My Original and Collected skills, agents, commands, and hooks.",
-    "longDescription": "Bork bundles my Original skills (commit writing, SQL formatting, plan writing, humanize, council, caveman, discernment, red-pen, prototype, handoff, agents-md-lint, review-security, session-budget) with Collected skills ported from upstream sources like gstack (plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, qa, qa-only, design-review, design-consultation, investigate, ship, document-release). Includes supporting agents, commands, and hooks across the development cycle.",
+    "longDescription": "Bork bundles my Original skills (commit writing, SQL formatting, plan writing, humanize, council, caveman, discernment, red-pen, prototype, handoff, agents-md-lint, review-security, session-budget) with Collected skills ported from upstream sources like gstack (plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, review, qa, qa-only, design-review, design-consultation, investigate). Includes supporting agents, commands, and hooks across the development cycle.",
     "developerName": "Matthew Batchelder",
     "category": "Coding",
     "capabilities": [
@@ -68,8 +65,8 @@
     "privacyPolicyURL": "https://github.com/borkweb/skills",
     "termsOfServiceURL": "https://github.com/borkweb/skills/blob/main/LICENSE",
     "defaultPrompt": [
-      "Plan this feature with /plan-session, then run /autoplan to vet it",
-      "Review this branch with /review before I ship it",
+      "Plan this feature with /plan-session, then vet it with /plan-eng-review",
+      "Review this branch with /review before I merge it",
       "QA this feature and fix what you find"
     ],
     "brandColor": "#0F766E",

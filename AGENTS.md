@@ -43,7 +43,7 @@ Agents are markdown files with YAML frontmatter defining:
    - Emergency incident response for production issues and urgent bugs
    - Auto-invoked on: "production is broken", "urgent fix", "hotfix", "incident"
    - Fast-tracks triage → root cause → minimal fix → emergency PR
-   - Coordinates `/investigate`, `/review`, `/ship` in emergency mode
+   - Coordinates `/investigate` and `/review` in emergency mode
 
 ## Skills Architecture
 
@@ -71,11 +71,11 @@ Skills are organized into two buckets under `skills/`:
 
 **`skills/gstack/`** (Collected) — workflow stack ported from gstack:
 
-See [README.md](README.md) for the full list: plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, design-consultation, review, investigate, design-review, qa, qa-only, ship, document-release.
+See [README.md](README.md) for the full list: plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, design-consultation, review, investigate, design-review, qa, qa-only.
 
 ### Available Commands (bork plugin)
 
-Skill entrypoints: commit, handoff, humanize, offload, prototype, session-budget, plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, autoplan, review, review-security, qa, qa-only.
+Skill entrypoints: commit, handoff, humanize, offload, prototype, session-budget, plan-session, plan-deep-review, plan-eng-review, plan-design-review, plan-devex-review, review, review-security, qa, qa-only.
 
 Compound workflows: full-review (review → design-review → qa, with optional --security stage), preflight (fast pre-merge safety check), status (branch progress report).
 
@@ -86,7 +86,6 @@ Compound workflows: full-review (review → design-review → qa, with optional 
 ### Available Hooks (bork plugin)
 
 - **pre-push** — Critical-only review gate before pushes (SQL injection, auth gaps, race conditions)
-- **post-merge** — Non-blocking reminders after merging to default branch (doc updates, missed VERSION bumps, open TODOS)
 - **offload-reinit** (SessionStart) — surfaces persistent builder handoffs from `~/.agent-handoffs/offload/` for reattach
 
 ## Development Workflow
