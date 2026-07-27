@@ -209,16 +209,6 @@ If skipping, output: `Stage 4: QA — SKIPPED` and proceed to summary.
 
 ---
 
-## Step 6: Final Verification
-
-After all stages, run a final check:
-
-1. Run the project's test suite. If tests fail, report which stage's fixes broke them.
-2. Run `git log origin/<base>..HEAD --oneline` to show the full commit history including all fixes.
-3. Run `git diff origin/<base> --stat` for the final diff summary.
-
----
-
 ## Step 7: Pipeline Summary
 
 Output a combined summary of all stages. Include the Security Review block only if Stage 2 actually ran (either `--security` was passed or auto-detect triggered it).

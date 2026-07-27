@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: Quick pre-merge safety check. Runs the critical-only pass from /review, a smoke-test QA (homepage + affected pages), and a quick test run. Designed for small PRs where /full-review is overkill. Use when asked to "preflight", "quick check", "safe to merge?", "sanity check", or "pre-merge check".
+description: Quick pre-merge safety check. Classifies the full /review checklist, emits only critical findings, runs smoke-test QA (homepage + affected pages), and runs a quick test suite. Designed for small PRs where /full-review is overkill. Use when asked to "preflight", "quick check", "safe to merge?", "sanity check", or "pre-merge check".
 allowed-tools:
   - Bash
   - Read
@@ -63,11 +63,11 @@ If the user chooses A, hand off to `/full-review`. If B, continue.
 
 ---
 
-## Step 2: Critical-only code review
+## Step 2: Full classification, critical-only output
 
 Read the review checklist from `skills/gstack/review/checklist.md`.
 
-Run **ONLY Pass 1 (CRITICAL)** against the diff:
+Run both Pass 1 (CRITICAL) and Pass 2 (INFORMATIONAL) against the diff, classifying each candidate by confidence and severity:
 - SQL & Data Safety
 - Migration & Schema Safety
 - Race Conditions & Concurrency
@@ -76,7 +76,7 @@ Run **ONLY Pass 1 (CRITICAL)** against the diff:
 - Enum & Value Completeness
 - API Contract Breaking Changes
 
-Skip Pass 2 (INFORMATIONAL) entirely. Skip design review. Skip adversarial review.
+Skip design review and adversarial review; apply the severity filter only when producing preflight output.
 
 **For any CRITICAL finding:**
 - AUTO-FIX if mechanical (missing WHERE clause, unsanitized input)
@@ -166,7 +166,7 @@ Auto-fixed N issues. Remember to commit the fixes before merging.
 ## Important Rules
 
 - **Speed over thoroughness.** This is a 2-minute check, not a 20-minute review.
-- **Critical only.** Don't flag informational issues — save those for `/full-review`.
+- **Critical output only.** Do not narrow the search by severity; after classification, emit only CRITICAL findings and retain lower-severity findings for `/full-review`.
 - **Auto-escalate.** If the diff is too big or too sensitive for preflight, say so immediately.
 - **Never block on informational findings.** The question is "will this break prod?" not "is this perfect?"
 - **Smoke test is optional.** If no browser or no running app, skip gracefully.

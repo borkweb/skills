@@ -342,7 +342,7 @@ AskUserQuestion:
 >
 > B) **DX POLISH** — The plan's DX scope is right. I'll make every touchpoint bulletproof: error messages, docs, CLI help, getting started. No scope additions, maximum rigor. (recommended for most reviews)
 >
-> C) **DX TRIAGE** — Focus only on the critical DX gaps that would block adoption. Fast, surgical, for plans that need to ship soon.
+> C) **DX TRIAGE** — Within the Install and Hello World journey and passes 1 and 3, evaluate every gap, then surface only adoption blockers. Fast, surgical, for plans that need to ship soon.
 >
 > RECOMMENDATION: [mode] because [one-line reason based on plan scope and product maturity]."
 
@@ -452,7 +452,7 @@ Pattern:
 **Mode-specific behavior:**
 - **DX EXPANSION:** After fixing to 10, also ask "What would make this dimension best-in-class? What would make [persona] rave about it?" Present expansions as individual opt-in AskUserQuestions.
 - **DX POLISH:** Fix every gap. No shortcuts. Trace each issue to specific files/lines.
-- **DX TRIAGE:** Only flag gaps that would block adoption (score below 5). Skip gaps that are nice-to-have (score 5-7).
+- **DX TRIAGE:** Within the mode's scoped journey stages and review passes, evaluate every gap and record its score, confidence, and severity. Apply a presentation filter that surfaces only adoption-blocking gaps (score below 5); retain scores 5–7 as filtered findings.
 
 ## CRITICAL RULE — How to ask questions
 
@@ -787,7 +787,7 @@ If any AskUserQuestion goes unanswered, note it here. Never silently default.
 
 ```
              | DX EXPANSION     | DX POLISH          | DX TRIAGE
-Scope        | Push UP (opt-in) | Maintain           | Critical only
+Scope        | Push UP (opt-in) | Maintain           | Scoped review; blockers surfaced
 Posture      | Enthusiastic     | Rigorous           | Surgical
 Competitive  | Full benchmark   | Full benchmark     | Skip
 Magical      | Full design      | Verify exists      | Skip
@@ -803,15 +803,3 @@ Passes       | All 8, expanded  | All 8, standard    | Pass 1 + 3 only
 * One sentence max per option.
 * After each pass, pause and wait for feedback before moving on.
 * Rate before and after each pass for scannability.
-
-## EXIT PLAN MODE GATE (BLOCKING)
-
-Before calling ExitPlanMode, run this self-check. If any item fails, do the missing work — do NOT call ExitPlanMode:
-
-1. Confirm the **DX Scorecard** and **Completion Summary** tables were rendered to the user this session (the bordered ASCII tables from "Required Outputs"). The body prose summarizing pass ratings does NOT count — only the structured tables satisfy this check.
-2. Confirm a **DX Readiness Verdict** was issued — one of DX-READY, DX-READY WITH CONDITIONS, or NEEDS DX WORK. The verdict must be consistent with the ratings: if any pass is below 6/10 OR TTHW exceeds 2x the target chosen in 0C, the verdict cannot be DX-READY.
-3. Confirm the plan was actually edited with the design decisions that were resolved (this skill's output is a better plan, not a document about the plan). The Persona Card, Empathy Narrative, Magical Moment Specification, and Journey Map all belong in the plan file, not just in conversation.
-4. Confirm every non-trivial gap was surfaced via AskUserQuestion (one issue per question), per the Anti-shortcut clause above. Friction points from 0F and confusion points from 0G must each have had their own question.
-5. If unresolved decisions exist, confirm they were listed under "Unresolved Decisions" — never silently defaulted.
-
-Failing this gate and calling ExitPlanMode anyway is a contract violation — the user sees a review that skipped the deliverable and will (correctly) reject it. Self-deception failure mode to watch for: feeling "done" after rating passes and writing critique prose. The interactive walkthrough (one gap, one AskUserQuestion, plan edited with the resolution) IS the work; the DX Scorecard, Completion Summary, and DX Readiness Verdict are the evidence it happened. All are required.

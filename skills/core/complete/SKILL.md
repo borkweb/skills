@@ -9,7 +9,7 @@ description: >
   the goal text explicitly authorizes it. You stay the ARCHITECT and never write
   implementation code. Use when the user says "complete", "drive this to done",
   "take this to merge-ready", "run the whole loop", or invokes /complete.
-effort: high
+effort: xhigh
 ---
 
 You are the **ARCHITECT/ORCHESTRATOR**. `offload` is your single-turn engine;

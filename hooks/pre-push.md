@@ -1,6 +1,6 @@
 ---
 name: pre-push
-description: Pre-push safety net. Runs the critical-only review checklist (SQL injection, auth bypasses, race conditions, API contract breaks) before any push. Fast — checks only the CRITICAL pass from /review. Blocks the push if unresolved critical issues are found. Designed to catch catastrophic bugs without slowing down normal development.
+description: Pre-push safety net. Classifies the full review checklist and emits only critical findings (SQL injection, auth bypasses, race conditions, API contract breaks) before any push. Fast — reports only the CRITICAL pass from /review. Blocks the push if unresolved critical issues are found. Designed to catch catastrophic bugs without slowing down normal development.
 event: pre-push
 allowed-tools:
   - Bash
@@ -11,7 +11,7 @@ allowed-tools:
 
 # Pre-Push Safety Net
 
-This hook runs automatically before `git push`. It executes the CRITICAL-only pass from the `/review` checklist to catch catastrophic issues before they reach the remote.
+This hook runs automatically before `git push`. It classifies both passes from the `/review` checklist, then emits only CRITICAL findings that could cause catastrophic remote failures.
 
 **Design goal:** Fast enough that developers don't bypass it. Under 30 seconds for typical diffs.
 
@@ -55,11 +55,11 @@ DIFF_STAT=$(git diff origin/$BASE --shortstat)
 
 ---
 
-## Step 3: Critical-only review
+## Step 3: Full classification, critical-only gate output
 
 Read the review checklist from `skills/gstack/review/checklist.md`.
 
-Run **ONLY the CRITICAL categories** against the diff:
+Run all CRITICAL and INFORMATIONAL checklist categories against the diff, assigning confidence and severity before filtering. These seven CRITICAL categories are the ones the gate blocks on:
 
 1. **SQL & Data Safety** — Raw SQL without parameterization, missing WHERE on UPDATE/DELETE, SQL injection vectors
 2. **Migration & Schema Safety** — Destructive migrations without reversibility, data-loss operations
@@ -113,7 +113,7 @@ To push anyway: git push --no-verify (use with caution)
 ## Important Rules
 
 - **Speed is everything.** This hook must complete in under 30 seconds. If it's slow, developers will bypass it.
-- **Critical only.** No informational findings. No design review. No style nitpicks. Just "will this break prod?"
+- **Critical gate output only.** After classification, report and block only on CRITICAL findings; suppress informational, design, and style findings from hook output.
 - **No auto-fixing.** This is a gate, not a fixer. Report and block — the developer fixes.
 - **Quiet when clean.** One line of output when everything is fine. Developers shouldn't dread seeing the hook output.
 - **Smart skip.** Docs-only and test-only changes skip the review entirely. Don't waste time checking README changes for SQL injection.

@@ -55,7 +55,7 @@ These rules auto-answer every intermediate question:
 
 Every auto-decision is classified:
 
-**Mechanical** — one clearly right answer. Auto-decide silently. Examples: run the adversarial subagent (always yes), reduce scope on a complete plan (always no).
+**Mechanical** — one clearly right answer. Auto-decide silently. Example: reduce scope on a complete plan (always no). Running a subagent is never automatic.
 
 **Taste** — reasonable people could disagree. Auto-decide with recommendation, but surface at the final gate. Three natural sources:
 1. **Close approaches** — top two are both viable with different tradeoffs.
@@ -107,7 +107,7 @@ Auto-decide replaces the USER'S judgment with the 6 principles. It does NOT repl
 - Skip a section because "it doesn't apply" without stating what you checked and why
 - Produce a summary instead of the required output (e.g., "architecture looks good" instead of the ASCII dependency graph the section requires)
 
-"No issues found" is a valid output for a section — but only after doing the analysis. State what you examined and why nothing was flagged (1-2 sentences minimum). "Skipped" is never valid for a non-skip-listed section.
+"No issues found" is valid only after doing the analysis. State what you examined and why nothing was flagged, using no more words than the evidence needs. "Skipped" is never valid for a non-skip-listed section.
 
 ---
 
@@ -165,7 +165,6 @@ For each phase that runs, read the corresponding SKILL.md if you can locate it; 
 - Review Pacing (autoplan forces a faster pace — auto-decided, not user-paced)
 - PRE-REVIEW SYSTEM AUDIT (already done in Step 3)
 - Prerequisite Skill Offer
-- EXIT PLAN MODE GATE (autoplan has its own gate at Phase 4)
 
 Follow ONLY the review-specific methodology, sections, and required outputs.
 
@@ -193,9 +192,11 @@ Follow plan-deep-review's methodology at full depth. Override: every AskUserQues
 - **Alternatives:** pick highest completeness (P1). If tied, pick simplest (P5). If top 2 are close → mark TASTE DECISION.
 - **Scope expansion:** in blast radius + < 1d CC → approve (P2). Outside → defer to TODOS.md (P3). Duplicates → reject (P4). Borderline (3-5 files) → mark TASTE DECISION.
 - **All 12 review sections (from plan-deep-review):** run fully, auto-decide each issue, log every decision.
-- **Outside voice:** run an independent Claude subagent (foreground, blocking — do NOT use run_in_background).
+- **Outside voice:** Dispatch only if this phase has the workflow's highest-impact unresolved judgment and no outside-voice subagent has run; otherwise skip.
 
 ### Outside Voice — Claude Subagent
+
+Only in the selected outside-voice phase, run the following independent reviewer; otherwise skip this section and its consensus table.
 
 Run an independent reviewer via the Agent tool. Subagent prompt:
 
@@ -243,7 +244,7 @@ Step 0 (0A-0F from plan-deep-review) — run each and produce:
 
 Sections 1-12 from plan-deep-review — for EACH section, run the evaluation criteria:
 - Sections WITH findings: full analysis, auto-decide each issue, log to audit trail
-- Sections with NO findings: 1-2 sentences stating what was examined and why nothing was flagged. NEVER compress to a one-liner.
+- Sections with NO findings: state what was examined and why nothing was flagged, using no more words than the evidence needs.
 - Section 12 (Design): run only if UI scope was detected in Phase 0
 
 ### Mandatory outputs from Phase 1
@@ -265,8 +266,7 @@ Do NOT begin Phase 2 until all Phase 1 outputs are written and the premise gate 
 
 **Pre-Phase 2 checklist (verify before starting):**
 - [ ] Deep review completion summary produced
-- [ ] Deep review outside voice ran (or noted unavailable)
-- [ ] Deep review consensus table produced
+- [ ] Deep outside voice and consensus table completed if Phase 1 was selected; otherwise noted skipped
 - [ ] Premise gate passed (user confirmed)
 - [ ] Phase-transition summary emitted
 
@@ -284,9 +284,11 @@ Follow plan-design-review's methodology at full depth. Override: every AskUserQu
 - **Structural issues** (missing states, broken hierarchy): auto-fix (P5)
 - **Aesthetic/taste issues:** mark TASTE DECISION
 - **Design system alignment:** auto-fix if DESIGN.md exists and fix is obvious
-- **Outside voice:** run independent Claude subagent (foreground, blocking)
+- **Outside voice:** Dispatch only if this phase has the workflow's highest-impact unresolved judgment and no outside-voice subagent has run; otherwise skip.
 
 ### Outside Voice — Claude Subagent
+
+Only in the selected outside-voice phase, run the following independent reviewer; otherwise skip this section and its consensus table.
 
 Subagent prompt:
 
@@ -304,7 +306,7 @@ No prior-phase context — subagent must be truly independent.
 ### Required execution checklist (Design)
 
 1. Step 0 from plan-design-review: rate completeness 0-10, check DESIGN.md, map existing patterns
-2. Outside voice runs; present under `OUTSIDE VOICE (design — independent review):` header; produce design consensus table (same format as Deep)
+2. If Design is the selected outside-voice phase, run the reviewer and produce the consensus table; otherwise record skipped.
 3. Passes 1-10 from plan-design-review: run each, rate 0-10, auto-decide each issue. DISAGREE items from the consensus table → raised in the relevant pass with both perspectives.
 
 ### Mandatory outputs from Phase 2
@@ -323,8 +325,7 @@ No prior-phase context — subagent must be truly independent.
 **Pre-Phase 3 checklist (verify before starting):**
 - [ ] All Phase 1 items confirmed
 - [ ] Design completion summary written (or "skipped — no UI scope")
-- [ ] Design outside voice ran (if Phase 2 ran)
-- [ ] Design consensus table produced (if Phase 2 ran)
+- [ ] Design outside voice and consensus table completed if Phase 2 was selected; otherwise noted skipped
 - [ ] Phase-transition summary emitted
 
 ---
@@ -339,9 +340,11 @@ Follow plan-eng-review's methodology at full depth. Override: every AskUserQuest
 - **Architecture choices:** explicit over clever (P5). If subagent disagrees with valid reason → TASTE DECISION. Scope changes both voices agree on → USER CHALLENGE.
 - **Test gaps:** always add tests for new codepaths (P1). Test plan goes in the plan file or conversation, not silently dropped.
 - **TODOS.md:** collect all deferred scope expansions from Phase 1, auto-write
-- **Outside voice:** run independent Claude subagent (foreground, blocking)
+- **Outside voice:** Dispatch only if this phase has the workflow's highest-impact unresolved judgment and no outside-voice subagent has run; otherwise skip.
 
 ### Outside Voice — Claude Subagent
+
+Only in the selected outside-voice phase, run the following independent reviewer; otherwise skip this section and its consensus table.
 
 Subagent prompt:
 
@@ -359,7 +362,7 @@ No prior-phase context — subagent must be truly independent.
 ### Required execution checklist (Eng)
 
 1. **Step 0 (Scope Challenge):** Read actual code referenced by the plan. Map each sub-problem to existing code. Run the complexity check. Produce concrete findings.
-2. **Outside voice runs;** present under `OUTSIDE VOICE (eng — independent review):` header; produce eng consensus table:
+2. If Eng is the selected outside-voice phase, run the reviewer and produce the consensus table; otherwise record skipped.
 
 ```
 ENG CONSENSUS TABLE:
@@ -420,9 +423,11 @@ Follow plan-devex-review's methodology at full depth. Override: every AskUserQue
 - **Error message quality:** always require problem + cause + fix + docs link (P1)
 - **API/CLI naming:** consistency wins over cleverness (P5)
 - **DX taste decisions** (e.g., opinionated defaults vs flexibility): mark TASTE DECISION
-- **Outside voice:** run independent Claude subagent (foreground, blocking)
+- **Outside voice:** Dispatch only if this phase has the workflow's highest-impact unresolved judgment and no outside-voice subagent has run; otherwise skip.
 
 ### Outside Voice — Claude Subagent
+
+Only in the selected outside-voice phase, run the following independent reviewer; otherwise skip this section and its consensus table.
 
 Subagent prompt:
 
@@ -440,7 +445,7 @@ No prior-phase context.
 ### Required execution checklist (DX)
 
 1. Auto-detect product type. Map the developer journey. Rate initial DX completeness 0-10. Assess TTHW.
-2. Outside voice runs; present under `OUTSIDE VOICE (DX — developer experience challenge):` header; produce DX consensus table:
+2. If DX is the selected outside-voice phase, run the reviewer and produce the consensus table; otherwise record skipped.
 
 ```
 DX CONSENSUS TABLE:
@@ -488,59 +493,6 @@ After each auto-decision, append a row to the audit trail. Keep it in conversati
 ```
 
 If a plan file exists, also write the audit trail to it under a `## Decision Audit Trail` heading using Edit (one row at a time, incrementally — never accumulate the entire table in conversation context).
-
----
-
-## Pre-Gate Verification
-
-Before presenting the Final Approval Gate, verify that required outputs were actually produced. Check the plan file and conversation for each item.
-
-**Phase 1 (Deep) outputs:**
-- [ ] Premise challenge with specific premises named (not just "premises accepted")
-- [ ] All applicable review sections have findings OR explicit "examined X, nothing flagged"
-- [ ] Error & Rescue Registry table produced (or noted N/A with reason)
-- [ ] Failure Modes Registry table produced (or noted N/A with reason)
-- [ ] "NOT in scope" section written
-- [ ] "What already exists" section written
-- [ ] Dream state delta written
-- [ ] Completion Summary produced
-- [ ] Outside voice ran (or noted unavailable)
-- [ ] Deep review consensus table produced
-
-**Phase 2 (Design) outputs — only if UI scope detected:**
-- [ ] All 10 passes evaluated with scores
-- [ ] Issues identified and auto-decided
-- [ ] Outside voice ran (or noted unavailable/skipped)
-- [ ] Design consensus table produced
-- [ ] Plan file edited with design decisions resolved
-
-**Phase 3 (Eng) outputs:**
-- [ ] Scope challenge with actual code analysis (not just "scope is fine")
-- [ ] Architecture ASCII diagram produced
-- [ ] Test diagram mapping codepaths to test coverage
-- [ ] "NOT in scope" section written
-- [ ] "What already exists" section written
-- [ ] Failure modes registry with critical gap assessment
-- [ ] Completion Summary produced
-- [ ] Outside voice ran (or noted unavailable)
-- [ ] Eng consensus table produced
-
-**Phase 3.5 (DX) outputs — only if DX scope detected:**
-- [ ] All 8 DX dimensions evaluated with scores
-- [ ] Developer journey map produced
-- [ ] Developer empathy narrative written
-- [ ] TTHW assessment with target
-- [ ] DX Implementation Checklist produced
-- [ ] Outside voice ran (or noted unavailable/skipped)
-- [ ] DX consensus table produced
-
-**Cross-phase:**
-- [ ] Cross-phase themes section drafted (or "no themes span phases")
-
-**Audit trail:**
-- [ ] Decision Audit Trail has at least one row per auto-decision (not empty)
-
-If ANY checkbox above is missing, go back and produce the missing output. Max 2 attempts — if still missing after retrying twice, proceed to the gate with a warning noting which items are incomplete. Do not loop indefinitely.
 
 ---
 
@@ -631,19 +583,7 @@ AskUserQuestion options:
 - **Never abort.** The user chose /autoplan. Respect that choice. Surface all taste decisions and user challenges at the final gate — never redirect mid-flow to an interactive review.
 - **Two gates.** The non-auto-decided AskUserQuestions are: (1) premise confirmation in Phase 1, and (2) User Challenges at the Final Gate. Everything else is auto-decided using the 6 principles.
 - **Log every decision.** No silent auto-decisions. Every choice gets a row in the audit trail.
-- **Full depth means full depth.** Do not compress or skip sections from the loaded skill files (except the skip list in Phase 0). "Full depth" means: read the code the section asks you to read, produce the outputs the section requires, identify every issue, and decide each one. A one-sentence summary of a section is not "full depth" — it is a skip. If you catch yourself writing fewer than 3 sentences for any review section, you are likely compressing.
+- **Full depth means evidence, not sentence count.** Execute every required section except Phase 0 skip-list items. Read the required code, produce the required outputs, identify every issue, and decide each one. For no-finding sections, state what was examined and why nothing was flagged, using no more words than the evidence needs.
 - **Artifacts are deliverables.** Test diagram, failure modes registry, error/rescue table, ASCII diagrams, DX scorecard — these must exist in the plan file or conversation when the review completes. If they don't exist, the review is incomplete.
 - **Sequential order.** Deep → Design → Eng → DX. Each phase builds on the last. NEVER run phases in parallel.
 - **Subagent failures don't block.** If the outside voice fails or times out in any phase, log `[single-voice]` and continue with the primary review only.
-
-## EXIT PLAN MODE GATE (BLOCKING)
-
-Before calling ExitPlanMode, run this self-check. If any item fails, do the missing work — do NOT call ExitPlanMode:
-
-1. Confirm all phase-transition summaries were emitted (Phase 1 → 2 → 3 → 3.5 → 4).
-2. Confirm the Pre-Gate Verification checklist was run, with any missing outputs either produced or noted as incomplete with reason.
-3. Confirm the Final Approval Gate was presented to the user via AskUserQuestion with at minimum: Plan Summary, Decisions Made tally, Review Scores, and the AskUserQuestion options A-E.
-4. Confirm the user chose an option (A/B/B2/C/D/E). If option B/B2/C/D was chosen, confirm follow-through completed (overrides applied, challenges answered, interrogation answered, or affected phases re-run).
-5. Confirm the Decision Audit Trail is non-empty and reflects the actual decisions made this run.
-
-Failing this gate and calling ExitPlanMode anyway is a contract violation — the user sees an autoplan that skipped the final gate or the underlying analysis, and will (correctly) reject it. Self-deception failure mode to watch for: feeling "done" after writing the gate text into conversation. The user actually responding to AskUserQuestion (and the follow-through on B/B2/C/D options) IS the work; the gate text is the prompt, not the completion.

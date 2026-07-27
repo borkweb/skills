@@ -175,14 +175,14 @@ Apply the minimal fix. **Do not refactor. Do not improve. Do not clean up.** The
 
 This is `/ship` in emergency mode. Streamlined for speed.
 
-### 4a. Critical-only review
+### 4a. Full classification, critical-only output
 
-Run ONLY the critical review pass (same as `/preflight`):
+Run both review passes and classify each candidate by confidence and severity. The CRITICAL categories are:
 - SQL safety
 - Auth gaps
 - Race conditions
 
-**Skip:** Informational review, design review, adversarial review.
+Apply a downstream emergency filter: report and act only on CRITICAL findings; retain lower-severity findings for post-incident review. Skip design review and adversarial review.
 
 ### 4b. Commit and push
 
