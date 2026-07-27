@@ -83,6 +83,8 @@ c. On wake, read the background task's final `WAITER:` line and branch:
      WAITER: builder-exited-without-ready → surface as a BLOCKER, pause, ask human
      WAITER: timeout …                    → surface, pause, ask human
      WAITER: builder-idle …               → builder alive but stalled: read the builder pane, judge blocked vs. slow, then answer it / re-dispatch / relaunch the bridge and keep waiting
+     WAITER: never-started …              → no builder ever appeared: read the dispatch output for a launch failure, fix the cause, re-dispatch. Surface as a BLOCKER if it repeats
+     WAITER: handoff-deleted …            → the handoff vanished mid-wait: STOP. Do not re-dispatch blindly — resolve the handoff path first, then ask the human
 d. Run the `offload` engine again (step a) — its step 0 picks up status
    results-ready and judges the raw gates against the frozen gates. Read the
    verdict it produces.
