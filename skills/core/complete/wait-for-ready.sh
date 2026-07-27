@@ -7,11 +7,25 @@
 # (Bash run_in_background); the harness re-invokes the session when it exits, so
 # the Claude side never polls and burns no tokens while waiting.
 #
-# Usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds]
-#   tmux_window      liveness target when inside tmux (default: builder)
-#   timeout_seconds  backstop so a wedged builder can't hang the loop (default 7200)
+# CLI contracts:
+#   wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]
+#   wait-for-ready.sh --reap
+#   tmux_window is accepted and ignored for caller compatibility.
+#   Defaults: timeout 7200s, idle 600s, WFR_GRACE=90s, WFR_POLL=5s,
+#   WFR_IDLE_CPU_CENTIS=200. Marker path is always "$HANDOFF.builder".
 #
-# Exit codes: 0 ready · 3 builder exited without ready · 4 timeout · 2 usage.
+# Exit codes: 0 ready/reap · 2 usage · 3 builder unavailable/handoff deleted ·
+#   4 timeout · 5 builder idle.
+#
+# WAITER output contracts:
+#   WAITER: ready
+#   WAITER: never-started after <n>s (status=<status>)
+#   WAITER: builder-exited-without-ready (status=<status>)
+#   WAITER: handoff-deleted (status=<status>)
+#   WAITER: timeout after <n>s (status=<status>)
+#   WAITER: builder-idle after <n>s (pid=<pid> cpu=<sec>s status=<status>)
+#   WAITER: reaped pid=<pid> handoff=<path>
+#   WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]
 set -uo pipefail
 
 HANDOFF="${1:-}"
