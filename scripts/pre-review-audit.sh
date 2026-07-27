@@ -5,7 +5,7 @@
 # Usage: pre-review-audit.sh [base-branch]
 #
 # Used by: plan-deep-review, plan-eng-review, plan-design-review,
-# plan-devex-review, review, ship (pre-flight).
+# plan-devex-review, review.
 
 set -u
 

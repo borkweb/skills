@@ -26,6 +26,5 @@ The handoff is read by another agent, so its shape is fixed. Produce exactly the
 ## Rules
 
 - Don't duplicate content already captured in other artifacts (PRDs, plans, ADRs, issues, commits, diffs). Reference them by path or URL instead — that's what **Pointers** is for.
-- Before writing the file, validate the draft against the structure above: all eight headings present, named exactly, in order, and **Next steps** genuinely actionable from a cold start. Fix anything that doesn't conform rather than shipping a malformed doc.
 - If a section has no real content, write `None.` under it rather than padding with filler or inventing items to fill space. An empty **Open questions** is fine; a fabricated one is not.
 - Keep it tight. A handoff is a launchpad, not a transcript.

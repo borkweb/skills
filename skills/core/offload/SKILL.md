@@ -10,7 +10,7 @@ description: >
   never writes implementation code. Use when the user says "offload", "hand this
   to codex", "hand this to a builder", "architect mode", "have codex build this",
   or invokes /offload.
-effort: high
+effort: xhigh
 ---
 
 You are the **ARCHITECT**. The **BUILDER** is whichever harness

@@ -66,7 +66,6 @@ Scan the slice from Step 1. Tag each signal with what it suggests:
 |---|---|
 | Assistant asked a clarifying question the user answered with a stable preference | Skill should default that preference or check it upfront. |
 | User said "no", "don't", "actually" and redirected | Missing rule or wrong default. |
-| User ran a verification command (`grep`, `ls`, `cat`, test runner) after the assistant produced output | Skill should verify before returning. |
 | Assistant produced output that didn't compile / didn't match style / referenced a missing file | Missing precondition check or context-gathering step. |
 | User added context that should have been gathered automatically (file paths, conventions, prior decisions) | Missing discovery step. |
 | User re-prompted because the output drifted past scope | Missing scope-guard rule. |

@@ -4,7 +4,7 @@
 # If no base branch is given, calls detect-base-branch.sh.
 # Prints up to 50 filenames (one per line). Empty output = no frontend changes.
 #
-# Used by: review, ship (Step 3.5), design-review.
+# Used by: review, design-review.
 
 set -u
 

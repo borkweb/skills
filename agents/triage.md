@@ -1,6 +1,6 @@
 ---
 name: triage
-description: Emergency triage agent for production incidents and urgent bugs. Auto-invoked when the user says "this is broken", "production issue", "urgent fix", "hotfix", "incident", "prod is down", "critical bug", "emergency", "on-fire", or reports errors with urgency language. Routes to the appropriate workflow — /investigate for root cause, fast-track /review + /ship for the fix. Operates in emergency mode with streamlined processes.
+description: Emergency triage agent for production incidents and urgent bugs. Auto-invoked when the user says "this is broken", "production issue", "urgent fix", "hotfix", "incident", "prod is down", "critical bug", "emergency", "on-fire", or reports errors with urgency language. Routes to the appropriate workflow — /investigate for root cause, fast-track /review for the fix. Operates in emergency mode with streamlined processes.
 tools: Bash, Read, Write, Edit, Grep, Glob, Agent, AskUserQuestion, WebSearch
 proactive: true
 color: red
@@ -173,16 +173,16 @@ Apply the minimal fix. **Do not refactor. Do not improve. Do not clean up.** The
 
 ## Phase 4: Ship (fast track)
 
-This is `/ship` in emergency mode. Streamlined for speed.
+Emergency-mode release. Streamlined for speed.
 
-### 4a. Critical-only review
+### 4a. Full classification, critical-only output
 
-Run ONLY the critical review pass (same as `/preflight`):
+Run both review passes and classify each candidate by confidence and severity. The CRITICAL categories are:
 - SQL safety
 - Auth gaps
 - Race conditions
 
-**Skip:** Informational review, design review, adversarial review.
+Apply a downstream emergency filter: report and act only on CRITICAL findings; retain lower-severity findings for post-incident review. Skip design review and adversarial review.
 
 ### 4b. Commit and push
 

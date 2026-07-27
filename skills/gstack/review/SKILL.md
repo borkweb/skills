@@ -239,16 +239,6 @@ Apply fixes for items where the user chose "Fix." Output what was fixed.
 
 If no ASK items exist (everything was AUTO-FIX), skip the question entirely.
 
-### Verification of claims
-
-Before producing the final review output:
-- If you claim "this pattern is safe" → cite the specific line proving safety
-- If you claim "this is handled elsewhere" → read and cite the handling code
-- If you claim "tests cover this" → name the test file and method
-- Never say "likely handled" or "probably tested" — verify or flag as unknown
-
-**Rationalization prevention:** "This looks fine" is not a finding. Either cite evidence it IS fine, or flag it as unverified.
-
 ---
 
 ## Step 10: Documentation staleness check

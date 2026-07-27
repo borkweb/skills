@@ -171,7 +171,7 @@ Also check:
 - `TODOS.md` for related known issues
 - `git log` for prior fixes in the same area — **recurring bugs in the same files are an architectural smell**, not a coincidence
 
-**External pattern search:** If the bug doesn't match a known pattern above, use WebSearch (or dispatch an Agent for parallel search) for:
+**External pattern search:** If the bug doesn't match a known pattern above, use WebSearch for:
 - "{framework} {generic error type}" — **sanitize first:** strip hostnames, IPs, file paths, SQL, customer data. Search the error category, not the raw message.
 - "{library} {component} known issues"
 
@@ -332,7 +332,7 @@ Status:          DONE | DONE_WITH_CONCERNS | BLOCKED
 - **If fix touches >5 files → AskUserQuestion** about blast radius before proceeding.
 - **Evidence Log is mandatory.** Update it after every significant action. If you lose track of what you've checked, the investigation will loop.
 - **Quick-pass escalation:** If a "simple" bug resists the first hypothesis, escalate to Full investigation immediately. Don't burn time on a second quick guess.
-- **Parallel investigation:** For complex bugs, use the Agent tool to dispatch parallel searches (e.g., searching for related issues while tracing code, or checking multiple potential root causes simultaneously).
+- **Parallel investigation:** For complex bugs with independent search lanes, dispatch at most two read-only agents. Keep hypothesis selection, reproduction, and root-cause synthesis in the parent.
 - **Completion status:**
   - DONE — root cause found, fix applied, regression test written, all tests pass
   - DONE_WITH_CONCERNS — fixed but cannot fully verify (e.g., intermittent bug, requires staging)

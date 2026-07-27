@@ -1,7 +1,7 @@
 {
 	"name": "bork",
 	"description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, and shipping across the dev cycle.",
-	"version": "2.16.1",
+	"version": "3.0.0",
 	"author": {
 		"name": "Matthew Batchelder",
 		"email": "borkweb@gmail.com"
@@ -23,10 +23,8 @@
 		"./skills/core/writing-commits",
 		"./skills/core/writing-plans",
 		"./skills/core/writing-sql",
-		"./skills/gstack/autoplan",
 		"./skills/gstack/design-consultation",
 		"./skills/gstack/design-review",
-		"./skills/gstack/document-release",
 		"./skills/gstack/investigate",
 		"./skills/gstack/plan-deep-review",
 		"./skills/gstack/plan-design-review",
@@ -35,7 +33,6 @@
 		"./skills/gstack/plan-session",
 		"./skills/gstack/qa",
 		"./skills/gstack/qa-only",
-		"./skills/gstack/review",
-		"./skills/gstack/ship"
+		"./skills/gstack/review"
 	]
 }

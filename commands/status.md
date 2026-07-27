@@ -68,8 +68,6 @@ Detect which workflow skills have been run by scanning for their artifacts:
 | `/review` | Commit messages contain `[AUTO-FIXED]` or PR body contains "Pre-Landing Review" |
 | `/design-review` | Commit messages contain `fix(design):` |
 | `/qa` | Commit messages contain `fix(qa):` |
-| `/ship` | PR exists and is not draft |
-| `/document-release` | Commit messages contain `docs:` after the last feature commit |
 
 Also check:
 - `TODOS.md` for open items related to this branch
@@ -98,9 +96,8 @@ Use this dependency map to pick the next action based on what's been detected:
 | Implementation done | `/review` | Code needs review before testing |
 | `/review` | `/qa` or `/design-review` (if frontend) | Reviewed code needs testing |
 | `/design-review` | `/qa` | Design is fixed — functional QA next |
-| `/qa` | `/ship` | QA passed — ship |
-| `/ship` | `/document-release` | Shipped — update docs |
-| `/document-release` | `/plan-session` for next feature | Cycle complete — start next iteration |
+| `/qa` | Open the PR and merge | QA passed — ready to land |
+| Merged | `/plan-session` for next feature | Cycle complete — start next iteration |
 
 Then output the readiness assessment:
 
@@ -135,7 +132,7 @@ NEXT STEPS
 ──────────
 Based on current progress, suggested next action(s):
 → [specific recommendation, e.g., "Run /review — no code review detected yet"]
-→ [e.g., "Run /ship — code is reviewed, QA'd, and tests pass"]
+→ [e.g., "Open the PR — code is reviewed, QA'd, and tests pass"]
 ```
 
 ---

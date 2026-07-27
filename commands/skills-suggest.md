@@ -42,7 +42,7 @@ If the result is empty, stop with: "No session transcripts found in the window."
 
 ## Step 2: Dispatch parallel scanners
 
-For each project bucket, dispatch an Agent subagent (`subagent_type: "general-purpose"`) with this prompt:
+Partition project buckets into at most three balanced groups. Dispatch one Agent subagent per group (`subagent_type: "general-purpose"`); each scans its assigned buckets sequentially and returns separate per-project sections.
 
 > Scan the JSONL transcript files in `<project-dir>` modified after `<since-date>`. Each line is a JSON message; `role: "user"` lines are the user's prompts.
 >
@@ -56,7 +56,7 @@ For each project bucket, dispatch an Agent subagent (`subagent_type: "general-pu
 >
 > Output as compact markdown — one section per cluster/pair. Cap total output at 2KB per project. No commentary, no preamble.
 
-Run all subagents in parallel (single message, multiple Agent calls). If there are more than 10 buckets, batch in waves of 10 to avoid overload.
+Run the three or fewer subagents in parallel.
 
 ---
 
@@ -101,7 +101,7 @@ One entry per candidate, ordered by score descending. Each entry includes: label
 Same shape, but each entry includes: what the assistant generates, what the user verifies manually after, the failure mode that the verification catches, and occurrence count.
 
 ### Top pick
-One-paragraph reasoning for why this is the pick. Then a **Drafted SKILL.md** subsection containing a real, ready-to-save SKILL.md file: YAML frontmatter (name, description with 3-5 trigger phrases, allowed-tools), a 2-3 sentence framing, a "When to trigger" bullet list with example prompts, a "Workflow" section with explicit Generate / Verify / Report steps (the Verify step names the command or tool used and how to interpret the result), and an "Important rules" list. Present it inside a fenced code block so the user can copy-paste.
+One-paragraph reasoning for why this is the pick. Then a **Drafted SKILL.md** subsection containing a real, ready-to-save SKILL.md file: YAML frontmatter (name, description with 3-5 trigger phrases, allowed-tools), a 2-3 sentence framing, a "When to trigger" bullet list with example prompts, a "Workflow" section with explicit Generate / Report steps, and an "Important rules" list. Present it inside a fenced code block so the user can copy-paste.
 
 ### Tool gap analysis
 For the top pick, list:

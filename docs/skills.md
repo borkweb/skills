@@ -14,8 +14,6 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 | [`/design-review`](#design-review) | **Designer Who Codes** | Live-site visual audit + fix loop. 80-item audit, then fixes what it finds. Atomic commits, before/after screenshots. |
 | [`/qa`](#qa) | **QA Lead** | Test your app, find bugs, fix them with atomic commits, re-verify. Auto-generates regression tests for every fix. |
 | [`/qa-only`](#qa-only) | **QA Reporter** | Same methodology as /qa but report only. Use when you want a pure bug report without code changes. |
-| [`/ship`](#ship) | **Release Engineer** | Sync main, run tests, audit coverage, push, open PR. One command. |
-| [`/document-release`](#document-release) | **Doc Editor** | Update all project docs to match what you just shipped. Catches stale READMEs automatically. |
 
 ### Commands
 
@@ -37,7 +35,6 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 | Hook | What it does |
 |------|-------------|
 | [pre-push](#pre-push) | Critical-only review gate before every push. Catches catastrophic bugs in under 30 seconds. |
-| [post-merge](#post-merge) | Non-blocking reminders after merging to main. Nudges about doc updates and dependency audits. |
 
 ---
 
@@ -307,39 +304,6 @@ Same methodology as `/qa` but report-only — finds and documents bugs with scre
 
 ---
 
-## `/ship`
-
-This is **release machine mode**.
-
-Once you've decided what to build, nailed the plan, and run review, you don't want more talking. You want execution.
-
-`/ship` syncs with the base branch, runs tests, does a pre-landing review, updates changelog/version if the repo expects it, pushes, and creates the PR. One command.
-
-A lot of branches die when the interesting work is done and only the boring release work is left. Humans procrastinate that part. AI should not.
-
----
-
-## `/document-release`
-
-This is **doc editor mode**.
-
-After `/ship` creates the PR but before it merges, `/document-release` reads every documentation file and cross-references it against the diff. It updates file paths, command lists, project structure trees, and anything that drifted.
-
-```
-You:   /document-release
-
-Claude: Analyzing 21 files changed across 3 commits. Found 8 documentation files.
-
-        README.md: updated skill count from 9 to 10, added new skill to table
-        CLAUDE.md: added new directory to project structure
-        CONTRIBUTING.md: current — no changes needed
-        TODOS.md: marked 2 items complete, added 1 new item
-
-        All docs updated and committed. PR body updated with doc diff.
-```
-
----
-
 ## `/full-review`
 
 The complete review pipeline in one command.
@@ -413,7 +377,7 @@ Claude: STATUS REPORT
 
 ## Workflow Orchestrator (agent)
 
-A proactive agent that detects where you are in the pipeline and suggests the next step. It understands the full dependency graph between skills — that `/plan-session` feeds into `/plan-eng-review`, that `/review` should come before `/qa`, that `/document-release` follows `/ship`.
+A proactive agent that detects where you are in the pipeline and suggests the next step. It understands the full dependency graph between skills — that `/plan-session` feeds into `/plan-eng-review`, and that `/review` should come before `/qa`.
 
 It triggers automatically when you complete a skill, finish writing code, or ask "what's next?" It never runs skills itself — it recommends.
 
@@ -434,11 +398,3 @@ After the fix lands, outputs a monitoring checklist and recommends follow-up act
 A silent safety net. Runs the critical-only review checklist before every `git push` — SQL injection, auth bypasses, race conditions, API contract breaks. Under 30 seconds.
 
 Smart enough to skip docs-only and test-only changes. Blocks the push if it finds something catastrophic. One line of output when clean.
-
----
-
-## Post-Merge Hook
-
-Non-blocking reminders after merging to the default branch. Checks whether the merge touched API routes, config files, or schema — and if docs weren't updated, nudges about running `/document-release`. If features were added but VERSION wasn't bumped, notes that too.
-
-Quiet when nothing needs attention.
