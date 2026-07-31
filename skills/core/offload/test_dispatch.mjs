@@ -1,7 +1,7 @@
 // test_dispatch.mjs — stub frontends + harness binaries on PATH and assert
 // candidate selection, template contents, and frontend branch selection.
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,6 +50,18 @@ const unameReports = (os) => {
 const BLOCK = join(BOX, 'block.md');
 writeFileSync(BLOCK, 'BUILDER BLOCK CONTENTS\n');
 
+// validate_args requires the handoff to be a real file, so the fixture lives in
+// BOX rather than pointing at a path that may not exist on the host.
+const HANDOFF = join(BOX, 'handoff.md');
+writeFileSync(HANDOFF, '---\nstatus: dispatched\n---\n');
+
+// Codex home fixture: a user-configured notify (must be chained, not replaced)
+// and a sessions dir (the activity sidecar target). CODEX_HOME is always set in
+// run() so the host's real ~/.codex never leaks into assertions.
+const CODEX_HOME = join(BOX, 'codex-home');
+mkdirSync(join(CODEX_HOME, 'sessions'), { recursive: true });
+writeFileSync(join(CODEX_HOME, 'config.toml'), 'notify = ["/opt/orig-notify", "turn-ended"]\n');
+
 // Constrained PATH: stubs first, node's own dir (dispatch shells out to node),
 // then system dirs only — the host's real harness binaries (pi, codex, ...)
 // must never leak into candidate resolution.
@@ -65,7 +77,7 @@ writeConfig([{ harness: 'codex' }]);
 const run = (extraEnv, args = []) => {
   rmSync(LOG, { force: true });
   const stdout = execFileSync(
-    'bash', [DISPATCH, BOX, BLOCK, '/tmp/handoff.md', 'sess-Z', ...args],
+    'bash', [DISPATCH, BOX, BLOCK, HANDOFF, 'sess-Z', ...args],
     {
       encoding: 'utf8',
       // HERDR_ENV / HERDR_WORKSPACE_ID are cleared by default so a real herdr
@@ -73,7 +85,7 @@ const run = (extraEnv, args = []) => {
       // herdr tests opt back in explicitly.
       env: {
         ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
-        BORKWEB_SKILLS_CONFIG: CONFIG,
+        BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME,
         PATH: TEST_PATH, ...extraEnv,
       },
     },
@@ -140,6 +152,60 @@ test('model and effort flow into the codex command', () => {
   writeConfig([{ harness: 'codex' }]);
 });
 
+// --- deterministic turn-end wiring ---
+test('codex launch installs the turn-end notify hook chained to the user notify', () => {
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  const script = launchScriptOf(log);
+  assert.ok(script.includes('notify'), 'notify config missing');
+  assert.ok(script.includes('notify-turn-ended.sh'), 'wrapper missing from notify argv');
+  assert.ok(script.includes(HANDOFF), 'handoff path missing from notify argv');
+  assert.ok(script.includes('/opt/orig-notify'), 'user notify program not chained');
+});
+
+test('codex notify hook works without a user config.toml notify line', () => {
+  rmSync(join(CODEX_HOME, 'config.toml'), { force: true });
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  const script = launchScriptOf(log);
+  assert.ok(script.includes('notify-turn-ended.sh'), 'wrapper missing with no user notify');
+  assert.ok(!script.includes('/opt/orig-notify'), 'phantom chain with no user notify');
+  writeFileSync(join(CODEX_HOME, 'config.toml'), 'notify = ["/opt/orig-notify", "turn-ended"]\n');
+});
+
+test('claude launch installs Stop/Notification hooks touching the turn-end marker', () => {
+  writeConfig([{ harness: 'claude' }]);
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  const script = launchScriptOf(log);
+  assert.ok(script.includes('--settings'), 'settings flag missing');
+  assert.ok(script.includes('Stop'), 'Stop hook missing');
+  assert.ok(script.includes('Notification'), 'Notification hook missing');
+  assert.ok(script.includes(`${HANDOFF}.turn-ended`), 'marker path missing from hook command');
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('dispatch clears a stale turn-end marker and writes the codex activity sidecar', () => {
+  writeFileSync(`${HANDOFF}.turn-ended`, '');
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
+  assert.match(log, /^tmux new-window/m);
+  assert.ok(!existsSync(`${HANDOFF}.turn-ended`), 'stale turn-end marker not cleared');
+  assert.equal(
+    readFileSync(`${HANDOFF}.activity`, 'utf8').trim(),
+    join(CODEX_HOME, 'sessions'),
+    'activity sidecar should point at the codex sessions dir',
+  );
+});
+
+test('claude activity sidecar points at the claude projects dir', () => {
+  const home = join(BOX, 'home');
+  mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
+  writeConfig([{ harness: 'claude' }]);
+  run({ TMUX: '/tmp/tmux-1,1,0', HOME: home });
+  assert.equal(
+    readFileSync(`${HANDOFF}.activity`, 'utf8').trim(),
+    join(home, '.claude', 'projects'),
+  );
+  writeConfig([{ harness: 'codex' }]);
+});
+
 test('first candidate missing from PATH falls through to the next', () => {
   // pi is not stubbed -> harness.mjs skips it; claude launches.
   writeConfig([{ harness: 'pi' }, { harness: 'claude' }]);
@@ -196,7 +262,7 @@ test('headless path skips interactive-only harnesses for the next candidate', ()
 });
 
 // --- duplicate-builder guard (one handoff owns at most one builder) ---
-const MARKER = '/tmp/handoff.md.builder';
+const MARKER = `${HANDOFF}.builder`;
 const cleanMarker = () => rmSync(MARKER, { force: true });
 
 test('refuses to launch when a live builder marker already exists', () => {

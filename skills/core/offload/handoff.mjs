@@ -11,6 +11,9 @@
 //   node handoff.mjs reattach <path> <sessionId> [--steal] -> take over doc for sessionId, print path
 //   node handoff.mjs status   <path> <value> [--steal]     -> set status + bump updated (ownership-guarded)
 //   node handoff.mjs ready    <path> [--steal]             -> status=results-ready + bump updated (ownership-guarded)
+//   node handoff.mjs blocked  <path> [--steal]             -> status=blocked + bump updated (ownership-guarded); the
+//                                                             builder calls this before stopping on a mid-slice blocker
+//                                                             so the wait bridge wakes the architect to arbitrate
 //   node handoff.mjs end      <path>                      -> delete doc
 //   node handoff.mjs prune                                -> TTL reap
 //
@@ -203,10 +206,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     case 'reattach': reattach(pos[0], pos[1], steal); break;
     case 'status':   setStatus(pos[0], pos[1], steal); break;
     case 'ready':    setStatus(pos[0], 'results-ready', steal); break;
+    case 'blocked':  setStatus(pos[0], 'blocked', steal); break;
     case 'end':      end(pos[0]); break;
     case 'prune':    prune(); break;
     default:
-      process.stderr.write('usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|end|prune} ...\n');
+      process.stderr.write('usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|end|prune} ...\n');
       process.exit(2);
   }
 }
