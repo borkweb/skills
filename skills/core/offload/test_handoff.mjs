@@ -102,6 +102,19 @@ test('status sets an arbitrary status value for the owning session', () => {
   assert.match(readFileSync(p, 'utf8'), /status: blocked/);
 });
 
+test('blocked flips status to blocked for the owning session', () => {
+  const p = run(['init', repo('blocked'), 'sess-BLK']);
+  run(['blocked', p], { session: 'sess-BLK' });
+  assert.match(readFileSync(p, 'utf8'), /status: blocked/);
+});
+
+test('blocked REFUSES a write from a different session', () => {
+  const p = run(['init', repo('blocked-guard'), 'sess-OWNER']);
+  const err = runFail(['blocked', p], { session: 'sess-INTRUDER' });
+  assert.match(err, /refusing/);
+  assert.match(readFileSync(p, 'utf8'), /status: dispatched/);
+});
+
 test('status/ready REFUSE a write from a different session (the tripwire)', () => {
   const p = run(['init', repo('guard'), 'sess-OWNER']);
   const err = runFail(['ready', p], { session: 'sess-INTRUDER' });

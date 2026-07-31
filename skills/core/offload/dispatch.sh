@@ -127,6 +127,60 @@ else
   CANDIDATES=$(node "$SCRIPT_DIR"/harness.mjs select --plain)
 fi
 
+# --- deterministic turn-end wiring ------------------------------------------
+# The builder harness itself reports the moment it stops and waits for input, so
+# a blocked builder wakes the architect in seconds instead of relying on anyone
+# noticing. Codex: its `notify` hook fires on agent-turn-complete; we install a
+# wrapper that touches "$HANDOFF.turn-ended" (watched by wait-for-ready.sh) and
+# chains to whatever notify the user already configured. Claude: Stop and
+# Notification hooks via --settings do the same. Other harnesses fall back to
+# the bridge's idle/timeout backstops.
+
+# The user's own codex notify argv (config.toml `notify = [...]`), one element
+# per line, so installing our hook chains rather than replaces it.
+codex_user_notify() {
+  local cfg="${CODEX_HOME:-$HOME/.codex}/config.toml" line
+  [ -f "$cfg" ] || return 0
+  line=$(grep -m1 -E '^[[:space:]]*notify[[:space:]]*=' "$cfg" 2>/dev/null) || return 0
+  printf '%s\n' "$line" | grep -oE '"[^"]*"' | sed 's/^"//;s/"$//'
+}
+
+# TOML override value for `codex -c`: our wrapper first, then the user's argv.
+codex_notify_toml() {
+  local arr el
+  arr=$(printf '"%s","%s","%s"' bash "$SCRIPT_DIR/notify-turn-ended.sh" "$HANDOFF")
+  while IFS= read -r el; do
+    [ -n "$el" ] || continue
+    arr="$arr,\"$el\""
+  done < <(codex_user_notify)
+  printf 'notify=[%s]' "$arr"
+}
+
+# Claude settings JSON: Stop (turn over) and Notification (permission prompt)
+# both mean "builder stopped and needs input" — touch the same marker.
+claude_hook_settings() {
+  local hook
+  hook=$(printf '[{"hooks":[{"type":"command","command":"touch %s.turn-ended"}]}]' "$HANDOFF")
+  printf '{"hooks":{"Stop":%s,"Notification":%s}}' "$hook" "$hook"
+}
+
+# Activity sidecar for the wait bridge's idle detector: the harness's session-log
+# dir grows whenever the builder streams model output, which distinguishes
+# "working but CPU-quiet" from "stopped". No known dir -> no sidecar (the bridge
+# falls back to its CPU heuristic).
+write_activity_sidecar() {
+  local h="$1" dir=""
+  case "$h" in
+    codex)  dir="${CODEX_HOME:-$HOME/.codex}/sessions" ;;
+    claude) dir="$HOME/.claude/projects" ;;
+  esac
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    printf '%s\n' "$dir" > "$HANDOFF.activity"
+  else
+    rm -f "$HANDOFF.activity"
+  fi
+}
+
 # The verified interactive launch command per harness (prompt = block contents).
 # claude defaults to --permission-mode auto: routine work auto-approves, genuinely
 # risky commands still gate, and the builder tab is watchable so a rare prompt is
@@ -140,13 +194,15 @@ interactive_cmd() {
   [ "$pmode" != "-" ] && pm="$pmode"
   case "$h" in
     codex)
-      printf 'codex %s%s--dangerously-bypass-approvals-and-sandbox "$(cat %s)"' \
+      printf 'codex %s%s--config %s --dangerously-bypass-approvals-and-sandbox "$(cat %s)"' \
         "${m:+-m $(printf %q "$m") }" \
         "${e:+--config model_reasoning_effort=$(printf %q "$e") }" \
+        "$(printf %q "$(codex_notify_toml)")" \
         "$(printf %q "$BLOCK")" ;;
     claude)
-      printf 'claude --permission-mode %s %s"$(cat %s)"' \
-        "$(printf %q "$pm")" "${m:+--model $(printf %q "$m") }" "$(printf %q "$BLOCK")" ;;
+      printf 'claude --permission-mode %s %s--settings %s "$(cat %s)"' \
+        "$(printf %q "$pm")" "${m:+--model $(printf %q "$m") }" \
+        "$(printf %q "$(claude_hook_settings)")" "$(printf %q "$BLOCK")" ;;
     opencode)
       printf 'OPENCODE_CONFIG_CONTENT=%s opencode %s--prompt "$(cat %s)"' \
         "$(printf %q '{"permission":{"*":"allow"}}')" \
@@ -344,6 +400,10 @@ fi
 
 stop_existing_bridges
 
+# A turn-end marker left by the previous slice's builder is stale — the wake it
+# signaled was already delivered. Clear it so the new slice starts clean.
+[ -n "$HANDOFF" ] && rm -f "$HANDOFF.turn-ended"
+
 LAUNCHED=""
 while IFS=$'\t' read -r h m e pm custom; do
   [ -n "$h" ] || continue
@@ -356,6 +416,7 @@ while IFS=$'\t' read -r h m e pm custom; do
     echo "dispatch: no launch template for '$h'; trying next candidate" >&2
     continue
   fi
+  write_activity_sidecar "$h"
   LAUNCH=$(make_launch "$CMD")
   if launch_interactive "$LAUNCH" "$h"; then LAUNCHED="$h"; break; fi
   if run_headless "$h" "$m" "$e" "${custom:--}"; then LAUNCHED="$h"; break; fi

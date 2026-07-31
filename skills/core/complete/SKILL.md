@@ -80,9 +80,22 @@ b. After dispatch, launch the WAIT BRIDGE backgrounded (below). Then stop your
    bridge exits.
 c. On wake, read the background task's final `WAITER:` line and branch:
      WAITER: ready                       → go to (d)
+     WAITER: builder-blocked …            → the builder flipped the handoff to `blocked`: it stopped on a
+                                            mid-slice blocker and is waiting for a ruling. ARBITRATE NOW —
+                                            follow "Arbitrating a stopped builder" below. This is not a
+                                            judgment call and not a reason to wait.
+     WAITER: builder-awaiting-input …     → the harness's own turn-end hook reported the builder stopped
+                                            without flipping the handoff (blocked but didn't say so, hit a
+                                            permission prompt, or finished without running `ready`).
+                                            Same mandate: "Arbitrating a stopped builder" below.
+     WAITER: builder-idle …               → no handoff flip, no turn-end, no session-log activity, no CPU.
+                                            The idle detector now counts harness session-log writes as life,
+                                            so a quiet verdict means the builder is not thinking, not
+                                            streaming, and not writing — do NOT rationalize it as "just
+                                            slow" and do NOT relaunch the bridge on a hunch. Treat it
+                                            exactly like builder-awaiting-input.
      WAITER: builder-exited-without-ready → surface as a BLOCKER, pause, ask human
      WAITER: timeout …                    → surface, pause, ask human
-     WAITER: builder-idle …               → builder alive but stalled. Read the pane, judge blocked vs. slow. Blocked → answer it or re-dispatch. Slow → relaunch the bridge ONCE with a doubled idle window (`wait-for-ready.sh "$HANDOFF" builder <timeout> 1200`); I/O-bound work like a long fetch, clone, or install burns almost no CPU while genuinely working, so it can trip this falsely. If it reports idle a SECOND time, STOP relaunching — surface as a BLOCKER and ask the human. Never relaunch unbounded: each wake costs a full model invocation
      WAITER: never-started …              → no builder ever appeared: read the dispatch output for a launch failure, fix the cause, re-dispatch. Surface as a BLOCKER if it repeats
      WAITER: handoff-deleted …            → the handoff vanished mid-wait: STOP. Do not re-dispatch blindly — resolve the handoff path first, then ask the human
 d. Run the `offload` engine again (step a) — its step 0 picks up status
@@ -97,6 +110,27 @@ e. Branch on the verdict. offload's per-slice verdict now bundles an independent
 
 You are still inside this loop across every harness wake — a `WAITER:` line in a
 background result means resume here, not start over.
+
+### Arbitrating a stopped builder (builder-blocked / builder-awaiting-input / builder-idle)
+
+The lesson this procedure encodes: a builder once sat self-reported-blocked in
+its pane for ~2 hours because the only wake signal was "results ready" and the
+idle signal that DID fire was reasoned away as "probably just slow". The wake is
+deterministic now; so is the response. In order, no steps skipped:
+
+1. Read the builder pane (`herdr pane read <pane>` / `tmux capture-pane`) and
+   the handoff's `## Open disagreements`.
+2. Rule on every open item — accept / reject / modify, with one-line reasons —
+   and record the rulings in the handoff (genuine judgment calls go through
+   `council` first, per step 5).
+3. Resume the builder: send the ruling into its pane. If it finished the slice
+   but never ran `handoff.mjs ready`, tell it to report and stop.
+4. Relaunch the bridge (same command as after a dispatch) and end your turn.
+
+If after step 1 there is genuinely nothing to rule on — no disagreement, no
+question, no prompt, pane mid-stream — relaunch the bridge once and say so in
+your status line. If the same signal fires again, surface it as a BLOCKER and
+ask the human. Never relaunch more than once without new evidence.
 
 ### The wait bridge (push, not poll)
 
@@ -117,9 +151,21 @@ deterministically returns this session's one canonical handoff (it refuses if
 `<core>` as the parent of the offload dir from the SessionStart
 `[offload]` line (i.e. `wait-for-ready.sh` sits next to the offload dir under
 `skills/core/`). The script blocks — via `fswatch` when available, else a cheap
-detached sleep-poll — until the handoff flips to `results-ready`, the builder
-dies without reporting, or a backstop timeout fires, then exits with a final `WAITER:`
-line. All of that runs outside your context: zero tokens until it wakes you.
+detached sleep-poll — until one of its deterministic signals fires, then exits
+with a final `WAITER:` line. All of that runs outside your context: zero tokens
+until it wakes you. The signals, strongest first:
+
+- the handoff flips to `results-ready` (builder ran `handoff.mjs ready`) or
+  `blocked` (builder ran `handoff.mjs blocked` on a mid-slice blocker);
+- `"$HANDOFF.turn-ended"` appears — dispatch wires the harness's own turn-end
+  hook (codex `notify`, claude `Stop`/`Notification`) to touch it the moment
+  the builder stops and waits for input, so even a builder that never reports
+  wakes you in seconds, not hours;
+- idle backstop: builder pid alive but no session-log activity (the
+  `"$HANDOFF.activity"` sidecar dispatch writes) AND no CPU for the idle
+  window;
+- liveness/timeout backstops: builder died, never started, handoff deleted,
+  or the overall deadline passed.
 
 ## 5. Field questions through council
 

@@ -62,7 +62,10 @@ You never write implementation code. The repo's commits are the permanent code r
 
 0. **Re-resolve `$HANDOFF` first** (shell state is gone between turns):
    `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD")`. Then **pick up ready work** —
-   read `$HANDOFF`. If `status: results-ready`, judge it now.
+   read `$HANDOFF`. If `status: results-ready`, judge it now. If `status: blocked`,
+   the builder stopped mid-slice for a ruling: arbitrate its *Open disagreements*
+   (step 2), send the ruling into the builder's pane so it resumes, set
+   `status: dispatched`, and skip gate judgment — the slice is still in flight.
 1. **First turn of a project:** if there is no prior work, write the first **Next
    slice** (skip to step 4), then dispatch.
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
@@ -132,6 +135,13 @@ Finally run: node "<handoff.mjs path from the [offload] line>" ready "$OFFLOAD_H
   architect session exported into your env as $CLAUDE_CODE_SESSION_ID. Do NOT add
   --steal and do NOT hand-edit the path. If it refuses, you are pointed at the wrong
   document — STOP and report it; never route around the guard.)
+
+MID-SLICE BLOCKER — if you must stop for an architect ruling before the slice is
+done (a gate contradicts the code, a frozen contract is wrong, an assertion you
+believe is mistaken): record it under "## Open disagreements", then run
+  node "<handoff.mjs path from the [offload] line>" blocked "$OFFLOAD_HANDOFF"
+and stop. That status flip wakes the architect immediately. Never sit and wait
+without flipping the handoff — an unreported block is invisible.
 
 Five rules:
 1. The handoff + the commits are the memory — unrecorded work didn't happen.

@@ -16,7 +16,19 @@
 #   WFR_CPU_EXCLUDE defaults to SkyComputerUseClient|node_repl|mcp-context-a8c.
 #
 # Exit codes: 0 ready/reap · 2 usage · 3 builder unavailable/handoff deleted ·
-#   4 timeout · 5 builder idle.
+#   4 timeout · 5 builder idle · 6 builder needs the architect (blocked or
+#   awaiting input).
+#
+# Deterministic wake signals (both exit 6 — arbitrate, don't guess):
+#   status: blocked        — the builder flipped the handoff via `handoff.mjs blocked`
+#                            before stopping on a mid-slice blocker.
+#   "$HANDOFF.turn-ended"  — touched by the harness's own turn-end hook (codex
+#                            notify / claude Stop hook, wired by dispatch.sh):
+#                            the builder stopped and is waiting for input. A
+#                            marker already present at bridge START is stale
+#                            (its wake was delivered by the previous bridge
+#                            exit) and is consumed silently. `results-ready`
+#                            always wins over a simultaneous marker.
 #
 # WAITER output contracts:
 #   WAITER: ready
@@ -25,6 +37,8 @@
 #   WAITER: handoff-deleted (status=<status>)
 #   WAITER: timeout after <n>s (status=<status>)
 #   WAITER: builder-idle after <n>s (pid=<pid> cpu=<sec>s status=<status>)
+#   WAITER: builder-blocked (status=blocked)
+#   WAITER: builder-awaiting-input (status=<status>)
 #   WAITER: reaped pid=<pid> handoff=<path>
 #   WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]
 set -uo pipefail
@@ -93,6 +107,37 @@ GRACE="${WFR_GRACE:-90}"
 POLL="${WFR_POLL:-5}"
 IDLE_CPU_CENTIS="${WFR_IDLE_CPU_CENTIS:-200}"
 MARKER="$HANDOFF.builder"
+TURN_MARKER="$HANDOFF.turn-ended"
+
+# A marker present before we start is stale: its wake was already delivered by
+# the previous bridge exit and handled by the architect before this relaunch.
+rm -f "$TURN_MARKER"
+
+# Optional activity sidecar (written by dispatch.sh): directories, one per line,
+# whose file activity proves the builder is alive — typically the harness's own
+# session-log dir, which grows whenever the builder streams model output. Any
+# write there resets the idle timer exactly like a CPU burst, so I/O-bound work
+# that burns no CPU (the false-idle case) no longer trips the detector, while a
+# builder whose log is frozen still does.
+ACTIVITY_FILE="$HANDOFF.activity"
+ACTIVITY_STAMP=""
+if [ -f "$ACTIVITY_FILE" ]; then
+  ACTIVITY_STAMP=$(mktemp -t wfr-stamp.XXXXXX)
+  trap 'rm -f "$ACTIVITY_STAMP"' EXIT
+fi
+
+# True when any listed dir holds an entry modified after the stamp.
+activity_seen() {
+  local dir
+  [ -n "$ACTIVITY_STAMP" ] || return 1
+  while IFS= read -r dir; do
+    [ -n "$dir" ] && [ -e "$dir" ] || continue
+    if [ -n "$(find "$dir" -newer "$ACTIVITY_STAMP" -print -quit 2>/dev/null)" ]; then
+      return 0
+    fi
+  done < "$ACTIVITY_FILE"
+  return 1
+}
 
 status() {
   [ -f "$HANDOFF" ] || return 0
@@ -195,6 +240,24 @@ check() {
     exit 0
   fi
 
+  if [ "$current_status" = "blocked" ]; then
+    echo "WAITER: builder-blocked (status=blocked)"
+    exit 6
+  fi
+
+  if [ -f "$TURN_MARKER" ]; then
+    # The harness reported its turn over but the builder never flipped the
+    # handoff: it is sitting there waiting for input. Re-read status once so a
+    # `ready`-then-turn-end race still resolves to ready.
+    current_status=$(status)
+    if [ "$current_status" = "results-ready" ]; then
+      echo "WAITER: ready"
+      exit 0
+    fi
+    echo "WAITER: builder-awaiting-input (status=${current_status:-none})"
+    exit 6
+  fi
+
   [ -f "$MARKER" ] && saw_marker=true
   if $saw_marker; then
     if ! pid=$(builder_alive); then
@@ -211,6 +274,10 @@ check() {
     cpu="${cpu:-0}"
     if [ "$idle_pid" != "$pid" ]; then
       idle_pid="$pid"
+      idle_started="$now"
+      idle_cpu_base="$cpu"
+    elif activity_seen; then
+      touch "$ACTIVITY_STAMP"
       idle_started="$now"
       idle_cpu_base="$cpu"
     else
