@@ -337,8 +337,8 @@ case_turn_ended() {
   toucher=$!
   track_pid "$toucher"
 
-  run_waiter_capped "$output" 10 \
-    WFR_GRACE=3 WFR_POLL=1 \
+  run_waiter_capped "$output" 12 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=2 \
     "$WAITER" "$handoff" builder 20 15
   rc=$?
   stop_pid "$BUILDER_PID"
@@ -347,9 +347,57 @@ case_turn_ended() {
     fail_case "missing builder-awaiting-input"
 }
 
+case_turn_ended_subturn_churn() {
+  # THE REGRESSION: the notify hook fires on every agent turn, so a builder
+  # running its gates touches the marker over and over while plainly still
+  # working. Each touch used to wake the architect for nothing. A marker
+  # accompanied by ongoing activity is a sub-turn, not a stop — the bridge must
+  # sit through all of it and only report when the builder really reports.
+  local handoff output logdir writer toucher updater rc
+  handoff=$(new_handoff turn-churn)
+  output="$TEST_ROOT/turn-churn.out"
+  logdir="$TEST_ROOT/turn-churn-logs"
+  mkdir -p "$logdir"
+  printf '%s\n' "$logdir" > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    trap 'exit 0' TERM INT
+    while :; do echo tick >> "$logdir/rollout.jsonl"; sleep 1; done
+  ) &
+  writer=$!
+  track_pid "$writer"
+  (
+    trap 'exit 0' TERM INT
+    while :; do sleep 2; touch "$handoff.turn-ended"; done
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+  (
+    sleep 12
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 20 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=4 WFR_IDLE_CPU_CENTIS=200 \
+    "$WAITER" "$handoff" builder 30 25
+  rc=$?
+  stop_pid "$toucher"
+  stop_pid "$writer"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
+  ! grep -q 'WAITER: builder-awaiting-input' "$output" ||
+    { fail_case "sub-turn churn reported as awaiting-input"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "missing WAITER: ready"
+}
+
 case_stale_turn_marker_consumed() {
-  # A marker left over from an already-handled wake must be consumed at bridge
-  # start, not reported as a fresh awaiting-input event.
+  # A marker left over from an already-handled wake must be ignored at bridge
+  # start, not reported as a fresh awaiting-input event. A short settle window
+  # keeps this honest: it proves the marker was baselined, not merely waited out.
   local handoff output updater rc
   handoff=$(new_handoff stale-turn-marker)
   output="$TEST_ROOT/stale-turn-marker.out"
@@ -364,7 +412,7 @@ case_stale_turn_marker_consumed() {
   track_pid "$updater"
 
   run_waiter_capped "$output" 10 \
-    WFR_GRACE=3 WFR_POLL=1 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=1 \
     "$WAITER" "$handoff" builder 20 15
   rc=$?
   stop_pid "$BUILDER_PID"
@@ -373,6 +421,27 @@ case_stale_turn_marker_consumed() {
     { fail_case "stale marker reported as awaiting-input"; return 1; }
   grep -q '^WAITER: ready$' "$output" ||
     fail_case "missing WAITER: ready"
+}
+
+case_turn_marker_survives_bridge_start() {
+  # The old bridge DELETED the marker at start. That raced with the architect's
+  # own cleanup and with dispatch.sh: a turn-end landing in the window was
+  # erased and its wake never delivered. Baselining must leave the file alone.
+  local handoff output rc
+  handoff=$(new_handoff turn-marker-survives)
+  output="$TEST_ROOT/turn-marker-survives.out"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  touch "$handoff.turn-ended"
+
+  run_waiter_capped "$output" 6 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=1 \
+    "$WAITER" "$handoff" builder 20 15
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 124 ] || { fail_case "exit=$rc expected=124 (should still be waiting)"; return 1; }
+  [ -f "$handoff.turn-ended" ] ||
+    fail_case "bridge deleted the turn-ended marker instead of baselining it"
 }
 
 case_turn_ended_ready_wins() {
@@ -488,6 +557,8 @@ run_case idle-with-noisy-sidecar case_idle_with_noisy_sidecar
 run_case production-ratio case_production_ratio
 run_case blocked case_blocked
 run_case turn-ended case_turn_ended
+run_case turn-ended-subturn-churn case_turn_ended_subturn_churn
+run_case turn-marker-survives-bridge-start case_turn_marker_survives_bridge_start
 run_case stale-turn-marker-consumed case_stale_turn_marker_consumed
 run_case turn-ended-ready-wins case_turn_ended_ready_wins
 run_case activity-fresh-not-idle case_activity_fresh_not_idle

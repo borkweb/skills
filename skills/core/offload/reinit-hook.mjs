@@ -18,11 +18,17 @@ const files = listFiles(cwd);
 
 let context =
   `[offload] Handoff CLI is \`node "${CLI}"\` — subcommands: ` +
-  `resolve|init|path|list|reattach|status|ready|end. The offload handoff is session-scoped, ` +
-  `persistent for the life of the session, and never committed. Resolve YOUR own handoff ` +
-  `every turn with \`node "${CLI}" resolve "$PWD"\` (it derives the canonical path from ` +
-  `$CLAUDE_CODE_SESSION_ID and refuses if that is empty). Mutating writes are ownership-` +
-  `guarded: a write to a doc owned by another session is REFUSED unless you pass --steal.`;
+  `resolve|init|path|list|reattach|status|ready|blocked|end|prune|section|ledger|board. ` +
+  `The offload handoff is session-scoped, persistent for the life of the session, and never ` +
+  `committed. Resolve YOUR own handoff every turn with \`node "${CLI}" resolve "$PWD"\` (it ` +
+  `derives the canonical path from $CLAUDE_CODE_SESSION_ID and refuses if that is empty). ` +
+  `Mutating writes are ownership-guarded: a write to a doc owned by another session is ` +
+  `REFUSED unless you pass --steal. \`status\` takes a fixed vocabulary and refuses anything ` +
+  `else, including a missing value. Edit sections with \`section get|append|set|clear ` +
+  `<doc> "<heading>"\` rather than splicing markdown by hand. For a run with more than one ` +
+  `slice, the architect's ledger (\`ledger init|add|set\`) holds each slice's state — ` +
+  `including the terminal ones a handoff cannot express — and \`board "$PWD"\` reconciles it ` +
+  `against every doc, builder pid and wait bridge. Read progress from \`board\`, not memory.`;
 
 if (files.length === 1) {
   const f = files[0];
