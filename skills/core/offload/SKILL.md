@@ -39,6 +39,22 @@ You never write implementation code. The repo's commits are the permanent code r
   project, then `… reattach "<path>" "$CLAUDE_CODE_SESSION_ID" --steal`, and use the
   returned path. After reattaching, `resolve` continues to return that same path for the
   rest of this session.
+- **Edit a handoff's sections with the CLI, not by hand:**
+  `… section get|append|set|clear "$HANDOFF" "<heading>" [--text s|--file f]`.
+  Hand-splicing this file with ad-hoc regex is how the one document the loop
+  trusts gets corrupted. Section writes carry the same ownership guard.
+
+## The ledger (when a run has more than one slice)
+
+A handoff is ONE builder's mailbox. It cannot say what the other slices are
+doing, and it has no terminal state — so a slice whose builder finished and
+exited keeps reading as in-flight. When `/complete` is driving, it owns a
+`ledger` (`handoff.mjs ledger …`) that records every slice and its state, and
+`handoff.mjs board "$PWD"` reconciles that ledger against each doc, builder pid
+and bridge. If a ledger exists for this session, keep it current: set
+`--state dispatched` when you dispatch, and the terminal state
+(`accepted`/`rejected`/`merged`/`abandoned`) in the same turn you decide it.
+**Builders never write the ledger.**
 
 ## Resolve the builder harness
 
@@ -80,8 +96,10 @@ You never write implementation code. The repo's commits are the permanent code r
    matter how the gates read; spec a corrective slice for its blockers. **LAND WITH
    CAUTION** → record the caveats and rule (proceed or correct). This is your own
    gate, separate from the builder's internal reviewer agent. Record the gate verdict
-   and the review verdict (and any human ruling) under *Decisions + why*. Never let
-   the builder's prose set the verdict.
+   and the review verdict (and any human ruling) under *Decisions + why*, and write
+   the slice's terminal state to the ledger if one exists. Never let the builder's
+   prose set the verdict — *Work summary* is uncontrolled text that goes stale, and
+   a builder that has moved on rarely refreshes it.
 4. **Write the next slice spec** under *Next slice*: one-PR-sized, hard acceptance
    criteria, explicit out-of-scope, and a mandate that the builder verify
    APIs/formats against reality BEFORE coding. For a non-trivial slice, run the
@@ -91,8 +109,11 @@ You never write implementation code. The repo's commits are the permanent code r
    this slice aren't yet frozen, freeze them under *Frozen gates* now (never edit
    them after results exist).
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
-6. **Emit the builder block** (below), write it into *Next slice*, set
-   `status: dispatched` via `… status "$HANDOFF" dispatched`, then dispatch.
+6. **Emit the builder block** (below), write it into *Next slice*
+   (`… section set "$HANDOFF" "Next slice" --file <block>`), set
+   `status: dispatched` via `… status "$HANDOFF" dispatched`, then dispatch. If a
+   ledger exists, record the slice on it in the same turn — id, title, branch,
+   worktree, handoff path, pane, `--state dispatched`.
 
 ## The builder block (always paste-ready)
 
@@ -130,11 +151,20 @@ update the session handoff at $OFFLOAD_HANDOFF:
      reproduce command. No logs, no narrative. This is the ONLY thing graded.
   - "## Work summary": files edited (paths), commit SHAs + subjects, done/stubbed/
      deferred, blockers. Pointers, not artifacts — no diffs, no logs.
+Refresh "## Work summary" whenever it stops being true — a summary left over
+from an earlier phase is worse than an empty one. Write handoff sections with
+  node "<handoff.mjs path from the [offload] line>" section append|set "$OFFLOAD_HANDOFF" "<heading>" --text '...'
+rather than editing the markdown by hand. Never touch the architect's ledger.
+
 Finally run: node "<handoff.mjs path from the [offload] line>" ready "$OFFLOAD_HANDOFF"
   (This is ownership-guarded — it writes ONLY if $OFFLOAD_HANDOFF belongs to the
   architect session exported into your env as $CLAUDE_CODE_SESSION_ID. Do NOT add
   --steal and do NOT hand-edit the path. If it refuses, you are pointed at the wrong
   document — STOP and report it; never route around the guard.)
+  `status` takes a fixed vocabulary — specced | dispatched | blocked |
+  results-ready | accepted | rejected | merged | abandoned. It REFUSES anything
+  else, including a missing value; a bad status is invisible to the architect's
+  bridge, which would then wait forever on a slice you already reported.
 
 MID-SLICE BLOCKER — if you must stop for an architect ruling before the slice is
 done (a gate contradicts the code, a frozen contract is wrong, an assertion you
@@ -183,7 +213,8 @@ launch; if the user declines, stop at the paste-ready block.
 - Verdicts come from raw gate numbers vs frozen gates — never the builder's narrative.
 - A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.
-- The handoff is session-scoped and never committed. Don't `git add` it.
+- Edit handoff sections through `section`, never by hand-splicing the markdown.
+- The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
 - Resolve `$HANDOFF` via `resolve` every turn; never hand-build a path or write to a
   doc from `list` you don't own. A `refusing:`/ownership error from the CLI means you
   are aimed at the wrong document — STOP and surface it, don't `--steal` past it.

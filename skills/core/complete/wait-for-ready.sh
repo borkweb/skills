@@ -12,8 +12,9 @@
 #   wait-for-ready.sh --reap
 #   tmux_window is accepted and ignored for caller compatibility.
 #   Defaults: timeout 7200s, idle 600s, WFR_GRACE=90s, WFR_POLL=5s,
-#   WFR_IDLE_CPU_CENTIS=200. Marker path is always "$HANDOFF.builder".
-#   WFR_CPU_EXCLUDE defaults to SkyComputerUseClient|node_repl|mcp-context-a8c.
+#   WFR_IDLE_CPU_CENTIS=200, WFR_TURN_SETTLE=45s. Marker path is always
+#   "$HANDOFF.builder". WFR_CPU_EXCLUDE defaults to
+#   SkyComputerUseClient|node_repl|mcp-context-a8c.
 #
 # Exit codes: 0 ready/reap · 2 usage · 3 builder unavailable/handoff deleted ·
 #   4 timeout · 5 builder idle · 6 builder needs the architect (blocked or
@@ -24,11 +25,26 @@
 #                            before stopping on a mid-slice blocker.
 #   "$HANDOFF.turn-ended"  — touched by the harness's own turn-end hook (codex
 #                            notify / claude Stop hook, wired by dispatch.sh):
-#                            the builder stopped and is waiting for input. A
-#                            marker already present at bridge START is stale
+#                            the builder stopped and is waiting for input.
+#
+#                            The hook fires on EVERY agent turn, including the
+#                            short sub-turns a builder ends while running its
+#                            gates — so a bare marker means "a turn ended", not
+#                            "the builder stopped". Taken literally it produced
+#                            ~16 false wakes per 2 genuine reports, and the
+#                            architect learned to `rm` the marker by hand to get
+#                            work done. So a fresh marker only opens a CANDIDATE
+#                            stop, confirmed after WFR_TURN_SETTLE seconds of no
+#                            CPU growth and no activity-sidecar writes. Any sign
+#                            of life inside that window retires the candidate as
+#                            the sub-turn it was.
+#
+#                            A marker already present at bridge START is stale
 #                            (its wake was delivered by the previous bridge
-#                            exit) and is consumed silently. `results-ready`
-#                            always wins over a simultaneous marker.
+#                            exit) and is ignored via an mtime baseline rather
+#                            than deleted — deleting it raced with dispatch.sh
+#                            and with the architect, silently eating real wakes.
+#                            `results-ready` always wins over a marker.
 #
 # WAITER output contracts:
 #   WAITER: ready
@@ -106,12 +122,25 @@ IDLE_SECONDS=${4:-600}
 GRACE="${WFR_GRACE:-90}"
 POLL="${WFR_POLL:-5}"
 IDLE_CPU_CENTIS="${WFR_IDLE_CPU_CENTIS:-200}"
+TURN_SETTLE="${WFR_TURN_SETTLE:-45}"
 MARKER="$HANDOFF.builder"
 TURN_MARKER="$HANDOFF.turn-ended"
 
+# Epoch mtime, portable across BSD (macOS) and GNU stat. Fails when absent.
+mtime() {
+  [ -e "$1" ] || return 1
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null
+}
+
 # A marker present before we start is stale: its wake was already delivered by
 # the previous bridge exit and handled by the architect before this relaunch.
-rm -f "$TURN_MARKER"
+# Baseline its mtime instead of deleting it — the delete raced with dispatch.sh
+# and with the architect's own cleanup, and a turn-end landing in that window
+# vanished with no trace.
+turn_baseline=$(mtime "$TURN_MARKER" 2>/dev/null || echo 0)
+turn_candidate=""
+turn_candidate_at=0
+turn_candidate_cpu=0
 
 # Optional activity sidecar (written by dispatch.sh): directories, one per line,
 # whose file activity proves the builder is alive — typically the harness's own
@@ -226,7 +255,9 @@ idle_started=0
 idle_cpu_base=0
 
 check() {
-  local now current_status pid cpu delta
+  # turn_baseline / turn_candidate* are deliberately NOT local: they carry the
+  # settle evaluation across polls, like idle_started does.
+  local now current_status pid cpu delta tm
   now=$(date +%s)
 
   if [ ! -f "$HANDOFF" ]; then
@@ -234,6 +265,7 @@ check() {
     exit 3
   fi
 
+  # A real report always wins, whatever the markers say.
   current_status=$(status)
   if [ "$current_status" = "results-ready" ]; then
     echo "WAITER: ready"
@@ -245,54 +277,70 @@ check() {
     exit 6
   fi
 
-  if [ -f "$TURN_MARKER" ]; then
-    # The harness reported its turn over but the builder never flipped the
-    # handoff: it is sitting there waiting for input. Re-read status once so a
-    # `ready`-then-turn-end race still resolves to ready.
+  [ -f "$MARKER" ] && saw_marker=true
+  if ! $saw_marker; then
+    if [ $(( now - started_at )) -ge "$GRACE" ]; then
+      echo "WAITER: never-started after $(( now - started_at ))s (status=${current_status:-none})"
+      exit 3
+    fi
+    if [ "$now" -ge "$deadline" ]; then
+      echo "WAITER: timeout after ${TIMEOUT}s (status=$(status_label))"
+      exit 4
+    fi
+    return
+  fi
+
+  # Liveness is resolved BEFORE the turn marker: a builder that already exited
+  # must report `builder-exited-without-ready` immediately, not sit through a
+  # settle window and then mislabel itself as awaiting input.
+  if ! pid=$(builder_alive); then
     current_status=$(status)
     if [ "$current_status" = "results-ready" ]; then
       echo "WAITER: ready"
       exit 0
     fi
-    echo "WAITER: builder-awaiting-input (status=${current_status:-none})"
-    exit 6
+    echo "WAITER: builder-exited-without-ready (status=${current_status:-none})"
+    exit 3
   fi
 
-  [ -f "$MARKER" ] && saw_marker=true
-  if $saw_marker; then
-    if ! pid=$(builder_alive); then
-      current_status=$(status)
-      if [ "$current_status" = "results-ready" ]; then
-        echo "WAITER: ready"
-        exit 0
-      fi
-      echo "WAITER: builder-exited-without-ready (status=${current_status:-none})"
-      exit 3
-    fi
+  cpu=$(cpu_centis "$pid")
+  cpu="${cpu:-0}"
 
-    cpu=$(cpu_centis "$pid")
-    cpu="${cpu:-0}"
-    if [ "$idle_pid" != "$pid" ]; then
-      idle_pid="$pid"
-      idle_started="$now"
-      idle_cpu_base="$cpu"
-    elif activity_seen; then
-      touch "$ACTIVITY_STAMP"
-      idle_started="$now"
-      idle_cpu_base="$cpu"
-    else
-      delta=$(( cpu - idle_cpu_base ))
-      if [ "$delta" -gt "$IDLE_CPU_CENTIS" ]; then
-        idle_started="$now"
-        idle_cpu_base="$cpu"
-      elif [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
-        echo "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})"
-        exit 5
-      fi
+  # Turn-end candidate. A fresh marker opens a candidate stop; any CPU growth or
+  # activity-sidecar write inside WFR_TURN_SETTLE retires it as a sub-turn.
+  if tm=$(mtime "$TURN_MARKER") && [ "${tm:-0}" -gt "${turn_baseline:-0}" ]; then
+    if [ "$tm" != "$turn_candidate" ]; then
+      turn_candidate="$tm"
+      turn_candidate_at="$now"
+      turn_candidate_cpu="$cpu"
     fi
-  elif [ $(( now - started_at )) -ge "$GRACE" ]; then
-    echo "WAITER: never-started after $(( now - started_at ))s (status=${current_status:-none})"
-    exit 3
+    if activity_seen; then
+      turn_baseline="$tm"; turn_candidate=""
+    elif [ $(( cpu - turn_candidate_cpu )) -gt "$IDLE_CPU_CENTIS" ]; then
+      turn_baseline="$tm"; turn_candidate=""
+    elif [ $(( now - turn_candidate_at )) -ge "$TURN_SETTLE" ]; then
+      echo "WAITER: builder-awaiting-input (status=${current_status:-none})"
+      exit 6
+    fi
+  fi
+
+  if [ "$idle_pid" != "$pid" ]; then
+    idle_pid="$pid"
+    idle_started="$now"
+    idle_cpu_base="$cpu"
+  elif activity_seen; then
+    touch "$ACTIVITY_STAMP"
+    idle_started="$now"
+    idle_cpu_base="$cpu"
+  else
+    delta=$(( cpu - idle_cpu_base ))
+    if [ "$delta" -gt "$IDLE_CPU_CENTIS" ]; then
+      idle_started="$now"
+      idle_cpu_base="$cpu"
+    elif [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
+      echo "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})"
+      exit 5
+    fi
   fi
 
   if [ "$now" -ge "$deadline" ]; then
