@@ -32,7 +32,24 @@ writeFileSync(
   `#!/usr/bin/env bash
 echo "herdr $*" >> "${LOG}"
 if [ "$1" = "tab" ] && [ "$2" = "create" ]; then
+  case "\${HERDR_STUB_MODE:-ok}" in
+    fail-create)
+      echo 'herdr: workspace wZ not found' >&2
+      exit 1
+      ;;
+    no-tab)
+      # A pane with no tab id: the builder did not get its own tab.
+      echo '{"result":{"root_pane":{"pane_id":"w9:p7","workspace_id":"w9"},"type":"pane_created"}}'
+      exit 0
+      ;;
+  esac
   echo '{"result":{"root_pane":{"agent_status":"unknown","cwd":"/r","pane_id":"w9:p7","tab_id":"w9:t7","workspace_id":"w9"},"tab":{"tab_id":"w9:t7"},"type":"tab_created"}}'
+fi
+if [ "$1" = "pane" ] && [ "$2" = "run" ]; then
+  if [ "\${HERDR_STUB_MODE:-ok}" = "fail-run" ]; then
+    echo 'herdr: pane w9:p7 is not accepting input' >&2
+    exit 1
+  fi
 fi
 if [ "$1" = "pane" ] && [ "$2" = "current" ]; then
   echo '{"result":{"pane":{"pane_id":"w5:p1","tab_id":"w5:t1","workspace_id":"w5"},"type":"pane_current"}}'
@@ -95,6 +112,33 @@ const run = (extraEnv, args = []) => {
   return { log, stdout };
 };
 
+// Like run(), but for the paths that now exit non-zero. Returns the captured
+// stderr plus whatever the herdr stub logged before the failure.
+const runFail = (extraEnv, args = []) => {
+  rmSync(LOG, { force: true });
+  let stderr = '';
+  let status = 0;
+  try {
+    execFileSync('bash', [DISPATCH, BOX, BLOCK, HANDOFF, 'sess-Z', ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
+        BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME,
+        PATH: TEST_PATH, ...extraEnv,
+      },
+    });
+    throw new Error('expected dispatch to fail but it exited 0');
+  } catch (e) {
+    if (!('status' in e) || e.status === 0) throw e;
+    stderr = String(e.stderr || '');
+    status = e.status;
+  }
+  let log = '';
+  try { log = readFileSync(LOG, 'utf8'); } catch {}
+  return { log, stderr, status };
+};
+
 // The launch-script path is logged by the frontend stub; read its contents to
 // assert the actual harness command dispatched into the pane/window.
 const launchScriptOf = (log) => {
@@ -115,6 +159,59 @@ test('herdr tab lands in THIS session workspace from HERDR_WORKSPACE_ID', () => 
   const { log } = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3' });
   assert.match(log, /^herdr tab create --workspace w3 .*builder/m);
   assert.doesNotMatch(log, /^herdr pane current/m);
+});
+
+// The dispatch line used to name only the root pane, so every downstream report
+// called the builder "pane wY:p22" and nobody could tell afterwards whether a
+// tab had actually been created. Name the tab and the workspace.
+test('the launch line names the tab and workspace, not just the pane', () => {
+  const { stdout } = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3' });
+  assert.match(stdout, /new herdr tab w9:t7/);
+  assert.match(stdout, /workspace w3/);
+  assert.match(stdout, /root pane w9:p7/);
+});
+
+// Inside herdr, falling through to `tmux new-window` puts the builder outside
+// herdr's tab model — a stray pane in the active workspace view — while still
+// printing a launch line. A failed tab create must stop the dispatch instead.
+test('a failed herdr tab create stops the dispatch — no tmux/Terminal fallback', () => {
+  const { log, stderr } = runFail({
+    HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', HERDR_STUB_MODE: 'fail-create',
+    TMUX: '/tmp/tmux-1,1,0',
+  });
+  assert.match(stderr, /FAILED to open a herdr tab in workspace w3/);
+  assert.match(stderr, /herdr: workspace wZ not found/, 'surfaces the herdr error it used to swallow');
+  assert.match(stderr, /refusing to fall back/);
+  assert.doesNotMatch(log, /^herdr pane run/m, 'nothing was launched');
+});
+
+// A response carrying a pane but no tab id is not a new tab.
+test('a pane with no tab id is treated as a failure, not a tab', () => {
+  const { stderr } = runFail({
+    HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', HERDR_STUB_MODE: 'no-tab',
+  });
+  assert.match(stderr, /tab='none'/);
+  assert.match(stderr, /pane='w9:p7'/, 'reports the pane it did get, for diagnosis');
+  assert.match(stderr, /refusing to fall back/);
+});
+
+// The tab opened but the harness never started in it: previously `pane run`'s
+// exit status was discarded and dispatch claimed success on an empty tab.
+test('a tab that opens but fails to run the harness is not reported as launched', () => {
+  const { stderr } = runFail({
+    HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', HERDR_STUB_MODE: 'fail-run',
+  });
+  assert.match(stderr, /tab w9:t7 was created but 'pane run' failed/);
+  assert.match(stderr, /the tab is open and empty/);
+});
+
+test('OFFLOAD_ALLOW_NON_HERDR restores the old fallback chain', () => {
+  const { log, stdout } = run({
+    HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', HERDR_STUB_MODE: 'fail-create',
+    OFFLOAD_ALLOW_NON_HERDR: '1', TMUX: '/tmp/tmux-1,1,0',
+  });
+  assert.match(log, /^tmux new-window/m);
+  assert.match(stdout, /new tmux window/);
 });
 
 test('herdr workspace falls back to `pane current` when env var is unset', () => {
