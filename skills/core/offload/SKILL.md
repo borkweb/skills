@@ -196,8 +196,13 @@ After printing the block, offer to launch the builder. On yes:
    through to the next candidate when a launch hard-fails; pass an explicit
    `harness[:model[:effort]]` 5th arg only when the user overrides the config.
 3. Relay the launcher's line (herdr tab / tmux window / Terminal / headless) so the
-   user knows where to watch. Inside a herdr TUI the builder lands in a new
-   `builder` tab; otherwise it falls back to tmux, then Terminal, then headless.
+   user knows where to watch — it names the tab, workspace and root pane, so quote
+   the tab id, not just the pane. Inside a herdr TUI the builder lands in a new
+   `builder` tab in **this session's workspace**, and that is the only frontend
+   used there: if `tab create` fails, dispatch exits non-zero with herdr's own
+   error rather than falling through to tmux/Terminal (which would put the builder
+   outside herdr's tabs). Surface that failure instead of re-dispatching blindly.
+   Outside herdr the chain is tmux, then Terminal, then headless.
 
 **Safety:** dispatch launches the builder with its permission gates relaxed —
 codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local

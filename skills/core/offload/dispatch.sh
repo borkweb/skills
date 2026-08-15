@@ -4,6 +4,10 @@
 # config via harness.mjs (ordered failover chain, quota-aware); a candidate that
 # cannot be launched falls through to the next. Frontend priority per candidate:
 # herdr tab (inside a herdr TUI) -> tmux window -> Terminal.app (macOS) -> headless.
+# Inside herdr the chain does NOT continue: a herdr tab is the only correct
+# frontend there, so a failed `tab create` exits non-zero rather than quietly
+# relocating the builder outside the tab model (set OFFLOAD_ALLOW_NON_HERDR=1 to
+# restore the old fall-through).
 # Interactive frontends run a generated launch script so no env/prompt has to be
 # escaped through the frontend's quoting layers.
 # Usage: dispatch.sh <repo_dir> <block_file> <handoff_path> <session_id> [<profile-spec>]
@@ -288,6 +292,17 @@ parse_pane_id() {
   fi
 }
 
+# Pull the new TAB's id out of `herdr tab create` JSON. A response carrying a pane
+# but no tab id is not a new tab — reporting it as one is how a builder ends up
+# somewhere other than where the dispatch line claims.
+parse_tab_id() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.result.tab.tab_id // .result.root_pane.tab_id // empty'
+  else
+    sed -n 's/.*"tab":{[^}]*"tab_id":"\([^"]*\)".*/\1/p'
+  fi
+}
+
 # Scrape the workspace_id out of `herdr pane current` JSON (socket fallback used only
 # when the injected env var is absent). Same jq-then-sed shape as parse_pane_id.
 parse_workspace_id() {
@@ -308,15 +323,39 @@ launch_interactive() {
     # Land the builder tab in THIS session's workspace, not herdr's active/default
     # one. herdr injects HERDR_WORKSPACE_ID into every pane; fall back to the
     # current pane's workspace over the socket if it is somehow unset.
-    local workspace="${HERDR_WORKSPACE_ID:-}" pane
+    local workspace="${HERDR_WORKSPACE_ID:-}" pane tab out err rc
     [ -z "$workspace" ] && workspace=$(herdr pane current --current 2>/dev/null | parse_workspace_id)
-    pane=$(herdr tab create ${workspace:+--workspace "$workspace"} --cwd "$REPO" --label builder --no-focus 2>/dev/null | parse_pane_id)
-    if [ -n "$pane" ]; then
-      herdr pane run "$pane" "bash $(printf %q "$launch")" >/dev/null 2>&1
-      echo "dispatch: launched $h in new herdr tab 'builder' (pane $pane) — switch with your herdr tab navigation."
-      return 0
+    err=$(mktemp -t herdr-tab-err 2>/dev/null) || err=""
+    out=$(herdr tab create ${workspace:+--workspace "$workspace"} --cwd "$REPO" \
+      --label builder --no-focus 2>"${err:-/dev/null}")
+    rc=$?
+    pane=$(printf '%s' "$out" | parse_pane_id)
+    tab=$(printf '%s' "$out" | parse_tab_id)
+    # Require a tab id, not just a pane: a pane without a new tab means the
+    # builder did NOT get its own tab, however the call exited.
+    if [ "$rc" -eq 0 ] && [ -n "$pane" ] && [ -n "$tab" ]; then
+      if herdr pane run "$pane" "bash $(printf %q "$launch")" >/dev/null 2>>"${err:-/dev/null}"; then
+        [ -n "$err" ] && rm -f "$err"
+        echo "dispatch: launched $h in new herdr tab $tab (workspace ${workspace:-?}, root pane $pane) — switch with your herdr tab navigation."
+        return 0
+      fi
+      echo "dispatch: herdr tab $tab was created but 'pane run' failed — the tab is open and empty." >&2
     fi
-    echo "dispatch: herdr detected but 'tab create' failed; falling back to tmux/Terminal/headless." >&2
+    # Inside a herdr session a herdr tab is the ONLY correct frontend. The old
+    # code fell through to `tmux new-window` here, which puts the builder outside
+    # herdr's tab model entirely — it surfaces as a stray pane in the active
+    # workspace view — while still printing a cheerful launch line. Silent
+    # relocation is worse than a failed dispatch: the architect then watches the
+    # wrong place and the bridge reports never-started. Fail loudly instead.
+    echo "dispatch: FAILED to open a herdr tab in workspace ${workspace:-<unresolved>} (herdr exit $rc, tab='${tab:-none}', pane='${pane:-none}')." >&2
+    [ -n "$err" ] && [ -s "$err" ] && sed 's/^/dispatch:   herdr: /' "$err" >&2
+    [ -n "$err" ] && rm -f "$err"
+    if [ -z "${OFFLOAD_ALLOW_NON_HERDR:-}" ]; then
+      echo "dispatch:   refusing to fall back to tmux/Terminal/headless from inside herdr — the builder would land outside your tabs." >&2
+      echo "dispatch:   fix the herdr error above and re-dispatch, or set OFFLOAD_ALLOW_NON_HERDR=1 to allow the old fallback chain." >&2
+      exit 1
+    fi
+    echo "dispatch:   OFFLOAD_ALLOW_NON_HERDR set — falling back to tmux/Terminal/headless." >&2
   fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
     tmux new-window -c "$REPO" -n builder "bash $(printf %q "$launch")"
