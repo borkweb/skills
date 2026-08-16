@@ -6,7 +6,7 @@
 // no owner. Every case below is a state the architect must not be able to
 // misreport from memory.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,10 +19,13 @@ const NODE = process.execPath;
 const BOX = mkdtempSync(join(tmpdir(), 'ldg-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 
-const run = (args, { session = 'arch' } = {}) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
+const run = (args, { session = 'arch', env: extra = {} } = {}) => {
+  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX, ...extra };
   delete env.CLAUDE_CODE_SESSION_ID;
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
+  // Real herdr must never be consulted by a test; only the cases that opt into
+  // the fake CLI below set HERDR_ENV.
+  if (!extra.HERDR_ENV) delete env.HERDR_ENV;
   return execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env }).trim();
 };
 
@@ -210,4 +213,141 @@ test('a corrupt ledger is surfaced, never silently overwritten', () => {
   writeFileSync(p, '{ this is not json');
   assert.match(runFail(['ledger', 'show', REPO]), /not valid JSON/);
   assert.ok(existsSync(p), 'left on disk for inspection');
+});
+
+// --- pane provenance -------------------------------------------------------
+//
+// These exist because of a run where five "dispatched" slices were never
+// dispatched: the architect hand-rolled each builder with `herdr tab create
+// --label <slug>` + `herdr agent start --tab <t> --split`, wrote the resulting
+// pane ids into the ledger, and armed wait bridges that could never fire — no
+// builder marker, no activity sidecar, no turn-end hook. Every row read
+// "dispatched" while nothing on the other end could report back. dispatch.sh
+// leaves a signature (tab labeled "builder", exactly one pane in it); the ledger
+// now refuses a pane that does not carry it.
+
+const FAKEBIN = join(BOX, 'fakebin');
+mkdirSync(FAKEBIN, { recursive: true });
+writeFileSync(join(FAKEBIN, 'herdr'), `#!/usr/bin/env bash
+# FAKE_PANE_TAB="pane=tab;pane=tab"   FAKE_TAB_INFO="tab=label:pane_count;..."
+lookup() { local kv k; for kv in \${1//;/ }; do k="\${kv%%=*}"; [ "$k" = "$2" ] && { printf '%s' "\${kv#*=}"; return 0; }; done; return 1; }
+case "$1 $2" in
+  "pane get")
+    t=$(lookup "$FAKE_PANE_TAB" "$3") || { echo "no such pane" >&2; exit 1; }
+    printf '{"result":{"pane":{"pane_id":"%s","tab_id":"%s"}},"type":"pane_info"}\\n' "$3" "$t" ;;
+  "tab get")
+    v=$(lookup "$FAKE_TAB_INFO" "$3") || { echo "no such tab" >&2; exit 1; }
+    printf '{"result":{"tab":{"tab_id":"%s","label":"%s","pane_count":%s}},"type":"tab_info"}\\n' "$3" "\${v%%:*}" "\${v##*:}" ;;
+  *) exit 2 ;;
+esac
+`);
+chmodSync(join(FAKEBIN, 'herdr'), 0o755);
+
+// A herdr session whose pane/tab topology is whatever the test declares.
+const inHerdr = (panes, tabs, extra = {}) => ({
+  env: {
+    HERDR_ENV: '1',
+    PATH: `${FAKEBIN}:${process.env.PATH}`,
+    FAKE_PANE_TAB: Object.entries(panes).map(([k, v]) => `${k}=${v}`).join(';'),
+    FAKE_TAB_INFO: Object.entries(tabs).map(([k, v]) => `${k}=${v}`).join(';'),
+    ...extra,
+  },
+});
+
+// dispatch.sh's own signature: one tab labeled "builder", holding one pane.
+const DISPATCHED = inHerdr({ 'w1:p9': 'w1:t9' }, { 'w1:t9': 'builder:1' });
+// The hand-rolled shape: the tab carries the slice's label and holds the empty
+// root pane plus the split the agent was started in.
+const HAND_ROLLED = inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' });
+
+test('ledger accepts a pane that carries dispatch.sh’s signature', () => {
+  const REPO = repo('pane-ok');
+  run(['ledger', 'init', REPO, 'g'], DISPATCHED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], DISPATCHED);
+  const s = JSON.parse(run(['ledger', 'set', REPO, '1', '--state', 'dispatched', '--pane', 'w1:p9'], DISPATCHED));
+  assert.equal(s.pane, 'w1:p9');
+});
+
+test('ledger refuses a pane whose tab is not labeled "builder"', () => {
+  const REPO = repo('pane-label');
+  run(['ledger', 'init', REPO, 'g'], HAND_ROLLED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], HAND_ROLLED);
+  const err = runFail(['ledger', 'set', REPO, '1', '--pane', 'w1:p38'], HAND_ROLLED);
+  assert.match(err, /refusing to record pane "w1:p38"/);
+  assert.match(err, /labeled "multicol", not "builder"/);
+  assert.equal(JSON.parse(run(['ledger', 'show', REPO], HAND_ROLLED)).slices[0].pane, '', 'nothing was written');
+});
+
+test('ledger refuses a pane in a builder tab that has been split', () => {
+  const REPO = repo('pane-split');
+  const SPLIT = inHerdr({ 'w1:p2': 'w1:t2' }, { 'w1:t2': 'builder:2' });
+  run(['ledger', 'init', REPO, 'g'], SPLIT);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], SPLIT);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--pane', 'w1:p2'], SPLIT), /holds 2 panes/);
+});
+
+test('ledger refuses a pane herdr has never heard of', () => {
+  const REPO = repo('pane-ghost');
+  run(['ledger', 'init', REPO, 'g'], DISPATCHED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], DISPATCHED);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--pane', 'w1:p404'], DISPATCHED), /does not know pane w1:p404/);
+});
+
+test('ledger add refuses an unverified pane too — not just set', () => {
+  const REPO = repo('pane-add');
+  run(['ledger', 'init', REPO, 'g'], HAND_ROLLED);
+  assert.match(
+    runFail(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--pane', 'w1:p38'], HAND_ROLLED),
+    /refusing to record pane/,
+  );
+});
+
+test('OFFLOAD_ALLOW_UNVERIFIED_PANE is the deliberate override', () => {
+  const REPO = repo('pane-override');
+  const OVERRIDE = inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }, { OFFLOAD_ALLOW_UNVERIFIED_PANE: '1' });
+  run(['ledger', 'init', REPO, 'g'], OVERRIDE);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], OVERRIDE);
+  assert.equal(
+    JSON.parse(run(['ledger', 'set', REPO, '1', '--pane', 'w1:p38'], OVERRIDE)).pane,
+    'w1:p38',
+  );
+});
+
+test('outside herdr a pane is unverifiable, not invalid', () => {
+  const REPO = repo('pane-no-herdr');
+  run(['ledger', 'init', REPO, 'g']);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't']);
+  assert.equal(JSON.parse(run(['ledger', 'set', REPO, '1', '--pane', 'tmux:builder'])).pane, 'tmux:builder');
+});
+
+test('board flags a live slice whose pane never came from dispatch.sh', () => {
+  const REPO = repo('pane-board');
+  const OVERRIDE = inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }, { OFFLOAD_ALLOW_UNVERIFIED_PANE: '1' });
+  run(['ledger', 'init', REPO, 'g'], OVERRIDE);
+  slice(REPO, '1', { state: 'dispatched', docStatus: 'dispatched', pid: process.pid });
+  run(['ledger', 'set', REPO, '1', '--pane', 'w1:p38'], OVERRIDE);
+  // Read the board WITHOUT the override: recording it is a choice, hiding it is not.
+  const out = board(REPO, inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }));
+  assert.match(out, /UNMANAGED PANE/);
+  assert.match(out, /wait bridge can never fire/);
+  assert.match(out, /1 needing attention/);
+});
+
+test('board leaves a terminal slice’s pane alone', () => {
+  const REPO = repo('pane-board-terminal');
+  const OVERRIDE = inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }, { OFFLOAD_ALLOW_UNVERIFIED_PANE: '1' });
+  run(['ledger', 'init', REPO, 'g'], OVERRIDE);
+  slice(REPO, '1', { state: 'accepted', docStatus: 'results-ready', pid: 'none' });
+  run(['ledger', 'set', REPO, '1', '--pane', 'w1:p38'], OVERRIDE);
+  assert.doesNotMatch(board(REPO, inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' })), /UNMANAGED PANE/);
+});
+
+test('board --no-pane opts out of the provenance probe', () => {
+  const REPO = repo('pane-board-off');
+  const OVERRIDE = inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }, { OFFLOAD_ALLOW_UNVERIFIED_PANE: '1' });
+  run(['ledger', 'init', REPO, 'g'], OVERRIDE);
+  slice(REPO, '1', { state: 'dispatched', docStatus: 'dispatched', pid: process.pid });
+  run(['ledger', 'set', REPO, '1', '--pane', 'w1:p38'], OVERRIDE);
+  const out = run(['board', REPO, '--no-git', '--no-pane'], inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }));
+  assert.doesNotMatch(out, /UNMANAGED PANE/);
 });

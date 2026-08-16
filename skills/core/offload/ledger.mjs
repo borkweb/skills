@@ -23,15 +23,20 @@
 //   node handoff.mjs ledger set   <cwd> <id> --state accepted [--verdict "..."] [--pr url]
 //                                       [--note n] [--pane w:p1] [--handoff p] [--branch b]
 //   node handoff.mjs ledger goal  <cwd> "<goal text>"
-//   node handoff.mjs board        <cwd> [--json] [--no-git]
+//   node handoff.mjs board        <cwd> [--json] [--no-git] [--no-pane]
 //
 // Ownership: the ledger filename is keyed on $CLAUDE_CODE_SESSION_ID, and every
 // write asserts the in-file `session` matches. There is no --steal: a ledger
 // belongs to exactly one architect.
+//
+// Provenance: `--pane` is checked against dispatch.sh's signature (see pane.mjs).
+// A pane that was not created by dispatch.sh is refused on write and flagged on
+// every board; OFFLOAD_ALLOW_UNVERIFIED_PANE=1 records it anyway.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { DIR, hash, field } from './dir.mjs';
+import { UNMANAGED_PANE_CONSEQUENCE, verifyPane } from './pane.mjs';
 
 // Slice lifecycle. The four terminal states are the point of the whole file:
 // without them a finished slice has nowhere to land and keeps reading as live.
@@ -114,6 +119,26 @@ function assertState(state) {
   }
 }
 
+// Recording a pane is the architect's claim that a builder was dispatched there.
+// Refuse the claim when the pane's provenance says otherwise: the alternative is
+// a ledger row that reads `dispatched` forever while nothing can ever report back.
+// `verifyPane` returning `skipped` means unverifiable (outside herdr, no CLI, no
+// pane) — accept those, they are not evidence of anything.
+function assertPane(pane) {
+  if (pane === undefined || pane === '') return;
+  if (process.env.OFFLOAD_ALLOW_UNVERIFIED_PANE === '1') return;
+  const v = verifyPane(pane);
+  if (v.skipped || v.verified) return;
+  die(
+    `refusing to record pane "${pane}" — it did not come from offload's dispatch.sh\n` +
+    `  ${v.reason}\n` +
+    `Every builder launch goes through the offload skill and its dispatch.sh, which\n` +
+    'creates a tab labeled "builder" and runs the harness in that tab\'s only pane.\n' +
+    `Recording a hand-started builder is worse than not recording it: ${UNMANAGED_PANE_CONSEQUENCE}.\n` +
+    'Re-dispatch through offload, or set OFFLOAD_ALLOW_UNVERIFIED_PANE=1 to record it anyway.',
+  );
+}
+
 // Apply only the keys actually supplied, so `set --state accepted` never blanks
 // the branch or the pane recorded three turns ago.
 function applyFields(slice, f) {
@@ -128,6 +153,7 @@ export function addSlice(cwd, sessionId, fields) {
   const { p, l } = loadOwned(cwd, sessionId);
   if (!fields.id) die('ledger add needs --id');
   assertState(fields.state);
+  assertPane(fields.pane);
   if (l.slices.some((s) => s.id === fields.id)) {
     die(`slice "${fields.id}" already exists in the ledger. Use: ledger set "${cwd}" ${fields.id} --state ...`);
   }
@@ -144,6 +170,7 @@ export function addSlice(cwd, sessionId, fields) {
 export function setSlice(cwd, sessionId, id, fields) {
   const { p, l } = loadOwned(cwd, sessionId);
   assertState(fields.state);
+  assertPane(fields.pane);
   const slice = l.slices.find((s) => s.id === id);
   if (!slice) {
     die(`no slice "${id}" in the ledger. Known: ${l.slices.map((s) => s.id).join(', ') || '(none)'}`);
@@ -221,7 +248,7 @@ function docAge(p) {
 
 // One slice's reconciled view: ledger state vs doc status vs process reality.
 // `flags` are the things that must never be silently absorbed into a summary.
-export function reconcile(slice, { bridges, withGit = true } = {}) {
+export function reconcile(slice, { bridges, withGit = true, withPane = true } = {}) {
   const flags = [];
   const doc = slice.handoff && existsSync(slice.handoff)
     ? { exists: true, status: field(slice.handoff, 'status'), age: docAge(slice.handoff) }
@@ -254,12 +281,22 @@ export function reconcile(slice, { bridges, withGit = true } = {}) {
   }
   if (slice.state === 'specced') flags.push('NOT DISPATCHED');
 
+  // A pane recorded before this check existed — or recorded past it with
+  // OFFLOAD_ALLOW_UNVERIFIED_PANE — still has to surface every wake. This is the
+  // row where the architect believes a builder is working and no signal can ever
+  // arrive, which is precisely what memory cannot see.
+  const pane = !terminal && withPane ? verifyPane(slice.pane) : null;
+  if (pane && !pane.skipped && !pane.verified) {
+    flags.push(`UNMANAGED PANE — ${pane.reason}; ${UNMANAGED_PANE_CONSEQUENCE}`);
+  }
+
   return {
     ...slice,
     terminal,
     doc,
     builder,
     bridged,
+    paneCheck: pane,
     git: withGit ? gitProbe(slice.cwd) : null,
     flags,
   };
@@ -270,14 +307,14 @@ const pad = (s, n) => {
   return v.length > n ? `${v.slice(0, n - 1)}…` : v.padEnd(n);
 };
 
-export function renderBoard(cwd, sessionId, { json = false, withGit = true } = {}) {
+export function renderBoard(cwd, sessionId, { json = false, withGit = true, withPane = true } = {}) {
   const p = ledgerFor(cwd, sessionId);
   const l = readLedger(p);
   if (!l) {
     return `BOARD: no ledger for this session.\nStart one: node handoff.mjs ledger init "${cwd}" "<goal>"\n`;
   }
   const bridges = armedBridges();
-  const rows = l.slices.map((s) => reconcile(s, { bridges, withGit }));
+  const rows = l.slices.map((s) => reconcile(s, { bridges, withGit, withPane }));
 
   if (json) return `${JSON.stringify({ ...l, ledger: p, slices: rows }, null, 2)}\n`;
 

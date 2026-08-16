@@ -203,6 +203,11 @@ After printing the block, offer to launch the builder. On yes:
    error rather than falling through to tmux/Terminal (which would put the builder
    outside herdr's tabs). Surface that failure instead of re-dispatching blindly.
    Outside herdr the chain is tmux, then Terminal, then headless.
+4. Record the pane from that line — never one you created yourself. `ledger
+   add/set --pane` verifies it against dispatch.sh's signature (a herdr tab
+   labeled `builder` holding exactly one pane) and refuses anything else, because
+   a builder started by hand carries no builder marker, no activity sidecar and
+   no turn-end hook, so nothing can ever wake the architect for it.
 
 **Safety:** dispatch launches the builder with its permission gates relaxed —
 codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local

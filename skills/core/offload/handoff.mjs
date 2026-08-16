@@ -26,10 +26,12 @@
 //     the body is read from stdin.
 //
 //   node handoff.mjs ledger   {init|path|show|add|set|goal} <cwd> ...  -> the architect's slice ledger
-//   node handoff.mjs board    <cwd> [--json] [--no-git]                -> reconciled roll-up of every slice
+//   node handoff.mjs board    <cwd> [--json] [--no-git] [--no-pane]    -> reconciled roll-up of every slice
 //     See ledger.mjs. The ledger is the ONLY place a slice's terminal state
-//     lives; `board` reconciles it against each doc, builder pid and bridge so
-//     "finished and exited" can never keep reading as "running".
+//     lives; `board` reconciles it against each doc, builder pid, bridge and the
+//     provenance of its herdr pane, so "finished and exited" can never keep
+//     reading as "running" and a builder started outside dispatch.sh cannot
+//     masquerade as a dispatched slice.
 //
 // Ownership guard: every MUTATING write (resolve/status/ready/reattach) is keyed
 // to a session id. The id is taken from $CLAUDE_CODE_SESSION_ID (or, for reattach,
@@ -406,6 +408,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       process.stdout.write(renderBoard(pos[0] ?? process.cwd(), sid, {
         json: hasFlag(rest, '--json'),
         withGit: !hasFlag(rest, '--no-git'),
+        withPane: !hasFlag(rest, '--no-pane'),
       }));
       break;
     }

@@ -11,6 +11,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPLETE = readFileSync(join(HERE, 'SKILL.md'), 'utf8');
 const OFFLOAD = readFileSync(join(HERE, '..', 'offload', 'SKILL.md'), 'utf8');
 const DISPATCH = readFileSync(join(HERE, '..', 'offload', 'dispatch.sh'), 'utf8');
+const PANE = readFileSync(join(HERE, '..', 'offload', 'pane.mjs'), 'utf8');
 
 const section = (body, heading) => {
   const start = body.indexOf(heading);
@@ -49,4 +50,22 @@ test('offload still routes dispatch through the tab-creating implementation', ()
   );
   assert.match(DISPATCH, /out=\$\(herdr tab create/);
   assert.match(DISPATCH, /launched \$h in new herdr tab \$tab/);
+});
+
+// The ledger's provenance check reads dispatch.sh's signature off the live herdr
+// session: a tab labeled "builder" holding exactly one pane. If the two files
+// ever disagree about that label, every real dispatch starts looking hand-rolled
+// and the architect gets refused for doing the right thing.
+test('dispatch.sh and pane.mjs agree on the builder tab label', () => {
+  assert.match(DISPATCH, /--label builder --no-focus/);
+  assert.match(PANE, /export const BUILDER_TAB_LABEL = 'builder';/);
+});
+
+// A tab created for a builder that never started is not a builder tab — and,
+// left open, it is an empty tab labeled "builder", the exact shape the pane
+// check trusts.
+test('dispatch.sh closes the tab it created when the launch fails', () => {
+  const failure = DISPATCH.slice(DISPATCH.indexOf("'pane run' failed"));
+  assert.match(DISPATCH, /if herdr tab close "\$tab"/);
+  assert.match(failure.replace(/\s+/g, ' '), /closed the empty tab/);
 });

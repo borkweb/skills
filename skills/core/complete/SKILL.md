@@ -126,6 +126,15 @@ root pane. A pane id without a tab id is a failed dispatch. Do not set the slice
 to `dispatched`, record its pane in the ledger, or arm its wait bridge; surface
 the launch failure and correct it through `offload`.
 
+**This invariant is enforced, not just stated.** `ledger add/set --pane` checks
+the pane against dispatch.sh's signature — a herdr tab labeled `builder` holding
+exactly one pane — and refuses a pane that lacks it, because a hand-started
+builder has no builder marker, no activity sidecar and no turn-end hook, so its
+wait bridge can never fire. `board` re-checks every live slice and flags
+`UNMANAGED PANE`. If you hit the refusal, the answer is to re-dispatch through
+`offload`, never `OFFLOAD_ALLOW_UNVERIFIED_PANE=1` — that override exists for a
+frontend the check cannot see, not for routing around a failed dispatch.
+
 ### Per-slice loop
 
 Slices that touch disjoint files run at the same time. There is no per-slice
@@ -148,6 +157,10 @@ Act on what it prints, in this order:
                          builder's word — act on it, then bring the ledger level.
    ! CORRUPT DOC       → rewrite the status; until then that slice's bridge is deaf.
    ! DOC MISSING       → STOP. Do not re-dispatch blindly; surface it.
+   ! UNMANAGED PANE    → the recorded pane did not come from dispatch.sh. That
+                         builder is unreachable by the bridge whatever its pane
+                         shows. Judge whatever it produced, mark the slice
+                         terminal, and re-dispatch through `offload`.
    (no flags)          → nothing to do on that slice.
 ```
 
@@ -331,7 +344,9 @@ else: a non-terminal row means you are not finished, however complete it feels.
 - **Every builder launch goes through `offload` and `dispatch.sh`.** Never create
   one with raw `herdr agent start`/`spawn`, `herdr pane split`, tmux, Terminal, or
   a headless harness command. A herdr pane id without a tab id is a failed launch,
-  not a dispatched slice.
+  not a dispatched slice. The ledger refuses a pane that did not come from
+  dispatch.sh, and `board` flags one that slipped in — treat either as a failed
+  dispatch to redo, not an obstacle to override.
 - **Run `board` at the start of every wake, and report only what it says.** Slice
   state narrated from memory is the single largest source of wrong progress: it
   cannot see a builder that exited, and it does not survive a compaction.

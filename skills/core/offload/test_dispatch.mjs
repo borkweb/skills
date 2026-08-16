@@ -197,12 +197,15 @@ test('a pane with no tab id is treated as a failure, not a tab', () => {
 
 // The tab opened but the harness never started in it: previously `pane run`'s
 // exit status was discarded and dispatch claimed success on an empty tab.
+// The tab must also be cleaned up — an empty tab labeled "builder" is exactly
+// what the ledger's pane provenance check treats as a real dispatch.
 test('a tab that opens but fails to run the harness is not reported as launched', () => {
-  const { stderr } = runFail({
+  const { log, stderr } = runFail({
     HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', HERDR_STUB_MODE: 'fail-run',
   });
   assert.match(stderr, /tab w9:t7 was created but 'pane run' failed/);
-  assert.match(stderr, /the tab is open and empty/);
+  assert.match(stderr, /closed the empty tab/);
+  assert.match(log, /^herdr tab close w9:t7$/m);
 });
 
 test('OFFLOAD_ALLOW_NON_HERDR restores the old fallback chain', () => {

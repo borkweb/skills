@@ -339,7 +339,14 @@ launch_interactive() {
         echo "dispatch: launched $h in new herdr tab $tab (workspace ${workspace:-?}, root pane $pane) — switch with your herdr tab navigation."
         return 0
       fi
-      echo "dispatch: herdr tab $tab was created but 'pane run' failed — the tab is open and empty." >&2
+      # Nothing is running in that tab and nothing ever will be. Leaving it open
+      # accumulates empty "builder" tabs across retries, and an empty tab labeled
+      # builder is exactly what the ledger's pane check trusts — clean it up.
+      if herdr tab close "$tab" >/dev/null 2>&1; then
+        echo "dispatch: herdr tab $tab was created but 'pane run' failed — closed the empty tab." >&2
+      else
+        echo "dispatch: herdr tab $tab was created but 'pane run' failed, and closing the empty tab failed too — close it by hand." >&2
+      fi
     fi
     # Inside a herdr session a herdr tab is the ONLY correct frontend. The old
     # code fell through to `tmux new-window` here, which puts the builder outside
