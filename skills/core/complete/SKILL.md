@@ -106,6 +106,28 @@ chosen. Record the chosen posture; honor it for the rest of the loop.
 
 ## 5. The loop — slices run concurrently; the board is the state
 
+### Builder launch invariant — `dispatch.sh` only
+
+Every builder launch MUST go through `offload` and its `dispatch.sh`. Concurrency
+does not change the launcher; it only means several independently dispatched
+slices may be alive at once. Invoke `offload` once for each slice and let its
+documented dispatcher resolve the harness and frontend.
+
+Never create a builder with raw `herdr agent start`, `herdr agent spawn`,
+`herdr pane split`, `tmux new-window`, Terminal, or a headless harness command.
+Those paths bypass offload's handoff marker, activity/turn-end wiring, duplicate
+builder guard, harness failover, and herdr-tab guarantee. Raw herdr commands are
+only for supervising a builder that `dispatch.sh` already launched: reading its
+pane, sending a ruling, focusing its tab, or resuming its existing process.
+
+Treat the dispatcher's success line as a postcondition before advancing slice
+state. Inside herdr it must name `new herdr tab <tab_id>`, the workspace, and the
+root pane. A pane id without a tab id is a failed dispatch. Do not set the slice
+to `dispatched`, record its pane in the ledger, or arm its wait bridge; surface
+the launch failure and correct it through `offload`.
+
+### Per-slice loop
+
 Slices that touch disjoint files run at the same time. There is no per-slice
 turn-taking: each dispatched slice has its own worktree, its own handoff doc, and
 its own wait bridge, and any of them can wake you. What makes that tractable is
@@ -138,9 +160,12 @@ a. Invoke the `offload` skill for ONE architect turn on the slice that needs it.
    Honor the dispatch posture from step 4 — in pause mode, get the user's OK
    before offload dispatches. Dispatch every slice that is ready to run and
    shares no files with one already in flight; only serialize on real conflict.
-b. After each dispatch, `ledger set … --state dispatched --pane <pane>` and launch
-   that slice's WAIT BRIDGE backgrounded (below). Then stop your turn — do NOT
-   poll, do NOT ScheduleWakeup. The harness re-invokes you when a bridge exits.
+   "Dispatch" here always means offload's `dispatch.sh` path — never substitute a
+   raw frontend or harness command.
+b. After each valid dispatch — including the required tab-id postcondition inside
+   herdr — `ledger set … --state dispatched --pane <pane>` and launch that slice's
+   WAIT BRIDGE backgrounded (below). Then stop your turn — do NOT poll, do NOT
+   ScheduleWakeup. The harness re-invokes you when a bridge exits.
 c. On wake, run `board` (above), then read the background task's final `WAITER:`
    line and branch:
      WAITER: ready                       → go to (d)
@@ -303,6 +328,10 @@ else: a non-terminal row means you are not finished, however complete it feels.
 ## Hard rules
 
 - You never write implementation code. If tempted, hand a tighter slice to offload.
+- **Every builder launch goes through `offload` and `dispatch.sh`.** Never create
+  one with raw `herdr agent start`/`spawn`, `herdr pane split`, tmux, Terminal, or
+  a headless harness command. A herdr pane id without a tab id is a failed launch,
+  not a dispatched slice.
 - **Run `board` at the start of every wake, and report only what it says.** Slice
   state narrated from memory is the single largest source of wrong progress: it
   cannot see a builder that exited, and it does not survive a compaction.
