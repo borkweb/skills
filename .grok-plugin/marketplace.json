@@ -1,0 +1,13 @@
+{
+  "name": "skills",
+  "owner": {
+    "name": "Matthew Batchelder",
+    "email": "borkweb@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "bork",
+      "source": "./"
+    }
+  ]
+}

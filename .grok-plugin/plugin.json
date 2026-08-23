@@ -1,0 +1,39 @@
+{
+	"name": "bork",
+	"description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, and shipping across the dev cycle.",
+	"version": "3.4.0",
+	"author": {
+		"name": "Matthew Batchelder",
+		"email": "borkweb@gmail.com"
+	},
+	"skills": [
+		"./skills/core/agents-md-lint",
+		"./skills/core/auto-scope",
+		"./skills/core/caveman",
+		"./skills/core/complete",
+		"./skills/core/council",
+		"./skills/core/discernment",
+		"./skills/core/handoff",
+		"./skills/core/humanize",
+		"./skills/core/layman",
+		"./skills/core/offload",
+		"./skills/core/prototype",
+		"./skills/core/red-pen",
+		"./skills/core/review-security",
+		"./skills/core/session-budget",
+		"./skills/core/writing-commits",
+		"./skills/core/writing-plans",
+		"./skills/core/writing-sql",
+		"./skills/gstack/design-consultation",
+		"./skills/gstack/design-review",
+		"./skills/gstack/investigate",
+		"./skills/gstack/plan-deep-review",
+		"./skills/gstack/plan-design-review",
+		"./skills/gstack/plan-devex-review",
+		"./skills/gstack/plan-eng-review",
+		"./skills/gstack/plan-session",
+		"./skills/gstack/qa",
+		"./skills/gstack/qa-only",
+		"./skills/gstack/review"
+	]
+}
