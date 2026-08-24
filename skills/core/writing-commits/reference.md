@@ -14,7 +14,7 @@
 - **Mood**: Imperative ("Add feature" not "Added feature")
 - **Formatting**: Capitalize first letter, no trailing period
 - **Separation**: Blank line between subject and body
-- **Focus**: Explain what and why, not how (the diff shows how)
+- **Focus**: State the outcome, theme, or reason; do not narrate how the code was edited (the diff shows that)
 - **No AI attribution**: Never include Co-Authored-By or similar
 
 ## Body Rules
@@ -22,6 +22,9 @@
 - **Do NOT hard wrap body lines.** Each paragraph is a single continuous line — no manual newlines mid-sentence or mid-paragraph to enforce a column width. The 50/72 rule above is for the subject only.
 - Use blank lines to separate paragraphs, sections, and list items.
 - Bullet/numbered list items are each a single unwrapped line.
+- Prefer concrete, familiar words when they are as accurate as a technical term.
+- Keep technical and domain terms when they identify the subject of the change, match the repository's normal language, or preserve needed precision.
+- Group related edits under one theme. Do not list files, functions, or mechanical code actions unless one records a consequential decision that the diff cannot explain on its own.
 
 ## Scope Conventions
 
@@ -40,7 +43,6 @@ Refs #100, #200
 
 BREAKING CHANGE: Changed API response format.
 
-Co-authored-by: Name <email@example.com>
 Signed-off-by: Name <email@example.com>
 ```
 
@@ -55,11 +57,12 @@ In automated release systems, commits drive version bumps:
 
 | Anti-pattern | Bad | Good |
 |---|---|---|
-| Vague messages | "Fix bug" | `fix(auth): resolve token expiration race condition` |
+| Vague messages | "Fix bug" | `fix(auth): stop expired sessions from refreshing forever` |
 | Multiple concerns | "Add feature X, fix bug Y, update docs" | Split into separate commits |
-| Implementation in subject | "Changed variable name from x to userId" | `refactor(user): improve variable naming clarity` |
-| Missing context | "Update config" | `build(webpack): enable tree shaking for production builds` |
-| Personal notes | "Finally got this working!" | `fix(parser): handle edge case with nested brackets` |
+| Implementation inventory | "Extract PermissionGate and replace controller checks" | `refactor(auth): keep permission checks consistent` |
+| Unneeded jargon | "Improve p95 tail latency for product queries" | `perf(products): speed up the slowest product requests` |
+| Missing context | "Update config" | `build(web): make production downloads smaller` |
+| Personal notes | "Finally got this working!" | `fix(parser): accept brackets inside brackets` |
 
 ## Emoji Commits (only if repo already uses them)
 

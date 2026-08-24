@@ -4,13 +4,14 @@
     {
       "id": 1,
       "prompt": "I just fixed a null pointer bug in the user service, can you write a commit message for me? The staged changes are a 3-line fix in src/services/UserService.php adding a null check.",
-      "expected_output": "A concise commit message with fix type, appropriate scope, imperative subject, and brief body. Should NOT use the full Summary/Why/How structure since it's a small change.",
+      "expected_output": "A concise commit message with fix type, appropriate scope, and an imperative subject focused on the outcome. A body is optional. It should not narrate the added null check or use the full sectioned structure for this small change.",
       "files": [],
       "expectations": [
         "Subject line starts with 'fix' type",
         "Subject line is under 72 characters",
         "Subject line uses imperative mood",
-        "Message is appropriately brief for a small change (no full Summary/Why/How sections)",
+        "Message says what no longer goes wrong instead of restating the null-check edit",
+        "Message is appropriately brief for a small change (no full Summary/Why/Testing sections)",
         "No AI attribution or Co-Authored-By line"
       ]
     },
@@ -23,7 +24,8 @@
         "Runs git diff --staged or equivalent to analyze changes",
         "Runs git log to check repository conventions",
         "Produces a commit message with conventional commit type",
-        "Subject line uses imperative mood and is under 72 characters"
+        "Subject line uses imperative mood and is under 72 characters",
+        "Message summarizes the intent or outcome rather than listing code actions"
       ]
     },
     {
@@ -36,7 +38,33 @@
         "Provides a feat-type message for the caching feature",
         "Provides a refactor-type message for the database changes",
         "Provides a docs-type message for the README fix",
-        "Each message has appropriate scope"
+        "Each message has appropriate scope",
+        "Keeps Redis when it helps identify the caching change, but avoids unnecessary implementation detail"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Write one commit message for this staged feature. The diff adds a CacheWarmer class, RedisCacheStore, product.updated listener, TTL config, X-Cache headers, and tests. Together they keep product pages responsive during peak traffic and reduce database load.",
+      "expected_output": "One concise commit message that summarizes the shared performance outcome and motivation. Redis may remain because it identifies the architectural choice, but the message should not turn the listed edits into a change log or add a How section by default.",
+      "files": [],
+      "expectations": [
+        "Uses one theme for the related edits",
+        "Leads with faster or more reliable product pages or reduced database pressure",
+        "Does not list CacheWarmer, RedisCacheStore, the listener, TTL config, headers, and tests",
+        "Uses plain language except for technical terms that preserve useful context",
+        "Does not add a How section by default"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Write a commit message for a change that moves mobile sign-in to OAuth 2.1 with PKCE because embedded client secrets can be extracted from the app. Keep any technical terms that developers need to find this security decision later.",
+      "expected_output": "A succinct security-focused message that keeps OAuth 2.1 and PKCE because they are the subject of the change, while plainly stating that the change prevents the mobile app from relying on a secret users can extract.",
+      "files": [],
+      "expectations": [
+        "Keeps OAuth 2.1 and PKCE",
+        "Explains the security outcome in plain language",
+        "Does not replace precise protocol names with vague wording",
+        "Does not inventory files, functions, or wiring changes"
       ]
     }
   ]

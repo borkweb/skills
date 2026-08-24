@@ -1,6 +1,6 @@
 ---
 name: writing-commits
-description: "Use this skill to create git commits and write commit messages. Invoke it for ANY of these user goals: committing code changes, crafting or suggesting commit messages, describing diffs for commit purposes, or formatting commits in conventional/angular style. Common triggers: 'commit this', 'commit them', 'write a commit message', 'what should the commit message be', 'help me with the commit', or any variant where the user has finished coding and wants to record their changes in git. Also invoke when users mention pushing code and need the commit authored first, when they ask to split changes into separate commits, or when they ask to summarize what changed for a commit. Exclude: pull requests, code review, changelogs, reverting commits, git log analysis, writing docs about commit conventions."
+description: "Use this skill to create git commits and write concise, plain-language commit messages that summarize intent and outcomes rather than code actions. Invoke it for ANY of these user goals: committing code changes, crafting or suggesting commit messages, describing diffs for commit purposes, or formatting commits in conventional/angular style. Common triggers: 'commit this', 'commit them', 'write a commit message', 'what should the commit message be', 'help me with the commit', or any variant where the user has finished coding and wants to record their changes in git. Also invoke when users mention pushing code and need the commit authored first, when they ask to split changes into separate commits, or when they ask to summarize what changed for a commit. Exclude: pull requests, code review, changelogs, reverting commits, git log analysis, writing docs about commit conventions."
 disable-model-invocation: true
 model: sonnet
 effort: low
@@ -9,7 +9,7 @@ allowed-tools: [Bash, Read, Grep, Glob]
 
 # Commit Message Writer
 
-You write clear, accurate git commit messages that help future developers understand what changed and why.
+You write succinct, accurate git commit messages in plain language. Help future developers understand the theme, outcome, and reason for a change without narrating the diff.
 
 ## How to analyze changes
 
@@ -25,6 +25,18 @@ git log --oneline -10      # recent commit style in this repo
 Read the diff carefully. Understand the *intent* behind the changes — not just which lines moved, but what problem they solve or what capability they add. If the diff is large or touches unfamiliar code, use `Read` or `Grep` to look at surrounding context.
 
 Check `git log` output closely. If the repo uses a specific convention (emoji prefixes, Jira ticket format, lowercase subjects, Angular-style), match it. Repository convention always wins over the defaults below.
+
+## Write for understanding
+
+Summarize the change; do not replay it. A useful commit message tells the reader what is now possible, what no longer goes wrong, or why the code is easier to work with.
+
+- Lead with the outcome or shared theme. Group related edits into one idea instead of listing files, functions, or code actions.
+- Prefer familiar, concrete words when they are equally accurate. Describe what something does instead of naming an abstract technique.
+- Keep technical or domain terms when they are the subject of the change, normal language for the repository's readers, or necessary for precision. Names such as `OAuth`, `Redis`, a public API, a command, or a migration may be clearer than a forced plain-English substitute.
+- Preserve facts that change how someone should understand or use the commit: behavior changes, trade-offs, warnings, breaking changes, issue references, and exact measurements.
+- Do not add a glossary or explain common project terms. Plain language should make the message faster to understand, not longer or less precise.
+
+Before returning a message, remove any sentence that merely restates an edit visible in the diff. Keep implementation detail only when it records a consequential decision or constraint that a future reader could not infer from the code.
 
 ## Choosing the commit type
 
@@ -54,20 +66,20 @@ Scale the message to the change. Not every commit needs a five-section essay.
 A subject line is often enough:
 
 ```
-fix(auth): prevent token refresh loop on expired sessions
+fix(auth): stop expired sessions from refreshing forever
 ```
 
 Or subject + a brief body if the "why" isn't obvious from context:
 
 ```
-refactor(database): extract query builder to separate module
+refactor(database): keep query rules in one place
 
-Improves maintainability by separating query building logic from repository classes. No functional changes.
+Keeps database queries consistent without changing behavior.
 ```
 
 ### Larger changes (multi-file, non-obvious motivation)
 
-Use the full structure. The goal of each section is to answer a distinct question a reviewer or future developer would have:
+Use only the sections the reader needs. The goal of each section is to answer a distinct question a reviewer or future developer would have:
 
 ```
 <type>(<scope>): <subject>
@@ -80,15 +92,14 @@ Fixes #123 (if applicable)
 ## Why
 What motivated this change? What was broken, missing, or insufficient?
 
-## How
-The approach taken — key implementation decisions, trade-offs made.
-
 ## Testing (only when there are meaningful verification steps)
 - [ ] Concrete steps a reviewer can take to verify
 ```
 
+Do not add a `How` section by default. If the commit records a design choice or trade-off that matters later, add one short paragraph about that decision and its consequence. Do not turn it into a list of code edits.
+
 **Subject line rules:**
-- 50-72 characters, imperative mood ("add" not "added")
+- Aim for 50 characters or fewer; never exceed 72. Use imperative mood ("add" not "added")
 - Capitalize first letter, no trailing period
 - No AI attribution — never include "Co-Authored-By" or similar
 
@@ -96,7 +107,7 @@ The approach taken — key implementation decisions, trade-offs made.
 - **Do NOT hard wrap body lines.** Write each paragraph as a single continuous line. Do not insert manual newlines mid-sentence or mid-paragraph to enforce a column width (no 72-column wrap, no 80-column wrap, no wrap at all). Let the git viewer, terminal, or editor soft-wrap as needed.
 - Use blank lines only to separate distinct paragraphs, sections, or list items — never to wrap a single thought across multiple lines.
 - Bullet and numbered list items are each a single unwrapped line.
-- This applies to every part of the body: summary paragraphs, "Why"/"How" sections, footers, and breaking-change descriptions.
+- This applies to every part of the body: summary paragraphs, "Why" sections, design notes, footers, and breaking-change descriptions.
 
 **When to include Testing:** Include it when there are specific, non-obvious steps a reviewer should take — running a test suite, hitting an endpoint, testing a UI flow. Skip it for docs, config changes, refactors with no behavior change, or anything where the verification is self-evident.
 
@@ -129,13 +140,12 @@ When you've recommended splitting into separate commits, present each commit mes
 
 **Commit 1 — docs fix:**
 ```
-docs(readme): fix typo in application description
+docs(readme): fix the product name
 ```
 
 **Commit 2 — database refactor:**
 ```
-refactor(database): enhance connection pool configuration
-...
+refactor(database): make connection cleanup consistent
 ```
 
 Each code block should contain *only* the commit message text — no wrapper headings, no analysis preamble. The surrounding conversation provides the context; the code blocks are what would actually go into `git commit -m`.

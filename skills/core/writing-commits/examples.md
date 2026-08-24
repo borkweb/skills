@@ -1,508 +1,176 @@
 # Commit Message Examples
 
-## Feature Commits
+Use these examples for voice and level of detail, not as fixed templates. Match the repository's established commit format when it differs.
 
-### Adding New Functionality
+## Small changes
+
+An obvious, single-purpose change often needs only a subject:
 
 ```
-feat(payments): add Stripe webhook signature verification
+fix(auth): stop expired sessions from refreshing forever
+```
+
+```
+docs(setup): clarify which Node version the build needs
+```
+
+Add a short body only when it contributes context the subject cannot carry:
+
+```
+refactor(database): keep query rules in one place
+
+Keeps database queries consistent without changing behavior.
+```
+
+## Larger changes
+
+Summarize the shared outcome and why it matters. Do not list each class, file, or wiring change.
+
+```
+feat(admin): show session cost and progress as work runs
 
 ## Summary
 
-Implements cryptographic verification of incoming Stripe webhooks to prevent spoofed payment events from being processed.
-
-Fixes #312
+Makes long-running agent sessions easier to follow and shows their cost while they are still running.
 
 ## Why
 
-* Production logs showed requests to webhook endpoint from non-Stripe IPs
-* Without signature verification, attackers could forge payment success events
-* PCI compliance requires webhook authenticity validation
-
-## How
-
-* Extract signature from `Stripe-Signature` header
-* Compute expected signature using webhook secret and raw body
-* Compare using timing-safe equality to prevent timing attacks
-* Reject requests with missing, expired (>5 min tolerance), or invalid signatures
-* Log rejected attempts with IP for security monitoring
-
-## Testing
-
-- [ ] Run the test suite: `./vendor/bin/pest tests/Unit/StripeWebhookTest.php`
-- [ ] To test manually, use Stripe CLI: `stripe listen --forward-to localhost:8000/webhooks/stripe`
-- [ ] Trigger a test event: `stripe trigger payment_intent.succeeded`
+Admins could not tell whether work was active or how much a session had cost until it ended.
 ```
 
 ```
-feat(admin): OpenCode Admin UI Enhancement and usage tracking
+fix(queue): keep jobs safe during worker restarts
 
 ## Summary
 
-Enhance the `/admin` agent interface with real-time usage cost tracking, token statistics display, and improved visual feedback. Also fixes Docker workspace permissions for bind-mounted directories.
-
-Fixes #234
+Work in progress is recovered after an unexpected restart instead of being lost.
 
 ## Why
 
-* Users need visibility into API costs and token usage during agent sessions
-* Tool execution status was unclear during streaming responses
-* Docker containers couldn't write to bind-mounted workspace directories due to permission issues
-* Navigation was broken when pressing back button
-
-## How
-
-* Parse usage_cost events from OpenCode stream (both message.updated and step-finish parts)
-* Accumulate and display cost/tokens in the UI header
-* Add tool status cards with visual states (pending → running → completed)
-* Replace "streaming" pulse animation with "Thinking..." indicator
-* Set 0777 permissions on workspace directories and 0666 on files for Docker compatibility
-* Fix back button URL from `/admin` to `./` for relative navigation
-```
-
-```
-## Summary
-
-This PR replaces the XPath-based JSON patching system with a simpler path-based approach and adds error feedback to the retry loop.
-
-## Why
-
-The current system uses XPath expressions to target files for updates:
-<example code>
-
-This causes frequent failures because:
-1. LLMs struggle with XPath syntax, particularly quote escaping in attribute predicates
-2. Multiple escaping levels (JSON + XPath) create confusion
-3. The two-step file addition pattern (add structure, then update content) is error-prone
-4. When patches fail, the LLM gets no specific error details on retry attempts
-5. LLMs often wrap JSON in markdown code fences, which breaks parsing
-
-## How
-
-### 1. Path-Based Patching
-Replace XPath with simple file paths:
-<example code>
-
-Changes:
-- New `applyPathBasedPatch()` method with dedicated helpers for add/update/delete
-- Single-step file addition (no more two-step pattern)
-- Remove ~100 lines of XPath helper code
-- Detailed error messages ("File not found: src/edit.js" instead of "XPath error")
-
-### 2. Error Feedback Loop
-When a patch fails, the LLM now receives the specific error on retry:
-<example code>
-
-Changes:
-- Capture error details in retry loop (`AssistantController.php`)
-- Pass error through `Orchestrator` and `PromptBuilder`
-- Include error in retry disclaimer prompt
-
-### 3. Markdown Code Fence Handling
-The validator now:
-- Strips markdown code fences (` ```json ... ``` `) before parsing
-- Provides detailed JSON error messages using `json_last_error_msg()`
-- Explicitly instructs LLM not to use code fences
-
-## Hypothesis
-
-We expect these changes to:
-- Reduce patch validation failures by eliminating XPath complexity
-- Enable LLM to self-correct when it receives specific error feedback
-- Handle the common case where LLMs wrap JSON in markdown
-
-## Breaking Changes
-
-This is a clean break from XPath patching with no backward compatibility. Existing in-progress chats may fail if they generate XPath patches. Users will need to start new chats for edits.
-
-## Testing
-
-- [ ] Verify the immediate issue from logs (3 failed attempts with "Invalid patch JSON") is resolved — caused by markdown code fence wrapping
-- [ ] Confirm LLM-generated path-based patches are parsed correctly
-```
-
-## Bug Fixes
-
-### Critical Bugs
-
-```
-fix(queue): prevent job loss during worker restart
-
-## Summary
-
-Jobs are now checkpointed to Redis before processing, ensuring recovery after unexpected worker termination.
-
-Fixes #891
-
-## Why
-
-* Production monitoring showed ~2% job loss during deployments
-* Workers receiving SIGTERM would drop in-flight jobs
-* Lost jobs included payment confirmations and email sends
-
-## How
-
-* Store job payload in Redis with `processing:{job_id}` key before execution
-* Delete key only after successful completion
-* Add recovery sweep on worker startup that re-queues orphaned jobs
-* Set 1-hour TTL on processing keys to handle edge cases
+Deployments were dropping about 2% of active jobs, including payment confirmations and email sends.
 
 ## Testing
 
 - [ ] Run `php artisan test --filter=JobRecoveryTest`
-- [ ] To test recovery manually:
-   - Start a worker: `php artisan queue:work`
-   - Dispatch a slow job: `php artisan tinker` then `SlowJob::dispatch()`
-   - Kill the worker mid-job: `kill -9 <pid>`
-   - Restart worker and verify job completes
+- [ ] Stop a worker during a slow job, restart it, and verify that the job finishes
+```
+
+## Plain language with technical precision
+
+Keep a technical term when it identifies the actual subject of the change or is normal language for the intended readers:
+
+```
+feat(payments): verify Stripe webhooks before accepting events
+
+Rejects forged or stale payment events before they can change an order.
 ```
 
 ```
-fix(auth): resolve session hijacking vulnerability
+feat(api): add Redis caching for product lists
 
-Previous implementation stored session tokens in localStorage, making them accessible to XSS attacks. Moved to httpOnly cookies with SameSite=Strict.
-
-## Security
-All users should rotate tokens after deployment.
+Keeps frequently viewed product lists fast during busy periods and reduces pressure on the database.
 ```
 
-### Standard Bugs
+`Stripe webhooks` and `Redis` belong here because they identify the integration and architectural choice. Extra details such as helper names, cache keys, and event-listener wiring belong in the diff.
+
+## Refactors
+
+Describe the maintenance benefit or preserved behavior instead of the code movement:
 
 ```
-fix(ui): correct date picker timezone handling
+refactor(auth): keep permission checks consistent
 
-Dates were being converted to UTC incorrectly, causing off-by-one-day errors for users in certain timezones. Now preserves local timezone throughout the selection flow.
-
-Fixes #423, #467
+Keeps every endpoint on the same permission rules. No behavior changes.
 ```
 
-## Refactoring
+Avoid:
 
 ```
-refactor(auth): consolidate duplicate permission checks
-
-## Summary
-
-Extracts permission logic from 12 controllers into a single `PermissionGate` service, reducing code duplication and ensuring consistent authorization behavior.
-
-## Why
-
-* Permission checks were copy-pasted across controllers with slight variations
-* Bug fix in one location wasn't applied to others, causing inconsistent access control
-* Adding new permission types required changes in multiple files
-
-## How
-
-* Create `PermissionGate` service with `can()`, `canAny()`, and `canAll()` methods
-* Replace inline checks with service calls: `$this->gate->can('edit', $resource)`
-* Add `@throws UnauthorizedException` for consistent error handling
-* Remove ~400 lines of duplicated permission logic
-
-## Testing
-
-- [ ] Run permission tests: `./vendor/bin/pest tests/Feature/PermissionTest.php`
-- [ ] Verify all endpoints still enforce permissions: `./vendor/bin/pest --group=authorization`
+refactor(auth): extract PermissionGate and replace controller checks
 ```
 
-```
-refactor(api): migrate from Express to Fastify
-
-Improves request throughput by ~40% in benchmarks. All endpoints maintain backward compatibility. Updated tests and documentation to reflect new framework.
-
-Migration guide: docs/fastify-migration.md
-```
-
-```
-refactor(models): extract validation logic to JSON Schema
-
-Removes ~500 lines of manual validation code. Validation is now declarative and generates API docs automatically. No changes to validation behavior.
-```
-
-## Documentation
-
-```
-docs(api): add OpenAPI 3.0 specification
-
-Complete API documentation in OpenAPI format with:
-
-- All endpoints documented
-- Request/response schemas
-- Authentication flows
-- Example requests
-
-Available at /api/docs
-```
+The avoided version narrates code actions. The preferred version records the theme and the reason for the refactor.
 
 ## Performance
 
+Lead with the observed effect. Keep exact measurements when they are supported by the change:
+
 ```
-perf(api): implement response caching for product listings
+perf(products): make product lists load faster
 
-## Summary
+Cuts the slowest product-list requests from 800ms to 45ms and reduces database load during peak traffic.
+```
 
-Adds Redis-backed response caching for product listing endpoints, reducing database load and improving p95 response times from 800ms to 45ms.
+Avoid:
 
-Fixes #567
+```
+perf(api): implement Redis-backed stale-while-revalidate caching
+```
 
-## Why
+Use the technical version only when adopting that caching design is itself the point future readers need to find in history.
 
-* Product listing pages account for 60% of API traffic
-* Database showing high CPU during peak hours
-* Users reported slow page loads on category pages
+## Build and continuous integration
 
-## How
+```
+ci(migrations): block unsafe database changes before merge
 
-* Cache full JSON response with key `products:category:{id}:page:{n}`
-* Set 5-minute TTL with stale-while-revalidate pattern
-* Invalidate cache on product create/update/delete via model observers
-* Add `X-Cache: HIT/MISS` header for debugging
-
-## Testing
-
-- [ ] Run cache tests: `php artisan test --filter=ProductCacheTest`
-- [ ] Verify caching manually:
-   - Clear cache: `php artisan cache:clear`
-   - Hit endpoint: `curl -I /api/products?category=1`
-   - Check for `X-Cache: MISS`
-   - Hit again, verify `X-Cache: HIT`
-- [ ] Verify invalidation: update a product in that category, confirm next request is MISS
+Catches destructive migrations and migrations that take over 30 seconds before they can reach production.
 ```
 
 ```
-perf(database): add indexes for common query patterns
+build(docker): make the production image smaller
 
-Analysis of slow query log revealed missing indexes on:
-
-- users.email
-- orders.created_at
-- products.category_id
-
-Reduces average query time from 250ms to 12ms.
+Cuts the image from 1.2GB to 180MB, which speeds up deployments without changing application behavior.
 ```
 
-## Chores and Maintenance
+## Breaking changes
+
+State the impact and required action plainly. Keep the required Conventional Commits footer exact.
 
 ```
-chore(deps): upgrade React from 17 to 18
+feat(api)!: return errors in one consistent format
 
-Update React and React DOM to version 18.2.0. All components tested with new concurrent rendering. No breaking changes required in application code.
+Clients can now handle every API error the same way.
+
+BREAKING CHANGE: Error details now live under the `error` field. Clients must update before deploying this version.
 ```
 
-```
-chore(ci): add automated dependency security scanning
+## Dependency updates
 
-Configure Dependabot to check for vulnerabilities weekly and create PRs for security updates automatically.
-```
-
-## Test Commits
+Names and versions are useful context, not jargon to remove:
 
 ```
-test(api): add contract tests for external payment gateway
+chore(deps): update React to version 18.2.0
 
-## Summary
-
-Adds Pact contract tests to verify our integration with the payment gateway API matches their published schema.
-
-## Why
-
-* Payment gateway updated their API without notice, breaking production
-* Unit tests with mocked responses didn't catch the schema change
-* Need automated verification that our expectations match reality
-
-## How
-
-* Define consumer contracts for all payment endpoints we use
-* Run contract verification against gateway's test environment in CI
-* Fail build if contract expectations don't match actual responses
-* Store contract files in `tests/contracts/` for provider verification
-
-## Testing
-
-- [ ] Run contract tests: `npm run test:contracts`
-- [ ] Verify against live sandbox: `PACT_VERIFY=true npm run test:contracts`
-- [ ] View contract UI: `npx pact-broker` (requires Docker)
+Keeps the app on the supported React release. Existing components continue to work without changes.
 ```
 
-```
-test(auth): add integration tests for OAuth flow
+## Multiple concerns
 
-Covers complete OAuth authentication flow:
+Unrelated themes belong in separate commits:
 
-- Authorization code exchange
-- Token refresh
-- Revocation
-- Error scenarios
-
-Achieves 100% coverage of auth service.
-```
-
-## Build and CI
+**Commit 1 — product performance:**
 
 ```
-build(docker): optimize production image size
-
-Reduces image from 1.2GB to 180MB:
-
-- Use multi-stage build
-- Switch to Alpine base
-- Remove dev dependencies
-- Optimize layer caching
-
-Faster deployments with no functionality changes.
+perf(products): keep product lists fast during busy periods
 ```
 
-```
-ci(github): add pull request preview deployments
-
-PRs now automatically deploy to temporary environments. Preview URL added as comment on each PR. Environments auto-deleted after PR close/merge.
-```
+**Commit 2 — database maintenance:**
 
 ```
-ci(github): add database migration safety checks
-
-## Summary
-
-CI now validates migrations before merge to prevent destructive operations from reaching production without explicit approval.
-
-## Why
-
-* Developer accidentally dropped a column in migration, causing 2-hour outage
-* No automated check for destructive operations (DROP, TRUNCATE, DELETE without WHERE)
-* Migrations that pass locally can fail on production data volumes
-
-## How
-
-* Add `migration-lint` job that parses SQL for destructive keywords
-* Destructive migrations require `--force` flag in migration class and CODEOWNER approval
-* Add `migration-dry-run` against anonymized production snapshot
-* Block merge if migration takes >30 seconds on snapshot
-
-## Testing
-
-- [ ] Create a test migration with `DROP COLUMN` to verify lint catches it
-- [ ] Check workflow runs: `.github/workflows/migration-check.yml`
-- [ ] Test locally: `./scripts/lint-migrations.sh`
+refactor(database): make connection cleanup consistent
 ```
 
-## Breaking Changes
+**Commit 3 — documentation:**
 
 ```
-feat(api): standardize error response format
-
-BREAKING CHANGE: All API errors now return consistent format:
-
-{
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human readable message",
-    "details": {}
-  }
-}
-
-Previous format used top-level "message" and "status" fields. Clients must update error handling logic.
-
-Migration guide: docs/error-format-migration.md
+docs(readme): fix the product name
 ```
 
-## Multi-Scope Commits
+## Choosing the wording
 
-```
-feat(api,cli): add bulk export command for user data
-
-## Summary
-
-Adds a new CLI command and supporting API endpoint to export user data in GDPR-compliant format.
-
-Fixes #445
-
-## Why
-
-* GDPR requires ability to export all user data within 30 days of request
-* Manual exports were taking support team 4+ hours per request
-* No existing tooling for bulk data extraction across services
-
-## How
-
-**API changes:**
-* New `GET /api/users/{id}/export` endpoint with admin auth
-* Returns signed URL to encrypted ZIP file in S3
-* Aggregates data from users, orders, and activity_log tables
-
-**CLI changes:**
-* New `php artisan users:export {id} --format=json|csv` command
-* Progress bar for large exports
-* Outputs to stdout or file with `--output` flag
-
-## Testing
-
-- [ ] Test API: `php artisan test --filter=UserExportApiTest`
-- [ ] Test CLI: `php artisan test --filter=UserExportCommandTest`
-- [ ] Manual test: `php artisan users:export 1 --format=json --output=/tmp/export.zip`
-```
-
-```
-feat(api,ui): add user profile customization
-
-Backend:
-
-- New /users/:id/profile endpoint
-- Avatar upload with image processing
-- Bio and social links fields
-
-Frontend:
-
-- Profile editor component
-- Image cropping interface
-- Real-time preview
-
-Closes #234
-```
-
-## Style/Formatting
-
-```
-style: apply Prettier formatting to entire codebase
-
-No functional changes. Configures Prettier with:
-
-- 2 space indentation
-- Single quotes
-- Trailing commas
-- 80 character line width
-
-Pre-commit hook added to enforce formatting.
-```
-
-## Dependency Updates
-
-```
-chore(deps): update dependencies to latest stable versions
-
-Major updates:
-
-- typescript: 4.9 → 5.3
-- vite: 4.5 → 5.0
-- vitest: 0.34 → 1.0
-
-All tests passing. No breaking changes in usage.
-```
-
-## Reverts
-
-```
-revert: "feat(search): implement full-text search"
-
-This reverts commit a1b2c3d4e5f6.
-
-Elasticsearch integration causing memory issues in production. Reverting to investigate and optimize before re-deploying.
-
-Refs: #789
-```
-
-## Tips for Choosing Examples
-
-- Use these examples as templates, but always adapt to the actual changes
-- Match the level of detail to the complexity of the change
-- Include issue/PR references when available
-- Explain WHY, not just WHAT
-- Think about what future developers need to know
+- State the outcome, problem, or reason before the implementation.
+- Use one theme per commit and omit details the diff already shows.
+- Prefer familiar words when they remain accurate.
+- Keep project and domain terms when removing them would be vague or misleading.
+- Preserve exact warnings, measurements, versions, commands, issue references, and breaking-change instructions.
