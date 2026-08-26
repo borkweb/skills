@@ -106,6 +106,42 @@ git fetch origin <base> --quiet
 
 Run `git diff origin/<base>` to get the full diff. This includes both committed and uncommitted changes against the latest base branch.
 
+### Step 5b: Dispatch the adversarial reviewer — now, not at Step 8
+
+The adversarial pass is **launched here** and **collected at Step 8**, so it runs
+concurrently with your own checklist pass instead of adding its latency to the
+end of the review. Dispatch it as soon as you have the diff, then carry straight
+on to Step 6 without waiting.
+
+Dispatch when the diff meets ANY of:
+- More than 200 lines changed
+- Touches auth, payment, or security-related files
+- Introduces new external service integrations
+- User explicitly requests it
+
+Otherwise skip it, and record it as SKIPPED rather than as zero findings.
+
+**Dispatch rules — these are not stylistic, the pass silently fails without them:**
+
+- **Never pass a `name`.** A named agent is a *teammate*: the Agent tool returns
+  a spawn receipt (`"Spawned successfully… will receive instructions via
+  mailbox"`) instead of the findings, the agent reports over a mailbox this
+  workflow never reads, and its report is lost. Worse, if `/review` is itself
+  running inside a named teammate, a named dispatch fails outright with
+  `"Teammates cannot spawn other teammates — the team roster is flat."`
+  Dispatch an **unnamed subagent** so the findings come back as the tool result.
+- **One dispatch, one attempt.** If it errors, do not re-dispatch with a
+  variation — record it as unavailable and move on.
+- Give the subagent the **absolute path** of the directory to review. Do not
+  assume it inherits your working directory.
+
+Subagent prompt:
+"Read the diff for this branch with `git diff origin/<base>` in <absolute path to the review directory>. Think like an attacker and a chaos engineer. Your job is to find ways this code will fail in production. Look for: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures, and trust boundary violations. Be adversarial. Be thorough. No compliments — just the problems. For each finding, classify as FIXABLE (you know how to fix it) or INVESTIGATE (needs human judgment).
+
+OUTPUT CONTRACT — your final message IS your return value. It is read by a program, not a person. Do not write findings to a file, do not announce that you are done in some other channel, and do not end your turn without them. If you found nothing, your final message must be exactly `NO FINDINGS` — that is a valid, expected, and useful answer. If you ran out of time or context, return whatever you confirmed so far under the heading `PARTIAL`. Returning nothing at all is the only failing outcome.
+
+Do not modify any file. You are read-only. If you believe a fix is warranted, describe it as a finding."
+
 ---
 
 ## Step 6: Two-pass review
@@ -172,22 +208,45 @@ bash "$CLAUDE_PLUGIN_ROOT/scripts/detect-frontend-files.sh" "$BASE"
 
 ---
 
-## Step 8: Adversarial Review
+## Step 8: Adversarial Review — collect
 
-Dispatch an adversarial reviewer via the Agent tool when the diff meets ANY of:
-- More than 200 lines changed
-- Touches auth, payment, or security-related files
-- Introduces new external service integrations
-- User explicitly requests it
+The adversarial reviewer was dispatched back at Step 5b and has been working while
+you ran Steps 6 and 7. Collect it here. It has fresh context — no checklist bias
+from the structured review.
 
-The subagent has fresh context — no checklist bias from the structured review.
+If Step 5b skipped the dispatch, skip this step too and carry `SKIPPED` into
+Step 12.
 
-Subagent prompt:
-"Read the diff for this branch with `git diff origin/<base>`. Think like an attacker and a chaos engineer. Your job is to find ways this code will fail in production. Look for: edge cases, race conditions, security holes, resource leaks, failure modes, silent data corruption, logic errors that produce wrong results silently, error handling that swallows failures, and trust boundary violations. Be adversarial. Be thorough. No compliments — just the problems. For each finding, classify as FIXABLE (you know how to fix it) or INVESTIGATE (needs human judgment)."
+### The pass reported
 
-Present findings under an `ADVERSARIAL REVIEW:` header. **FIXABLE findings** flow into the same Fix-First pipeline. **INVESTIGATE findings** are presented as informational.
+Present findings under an `ADVERSARIAL REVIEW:` header. **FIXABLE findings** flow
+into the same Fix-First pipeline. **INVESTIGATE findings** are presented as
+informational. Record the count for Step 12.
 
-For diffs under 200 lines that don't touch sensitive files — skip this step, unless the user requests it.
+A report of `NO FINDINGS` is a real result — record it as `0 findings` and move on.
+
+### The pass did not report
+
+This is common and you must handle it without stalling. A subagent that has gone
+quiet is **not** a subagent that found nothing.
+
+1. **Ping once. Only once.** Ask for what it has already confirmed, and state
+   that partial results and "nothing found" are both acceptable answers.
+2. **If the ping does not produce findings, stop.** Do not ping a second time —
+   in this workflow's history a third ping has never once produced output. Do not
+   re-dispatch. Do not wait on it while the rest of the review idles.
+3. **Check the working tree before calling the pass empty.** A silent reviewer
+   may still have edited files. Run `git status --porcelain` in the review
+   directory. If anything changed, read the diff and either verify and report each
+   change as a finding, or revert it — never leave an unreported edit on disk.
+4. **Run the adversarial questions yourself** against the highest-risk part of the
+   diff, and label those findings as your own, not as the subagent's.
+5. **Carry `NO RESPONSE` into Step 12** — never `0 findings`. Silence is missing
+   evidence, not a clean bill of health, and the landing verdict depends on the
+   difference.
+
+Never block Step 9 on this step. If the adversarial pass has not reported by the
+time you reach the Fix-First flow, proceed without it and say so.
 
 ---
 
@@ -295,7 +354,8 @@ Display a structured summary of the entire review:
   | CRITICAL findings    | ___ total (___ auto-fixed, ___ user-decided)|
   | INFORMATIONAL finds  | ___ total (___ auto-fixed, ___ user-decided)|
   | Design findings      | ___ total / SKIPPED (no frontend changes)   |
-  | Adversarial findings | ___ FIXABLE, ___ INVESTIGATE / SKIPPED      |
+  | Adversarial findings | ___ FIXABLE, ___ INVESTIGATE / SKIPPED /    |
+  |                      | NO RESPONSE (pass did not report)           |
   +--------------------------------------------------------------------+
   | Auto-fixes applied   | ___ total                                   |
   | User-approved fixes  | ___ total                                   |
@@ -320,6 +380,7 @@ The verdict must be consistent with the data:
 - If any CRITICAL finding was skipped by the user, the verdict cannot be SAFE TO LAND — it is LAND WITH CAUTION at best, with the skipped item noted.
 - If any CRITICAL finding is unresolved (not fixed and not explicitly skipped), the verdict is DO NOT LAND.
 - If post-fix tests fail due to a review fix, the verdict cannot be SAFE TO LAND until the regression is resolved.
+- **If the adversarial pass was dispatched and returned NO RESPONSE, the verdict cannot be SAFE TO LAND.** It is LAND WITH CAUTION at minimum, carrying the line "adversarial pass unavailable this run — coverage is the structured checklist only." An unrun check is missing evidence, not a passed check, and reporting it as `0 findings` would turn a gap into a false assurance. A pass that was never dispatched (SKIPPED, because the diff didn't meet Step 5b's criteria) does not carry this penalty — say which one it was.
 
 ---
 
