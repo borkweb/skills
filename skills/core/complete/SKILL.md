@@ -1,9 +1,9 @@
 ---
 name: complete
 description: >
-  Drive a goal to a merge-ready endpoint by orchestrating the offload architect
-  loop: run contextual plan reviews, dispatch a configured builder harness slice-by-slice, wait
-  for each slice via a backgrounded bridge (no Claude-side polling), judge raw gates
+  Drive a goal to a merge-ready endpoint with Codex orchestrating gpt-5.6-luna
+  subagents, or the offload architect loop for external builder sessions.
+  Run contextual plan reviews, delegate slices, judge raw gates
   plus an independent `review` pass per slice, and run a final integration `review`.
   STOPS at the edge of merge by default and hands to the human — only merges when
   the goal text explicitly authorizes it. You stay the ARCHITECT and never write
@@ -11,6 +11,20 @@ description: >
   "take this to merge-ready", "run the whole loop", or invokes /complete.
 effort: xhigh
 ---
+
+## Choose the orchestration route
+
+**Default: Codex orchestrates; `gpt-5.6-luna` does delegated work.** In Codex,
+read [codex-orchestration.md](codex-orchestration.md) and execute that workflow.
+It replaces the external-session workflow below, including its dispatcher,
+Claude session key, pane ledger, and shell wait bridge. Keep the parent Codex
+model unchanged; select Luna explicitly when spawning each worker or reviewer.
+
+Use the external-session workflow below only when the user requests external
+builder sessions or runs this skill outside Codex. If native delegation or Luna
+is unavailable, surface the limitation; do not silently change model or route.
+
+## External-session workflow
 
 You are the **ARCHITECT/ORCHESTRATOR**. `offload` is your single-turn engine;
 the **BUILDER** is whichever harness `~/.borkweb-skills/config.json` resolves to

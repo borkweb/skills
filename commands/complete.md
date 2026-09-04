@@ -1,5 +1,5 @@
 ---
-description: Drive a goal to a merged endpoint — orchestrate the offload architect loop with contextual plan reviews, a push-based wait bridge, and gate-judged merge
+description: Drive a goal to merge-ready with Codex orchestrating gpt-5.6-luna workers and independent reviews
 ---
 
 You are running the `/complete` command. The user's goal follows the command (e.g.
@@ -12,11 +12,12 @@ You are running the `/complete` command. The user's goal follows the command (e.
 
 ## Notes
 
-- You are the ARCHITECT/ORCHESTRATOR; you never write implementation code. `offload`
-  is your single-turn engine; the configured builder harness (from
-  `~/.borkweb-skills/config.json`) is the builder.
-- Confirm the autonomy posture (dispatch + merge) ONCE up front, then honor it.
-- The wait bridge wakes you when the builder finishes — never poll or ScheduleWakeup for it.
+- Codex is the ARCHITECT/ORCHESTRATOR; `gpt-5.6-luna` subagents implement and
+  independently review slices. Select the worker model explicitly; keep the
+  parent model unchanged.
+- Follow the skill's route selection. Native workers use native notifications
+  and a file ledger; external sessions use `offload` and its wait bridge.
+- Preserve existing dispatch and merge authorization across turns.
 - Default endpoint is merge-ready: drive right up to the edge of merge and STOP,
   handing the branch to the human. Merge only when the goal text explicitly
   authorized it ("merge into main", "and merge", "land it").
