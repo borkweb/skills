@@ -26,7 +26,7 @@ const fire = (cwd) => {
     input: JSON.stringify({ session_id: 's', cwd, hook_event_name: 'SessionStart', source: 'clear' }),
     env, encoding: 'utf8',
   });
-  return JSON.parse(out).hookSpecificOutput;
+  return out ? JSON.parse(out).hookSpecificOutput : null;
 };
 
 let failed = 0;
@@ -37,19 +37,18 @@ const check = (name, fn) => {
 
 const CWD = '/tmp/project-a';
 
-// --- no handoff: still injects the mailbox CLI path, no handoff body ---
+// --- no handoff: no startup context ---
 const empty = fire(CWD);
-check('always injects the mailbox CLI path', () => assert.match(empty.additionalContext, /mailbox CLI/));
-check('event name is SessionStart', () => assert.strictEqual(empty.hookSpecificOutput?.hookEventName ?? empty.hookEventName, 'SessionStart'));
-check('no handoff -> no "auto-loaded" briefing', () => assert.ok(!/auto-loaded/.test(empty.additionalContext)));
+check('empty mailbox is silent', () => assert.strictEqual(empty, null));
 
 // --- single handoff: injected as briefing AND consumed ---
 const s1 = join(BOX, 's1.md'); handoff(s1, { body: 'Single body marker.' });
 const stored = mailbox('write', s1, CWD).trim();
 const single = fire(CWD);
+check('event name is SessionStart', () => assert.strictEqual(single.hookEventName, 'SessionStart'));
 check('single handoff body is injected', () => assert.match(single.additionalContext, /Single body marker\./));
 check('single handoff is auto-loaded + consumed', () => assert.ok(!existsSync(stored)));
-check('after consume, a re-fire has no briefing', () => assert.ok(!/auto-loaded/.test(fire(CWD).additionalContext)));
+check('after consume, a re-fire is silent', () => assert.strictEqual(fire(CWD), null));
 
 // --- multiple handoffs: menu, NOT bodies, nothing consumed ---
 const a = join(BOX, 'a.md'); handoff(a, { title: 'First', goal: 'do A', branch: 'feat/a', body: 'BODY-A' });
@@ -62,10 +61,14 @@ check('menu lists both titles', () => {
   assert.match(menu.additionalContext, /Second/);
 });
 check('menu is numbered', () => assert.match(menu.additionalContext, /\[1\]/));
+check('menu routes through the skill without a cached executable path', () => {
+  assert.match(menu.additionalContext, /session-budget skill/);
+  assert.doesNotMatch(menu.additionalContext, /mailbox\.mjs|mailbox CLI|plugins\/cache/);
+});
 check('menu does not dump bodies', () => assert.ok(!/BODY-A|BODY-B/.test(menu.additionalContext)));
 check('menu consumes nothing (re-fire still shows menu)', () => assert.match(fire(CWD).additionalContext, /\[1\]/));
 
 // --- cwd isolation: a different project sees no handoffs ---
-check('different cwd sees no handoff', () => assert.ok(!/auto-loaded|\[1\]/.test(fire('/tmp/project-other').additionalContext)));
+check('different cwd sees no handoff', () => assert.strictEqual(fire('/tmp/project-other'), null));
 
 process.exit(failed);

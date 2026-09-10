@@ -19,11 +19,15 @@ You never write implementation code. The repo's commits are the permanent code r
 
 ## Resolve the handoff CLI and session key
 
-This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`'s native route unless an external session was explicitly requested and a real supported session identity is available. Do not run bridge commands during unrelated tasks. Resolve helper paths relative to this loaded skill when no startup CLI notice exists.
+This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`'s native route unless an external session was explicitly requested and a real supported session identity is available. Do not run bridge commands during unrelated tasks.
 
 
-- The SessionStart `[offload]` context line gives the absolute `node "<…>/handoff.mjs"`
-  command — use it verbatim. Your session key is `$CLAUDE_CODE_SESSION_ID`.
+- Locate `handoff.mjs` beside this loaded `SKILL.md` and use its absolute path with
+  `node`. Check that it exists before running it. Startup notices from older plugin
+  versions may contain stale paths; the current skill location is authoritative.
+  If that location is also gone after an upgrade, refresh skill discovery and load
+  the current offload skill. Do not guess a cache version or create a replacement
+  helper. Your session key is `$CLAUDE_CODE_SESSION_ID`.
 - **While this external workflow is active, resolve your handoff on each resumed turn:**
   `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD" "<project/slice title>")`. This derives
   the one canonical path from `$CLAUDE_CODE_SESSION_ID`, creating it on the first turn

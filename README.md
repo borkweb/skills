@@ -21,6 +21,16 @@ Or as a Claude Code [plugin](https://code.claude.com/docs/en/plugins)
 /plugin install bork
 ```
 
+Choose one installation route per runtime. Installing the same skills both as a
+plugin and in `.agents/skills` can produce duplicate entries. The Codex marketplace
+is `.agents/plugins/marketplace.json`; this repository does not mirror the plugin
+under `.agents/skills`.
+
+Session-start hooks are silent when no handoffs are saved. When needed, they load a
+pending session handoff or list saved runs; helper paths are resolved when the
+skill is invoked. After updating the plugin, start a fresh session to drop older
+startup instructions already in the conversation.
+
 ## Quick Start
 
 1. Run `/plan-session` — describe what you're building. It will reframe the problem before you write a line of code.

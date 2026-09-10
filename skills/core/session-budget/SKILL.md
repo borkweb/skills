@@ -103,11 +103,16 @@ Validate before writing: four keys, exact names, no blank or multi-line values.
 Shorten a value rather than wrapping it, or the menu parser breaks.
 
 All mailbox file operations live in the bundled `mailbox.mjs` (Node). **Run it;
-never reimplement its logic here.** Resolve it from the loaded skill directory if no startup command is present. Do not assume a Claude hook exists in Codex. When available, the
-session-budget SessionStart hook injects a ready-to-use command into your context
-at session start — a line beginning `[session-budget] Handoff mailbox CLI is` that
-contains the exact `node "…/mailbox.mjs"` command. **Copy that `node "…"` fragment
-verbatim and append your subcommand** — don't rebuild the path yourself.
+never reimplement its logic here.** Locate it beside this loaded `SKILL.md`, check
+that it exists, and use its absolute path with `node`. Startup notices from older
+plugin versions may contain stale paths; the current skill location is
+authoritative. If that location is also gone after an upgrade, refresh skill
+discovery and load the current session-budget skill. Do not guess a cache version
+or create a replacement helper. Do not assume a Claude hook exists in Codex.
+
+The SessionStart hook is silent without pending handoffs. It auto-loads and consumes
+a single handoff; for several, it shows a selection menu. To load a selected one,
+run the current helper with `show <token>`, then `consume <token>` after reading it.
 
 Pick a writable temp path ending in `.md` — the helper **moves** it into the mailbox, so nothing is left behind. A cross-platform way to get one (works on Windows too, unlike `mktemp`):
 
@@ -115,12 +120,11 @@ Pick a writable temp path ending in `.md` — the helper **moves** it into the m
 node -e "const f=require('fs'),o=require('os'),p=require('path');process.stdout.write(p.join(f.mkdtempSync(p.join(o.tmpdir(),'handoff-')),'handoff.md'))"
 ```
 
-Write the full doc to that path with the Write tool, then store it by taking the
-injected `node "…/mailbox.mjs"` command and appending `write "<temp path>"` (cwd
-defaults to the project dir, so it is omitted):
+Write the full doc to that path with the Write tool, then run the resolved helper
+with `write "<temp path>"` (cwd defaults to the project dir, so it is omitted):
 
 ```bash
-# injected fragment + your args, e.g.:
+# Use the absolute path resolved beside this SKILL.md:
 node "/abs/path/to/mailbox.mjs" write "/tmp/handoff-1234567890.md"
 ```
 

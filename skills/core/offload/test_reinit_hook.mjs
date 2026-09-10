@@ -20,11 +20,8 @@ const hoff = (args) => execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8'
 const fireHook = (cwd) =>
   execFileSync(NODE, [HOOK], { encoding: 'utf8', env, input: JSON.stringify({ cwd }) });
 
-test('no handoff -> advertises CLI only', () => {
-  const out = JSON.parse(fireHook(join(BOX, 'empty-repo')));
-  const ctx = out.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /\[offload\] Handoff CLI/);
-  assert.doesNotMatch(ctx, /reattach with/);
+test('no handoff -> no startup context', () => {
+  assert.strictEqual(fireHook(join(BOX, 'empty-repo')), '');
 });
 
 test('saved handoff -> concise owner notice without consumption or takeover command', () => {
@@ -32,6 +29,7 @@ test('saved handoff -> concise owner notice without consumption or takeover comm
   const ctx = JSON.parse(fireHook(REPO)).hookSpecificOutput.additionalContext;
   assert.match(ctx, /owner "sess-1"/);
   assert.match(ctx, /Proj/);
+  assert.doesNotMatch(ctx, /handoff\.mjs|Handoff CLI|plugins\/cache/);
   assert.doesNotMatch(ctx, /--steal|resolve "\$PWD"|Current state:/);
   assert.ok(existsSync(p));
 });
