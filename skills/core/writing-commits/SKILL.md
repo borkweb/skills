@@ -1,9 +1,7 @@
 ---
 name: writing-commits
-description: "Use this skill to create git commits and write concise, plain-language commit messages that summarize intent and outcomes rather than code actions. Invoke it for ANY of these user goals: committing code changes, crafting or suggesting commit messages, describing diffs for commit purposes, or formatting commits in conventional/angular style. Common triggers: 'commit this', 'commit them', 'write a commit message', 'what should the commit message be', 'help me with the commit', or any variant where the user has finished coding and wants to record their changes in git. Also invoke when users mention pushing code and need the commit authored first, when they ask to split changes into separate commits, or when they ask to summarize what changed for a commit. Exclude: pull requests, code review, changelogs, reverting commits, git log analysis, writing docs about commit conventions."
-disable-model-invocation: true
-model: sonnet
-effort: low
+description: "Create an authorized git commit or draft its message, grounded in the intended diff and repository conventions. Message-only requests never commit; commit requests do not imply push or merge."
+
 allowed-tools: [Bash, Read, Grep, Glob]
 ---
 
@@ -66,13 +64,13 @@ Scale the message to the change. Not every commit needs a five-section essay.
 A subject line is often enough:
 
 ```
-fix(auth): stop expired sessions from refreshing forever
+fix(auth): Stop expired sessions from refreshing forever
 ```
 
 Or subject + a brief body if the "why" isn't obvious from context:
 
 ```
-refactor(database): keep query rules in one place
+refactor(database): Keep query rules in one place
 
 Keeps database queries consistent without changing behavior.
 ```
@@ -128,28 +126,8 @@ If the staged changes address multiple unrelated concerns (e.g., a feature + an 
 
 Only suggest this when the concerns are genuinely separate. Related changes (a feature + its tests, a fix + the migration it needs) belong together.
 
-## Output
+## Output and execution
 
-### Single commit
+For a message-only request, return the proposed message and do not commit. For an authorized commit request, inspect staged and unstaged changes, stage only the intended files or hunks, make the commit using the repository's required checks, and report its SHA and message. Existing authorization carries forward; do not end by offering to perform the requested commit.
 
-Present the commit message in a code block. Then offer to either create the commit directly or adjust the message first.
-
-### Multiple commits (after suggesting a split)
-
-When you've recommended splitting into separate commits, present each commit message in its own code block with a brief label. Then offer to walk the user through staging and committing each one in sequence. For example:
-
-**Commit 1 — docs fix:**
-```
-docs(readme): fix the product name
-```
-
-**Commit 2 — database refactor:**
-```
-refactor(database): make connection cleanup consistent
-```
-
-Each code block should contain *only* the commit message text — no wrapper headings, no analysis preamble. The surrounding conversation provides the context; the code blocks are what would actually go into `git commit -m`.
-
-For more examples of well-structured commit messages across different types (features, fixes, refactors, performance, breaking changes, etc.), see `examples.md` in this skill's directory.
-
-For reference material on Conventional Commits spec details, scope conventions, footer formats, and anti-patterns, see `reference.md`.
+Do not include unrelated dirt, handoffs, credentials or generated artifacts without scope support. A commit request does not authorize push, merge or publication. Stop for a material scope ambiguity or a failed required gate, not a repeat confirmation. Preserve any explicitly requested no-commit mode.

@@ -2,37 +2,13 @@
 
 ## Instructions
 
-Review the `git diff origin/<base>` output for the issues listed below. Be specific — cite `file:line` and suggest fixes. Skip anything that's fine. Only flag real problems.
+Use the pinned scope and action mode from SKILL.md. These are diagnostic prompts, not automatic findings or editing permission. Confirm the trigger and consequence in this repository before flagging. Preserve the suppressions below unless a concrete correctness defect warrants a finding.
 
-**Two-pass review:**
-- **Pass 1 (CRITICAL):** Run SQL & Data Safety, Migration & Schema Safety, Race Conditions & Concurrency, Auth & Permission Gaps, LLM Output Trust Boundary, Enum & Value Completeness, and API Contract Breaking Changes first. Highest severity.
-- **Pass 2 (INFORMATIONAL):** Run all remaining categories. Lower severity but still actioned.
-
-All findings get action via Fix-First Review: obvious mechanical fixes are applied automatically,
-genuinely ambiguous issues are batched into a single user question.
-
-**Output format:**
-
-```
-Pre-Landing Review: N issues (X critical, Y informational)
-
-**AUTO-FIXED:**
-- [file:line] Problem → fix applied
-
-**NEEDS INPUT:**
-- [file:line] Problem description
-  Recommended fix: suggested fix
-```
-
-If no issues found: `Pre-Landing Review: No issues found.`
-
-Be terse. For each issue: one line describing the problem, one line with the fix. No preamble, no summaries, no "looks good overall."
-
----
+Review safety and contract boundaries first, then other relevant behavior. Severity follows demonstrated impact regardless of category. Return findings with file/line, trigger, consequence and a proposed correction; a clean result is valid. The entrypoint defines verification and landing verdicts.
 
 ## Review Categories
 
-### Pass 1 — CRITICAL
+### Pass 1 — Safety and contracts
 
 #### SQL & Data Safety
 - String interpolation in SQL (even if values are `.to_i`/`.to_f` — use parameterized queries)
@@ -82,7 +58,7 @@ To do this: use Grep to find all references to the sibling values. Read each mat
 - Changed authentication/authorization requirements on an existing endpoint
 - Response pagination or ordering change that could break client assumptions
 
-### Pass 2 — INFORMATIONAL
+### Pass 2 — Other behavior and maintainability
 
 #### Error Handling Anti-Patterns
 - Catch-all exception handler (`rescue StandardError`, `catch (Exception e)`, `except Exception`) that swallows specific errors — name the specific exceptions
@@ -107,7 +83,7 @@ To do this: use Grep to find all references to the sibling values. Read each mat
 - Comments/docstrings that describe old behavior after the code changed
 
 #### LLM Prompt Issues
-- 0-indexed lists in prompts (LLMs reliably return 1-indexed)
+- Ambiguous indexing contracts between prompts, parsers and consumers; check actual output handling rather than assuming a model always uses one indexing style
 - Prompt text listing available tools/capabilities that don't match what's actually wired up
 - Word/token limits stated in multiple places that could drift
 
@@ -149,56 +125,6 @@ To do this: use Grep to find all references to the sibling values. Read each mat
 - Dynamic `import()` calls (code splitting — these are good)
 - Small utility additions (<5KB gzipped)
 - Server-side-only dependencies
-
----
-
-## Severity Classification
-
-```
-CRITICAL (highest severity):      INFORMATIONAL (lower severity):
-├─ SQL & Data Safety              ├─ Error Handling Anti-Patterns
-├─ Migration & Schema Safety      ├─ Conditional Side Effects
-├─ Race Conditions & Concurrency  ├─ Magic Numbers & String Coupling
-├─ Auth & Permission Gaps         ├─ Dead Code & Consistency
-├─ LLM Output Trust Boundary      ├─ LLM Prompt Issues
-├─ Enum & Value Completeness      ├─ Test Gaps
-└─ API Contract Breaking Changes  ├─ Crypto & Entropy
-                                   ├─ Time Window Safety
-                                   ├─ Type Coercion at Boundaries
-                                   ├─ View/Frontend
-                                   └─ Performance & Bundle Impact
-
-All findings are actioned via Fix-First Review. Severity determines
-presentation order and classification of AUTO-FIX vs ASK — critical
-findings lean toward ASK (they're riskier), informational findings
-lean toward AUTO-FIX (they're more mechanical).
-```
-
----
-
-## Fix-First Heuristic
-
-```
-AUTO-FIX (agent fixes without asking):     ASK (needs human judgment):
-├─ Dead code / unused variables            ├─ Security (auth, XSS, injection)
-├─ N+1 queries (missing eager loading)      ├─ Race conditions
-├─ Stale comments contradicting code       ├─ Design decisions
-├─ Magic numbers → named constants         ├─ Large fixes (>20 lines)
-├─ Missing LLM output validation           ├─ Enum completeness
-├─ Version/path mismatches                 ├─ Removing functionality
-├─ Variables assigned but never read       ├─ Migration safety
-├─ Inline styles, O(n*m) view lookups      ├─ Auth/permission gaps
-├─ Empty catch blocks → add logging        ├─ API contract changes
-├─ Error messages leaking internals        └─ Anything changing user-visible
-└─ Generic error handlers → specific           behavior
-```
-
-**Rule of thumb:** If the fix is mechanical and a senior engineer would apply it
-without discussion, it's AUTO-FIX. If reasonable engineers could disagree about
-the fix, it's ASK.
-
-**Critical findings default toward ASK** (they're inherently riskier).
-**Informational findings default toward AUTO-FIX** (they're more mechanical).
 
 ---
 

@@ -27,29 +27,20 @@ test('no handoff -> advertises CLI only', () => {
   assert.doesNotMatch(ctx, /reattach with/);
 });
 
-test('one handoff -> injects state + steal-reattach instruction, does NOT delete', () => {
+test('saved handoff -> concise owner notice without consumption or takeover command', () => {
   const p = hoff(['init', REPO, 'sess-1', 'Proj']);
-  const out = JSON.parse(fireHook(REPO));
-  const ctx = out.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /reattach/);
-  assert.match(ctx, /--steal/, 'cross-session takeover requires --steal');
-  assert.match(ctx, /PRIOR session \(owner: sess-1\)/, 'flags the foreign owner');
+  const ctx = JSON.parse(fireHook(REPO)).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /owner "sess-1"/);
   assert.match(ctx, /Proj/);
-  assert.ok(existsSync(p), 'handoff must NOT be consumed by the hook');
+  assert.doesNotMatch(ctx, /--steal|resolve "\$PWD"|Current state:/);
+  assert.ok(existsSync(p));
 });
 
-test('advertises the resolve subcommand and the ownership guard', () => {
-  const out = JSON.parse(fireHook(REPO));
-  const ctx = out.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /resolve "\$PWD"/, 'tells the agent to resolve its own handoff');
-  assert.match(ctx, /ownership-/, 'mentions the ownership guard');
-});
-
-test('multiple handoffs -> menu', () => {
+test('multiple handoffs -> menu, no full documents injected', () => {
   hoff(['init', REPO, 'sess-2', 'Proj2']);
-  const out = JSON.parse(fireHook(REPO));
-  const ctx = out.hookSpecificOutput.additionalContext;
-  assert.match(ctx, /handoffs from other sessions exist for this project/);
+  const ctx = JSON.parse(fireHook(REPO)).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /2 saved offload handoff/);
   assert.match(ctx, /\[1\]/);
-  assert.match(ctx, /--steal/);
+  assert.match(ctx, /\[2\]/);
+  assert.doesNotMatch(ctx, /## Gate results|--steal|Resolve YOUR/);
 });

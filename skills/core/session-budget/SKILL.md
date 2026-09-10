@@ -8,8 +8,6 @@ description: >
   budget", "should I compact", "should I clear", "is this session getting heavy",
   "token budget", invokes /session-budget, or when the budget hook requests a
   proactive assessment.
-model: sonnet
-effort: low
 allowed-tools: [Bash, Read, Write]
 ---
 
@@ -22,7 +20,7 @@ what you are carrying is dead weight.
 
 ## 1. X-ray the context
 
-You already hold this whole conversation, so assess by introspection — do **not**
+Assess the context currently available to you; introspection and transcript bytes are approximate signals, not exact active-context measurements. Prefer runtime context metrics when exposed, and do not infer active size from an old or compacted transcript. Assess by introspection — do **not**
 re-read the transcript. Report three things, briefly:
 
 - **Reclaimable vs. load-bearing.** Roughly what fraction of current context is
@@ -105,7 +103,7 @@ Validate before writing: four keys, exact names, no blank or multi-line values.
 Shorten a value rather than wrapping it, or the menu parser breaks.
 
 All mailbox file operations live in the bundled `mailbox.mjs` (Node). **Run it;
-never reimplement its logic here.** You don't need to know where it is: the
+never reimplement its logic here.** Resolve it from the loaded skill directory if no startup command is present. Do not assume a Claude hook exists in Codex. When available, the
 session-budget SessionStart hook injects a ready-to-use command into your context
 at session start — a line beginning `[session-budget] Handoff mailbox CLI is` that
 contains the exact `node "…/mailbox.mjs"` command. **Copy that `node "…"` fragment
@@ -114,7 +112,7 @@ verbatim and append your subcommand** — don't rebuild the path yourself.
 Pick a writable temp path ending in `.md` — the helper **moves** it into the mailbox, so nothing is left behind. A cross-platform way to get one (works on Windows too, unlike `mktemp`):
 
 ```bash
-node -e "const o=require('os'),p=require('path');process.stdout.write(p.join(o.tmpdir(),'handoff-'+Date.now()+'.md'))"
+node -e "const f=require('fs'),o=require('os'),p=require('path');process.stdout.write(p.join(f.mkdtempSync(p.join(o.tmpdir(),'handoff-')),'handoff.md'))"
 ```
 
 Write the full doc to that path with the Write tool, then store it by taking the
@@ -129,8 +127,7 @@ node "/abs/path/to/mailbox.mjs" write "/tmp/handoff-1234567890.md"
 ## Modes
 
 **Manual** (invoked by the user or `/session-budget`): give the verdict, including
-whether the handoff gate passed. On a REINIT verdict get an explicit go-ahead
-**before** writing the handoff, then tell the user it is staged and they can run
+whether the handoff gate passed. On a REINIT verdict, prepare the reversible handoff within the requested scope, then tell the user it is staged and they can run
 `/clear` (CLEAR) or `/compact` (COMPACT). On plain COMPACT or CLEAR, there is
 nothing to stage — give the verdict, the one-line reason no handoff is needed, and
 any carry-over sentence inline.
@@ -152,7 +149,6 @@ that no handoff is needed.
 - Never stage a handoff whose sections are mostly `None.` or restate what git and
   files on disk already record — that is noise the next session is forced to read.
   "It can't hurt" is not a reason; a handoff must earn its load time.
-- In manual mode, never write without an explicit go-ahead. In proactive mode,
-  pre-staging the handoff without confirmation is the expected behavior.
+- A requested or proactive REINIT assessment authorizes preparing the reversible handoff, not resetting the session.
 - Do not re-read the transcript to assess; introspect what you already hold.
 - Don't read `mailbox.mjs`'s source unless it errors — it exists to be run.

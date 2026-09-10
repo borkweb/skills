@@ -10,7 +10,6 @@ description: >
   never writes implementation code. Use when the user says "offload", "hand this
   to codex", "hand this to a builder", "architect mode", "have codex build this",
   or invokes /offload.
-effort: xhigh
 ---
 
 You are the **ARCHITECT**. The **BUILDER** is whichever harness
@@ -20,9 +19,12 @@ You never write implementation code. The repo's commits are the permanent code r
 
 ## Resolve the handoff CLI and session key
 
+This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`'s native route unless an external session was explicitly requested and a real supported session identity is available. Do not run bridge commands during unrelated tasks. Resolve helper paths relative to this loaded skill when no startup CLI notice exists.
+
+
 - The SessionStart `[offload]` context line gives the absolute `node "<…>/handoff.mjs"`
   command — use it verbatim. Your session key is `$CLAUDE_CODE_SESSION_ID`.
-- **Always resolve YOUR handoff with `resolve`, every turn:**
+- **While this external workflow is active, resolve your handoff on each resumed turn:**
   `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD" "<project/slice title>")`. This derives
   the one canonical path from `$CLAUDE_CODE_SESSION_ID`, creating it on the first turn
   (the title is applied only at creation) and returning the same path on every later
@@ -86,8 +88,7 @@ and bridge. If a ledger exists for this session, keep it current: set
    slice** (skip to step 4), then dispatch.
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
    each with a one-line reason, recorded under *Decisions + why*. Clear the
-   resolved disagreements. For a genuine judgment call (not a clear-cut ruling),
-   field it through `council` before deciding rather than guessing.
+   resolved disagreements. Use `council` for substantive judgment calls when multiple perspectives add value; routine rulings use the scope and evidence already available.
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only — ignore *Work summary* and any narrative when grading. **Spot-check:**
    re-run any gate you doubt via its reproduce command (you have Bash). Once the raw
@@ -110,83 +111,18 @@ and bridge. If a ledger exists for this session, keep it current: set
    them after results exist).
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
 6. **Emit the builder block** (below), write it into *Next slice*
-   (`… section set "$HANDOFF" "Next slice" --file <block>`), set
-   `status: dispatched` via `… status "$HANDOFF" dispatched`, then dispatch. If a
+   (`… section set "$HANDOFF" "Next slice" --file <block>`), dispatch, then on confirmed success set
+   `status: dispatched` via `… status "$HANDOFF" dispatched`. If a
    ledger exists, record the slice on it in the same turn — id, title, branch,
    worktree, handoff path, pane, `--state dispatched`.
 
-## The builder block (always paste-ready)
+## Builder brief
 
-Produce this block every turn, filled for the current slice. Always print it so
-the user can paste it manually; then offer to dispatch automatically.
-
-```
-/goal: execute the architect spec for <slice>. Rules:
-
-COMMS — caveman mode, level full, for ALL prose you and your subagents emit:
-plan, disagreements, handoff notes, agent-to-agent chatter, final report.
-Drop articles/filler/hedging; fragments OK; short synonyms; technical terms +
-error strings exact. Write NORMAL: code, commit messages, PR text, gate-result
-lines (keep required format), safety warnings, and any sentence where
-compression creates ambiguity. All substance stays; only fluff dies.
-
-PHASE 0 — Before any code, reply with your plan + EVERY disagreement you have,
-with reasons, citing real files in the repo. Also record each unresolved
-disagreement under "## Open disagreements" in $OFFLOAD_HANDOFF (one line each) so
-the architect can rule on it next turn. When a design question is genuinely
-ambiguous, resolve it with the bork:council skill before coding rather than
-guessing.
-Silent compliance = failure. Silent scope additions = failure.
-
-PHASE 1 — Freeze the shared contracts (schemas/interfaces) named below as committed
-repo files first. After freeze they are read-only for everyone, including you.
-
-PHASE 2 — Spawn at most 3–4 lane agents on modules that do not import each other,
-plus ONE reviewer agent that never writes feature code (it checks every lane
-against this spec + tests + the frozen contracts and returns APPROVE or a numbered
-defect list; nothing merges without APPROVE). Then commit + push each slice and
-update the session handoff at $OFFLOAD_HANDOFF:
-  - frontmatter "builder_session:": set it to your session/resume id (provenance).
-  - "## Gate results": one line per frozen gate — pass/fail + the number + the
-     reproduce command. No logs, no narrative. This is the ONLY thing graded.
-  - "## Work summary": files edited (paths), commit SHAs + subjects, done/stubbed/
-     deferred, blockers. Pointers, not artifacts — no diffs, no logs.
-Refresh "## Work summary" whenever it stops being true — a summary left over
-from an earlier phase is worse than an empty one. Write handoff sections with
-  node "<handoff.mjs path from the [offload] line>" section append|set "$OFFLOAD_HANDOFF" "<heading>" --text '...'
-rather than editing the markdown by hand. Never touch the architect's ledger.
-
-Finally run: node "<handoff.mjs path from the [offload] line>" ready "$OFFLOAD_HANDOFF"
-  (This is ownership-guarded — it writes ONLY if $OFFLOAD_HANDOFF belongs to the
-  architect session exported into your env as $CLAUDE_CODE_SESSION_ID. Do NOT add
-  --steal and do NOT hand-edit the path. If it refuses, you are pointed at the wrong
-  document — STOP and report it; never route around the guard.)
-  `status` takes a fixed vocabulary — specced | dispatched | blocked |
-  results-ready | accepted | rejected | merged | abandoned. It REFUSES anything
-  else, including a missing value; a bad status is invisible to the architect's
-  bridge, which would then wait forever on a slice you already reported.
-
-MID-SLICE BLOCKER — if you must stop for an architect ruling before the slice is
-done (a gate contradicts the code, a frozen contract is wrong, an assertion you
-believe is mistaken): record it under "## Open disagreements", then run
-  node "<handoff.mjs path from the [offload] line>" blocked "$OFFLOAD_HANDOFF"
-and stop. That status flip wakes the architect immediately. Never sit and wait
-without flipping the handoff — an unreported block is invisible.
-
-Five rules:
-1. The handoff + the commits are the memory — unrecorded work didn't happen.
-2. You never grade your own work.
-3. Disagreement is mandatory.
-4. Success criteria were frozen before results existed; do not edit them.
-5. Spec/verify is mine; typing is yours.
-
-<the architect's slice spec: goal, frozen gates, contracts to freeze, acceptance
-criteria, explicit out-of-scope>
-```
+Read [builder-template.md](builder-template.md) when preparing a slice. Fill it, save it under Next slice, and dispatch within existing authorization. Do not regenerate or print a full builder block on a supervision-only turn. Mark dispatched and record the returned pane only after the launcher succeeds.
 
 ## Dispatch
 
-After printing the block, offer to launch the builder. On yes:
+Launch within existing authorization. Ask only if the actual permission relaxation or dispatch scope is not already authorized:
 
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
@@ -225,6 +161,6 @@ launch; if the user declines, stop at the paste-ready block.
 - Never edit frozen gates after results exist.
 - Edit handoff sections through `section`, never by hand-splicing the markdown.
 - The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
-- Resolve `$HANDOFF` via `resolve` every turn; never hand-build a path or write to a
+- During active offload work, resolve `$HANDOFF` via `resolve` on resume; never hand-build a path or write to a
   doc from `list` you don't own. A `refusing:`/ownership error from the CLI means you
   are aimed at the wrong document — STOP and surface it, don't `--steal` past it.

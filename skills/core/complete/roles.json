@@ -1,0 +1,6 @@
+{
+  "native": {
+    "worker": "gpt-5.6-luna",
+    "reviewer": "gpt-5.6-luna"
+  }
+}

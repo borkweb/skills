@@ -57,12 +57,12 @@ In automated release systems, commits drive version bumps:
 
 | Anti-pattern | Bad | Good |
 |---|---|---|
-| Vague messages | "Fix bug" | `fix(auth): stop expired sessions from refreshing forever` |
+| Vague messages | "Fix bug" | `fix(auth): Stop expired sessions from refreshing forever` |
 | Multiple concerns | "Add feature X, fix bug Y, update docs" | Split into separate commits |
-| Implementation inventory | "Extract PermissionGate and replace controller checks" | `refactor(auth): keep permission checks consistent` |
-| Unneeded jargon | "Improve p95 tail latency for product queries" | `perf(products): speed up the slowest product requests` |
-| Missing context | "Update config" | `build(web): make production downloads smaller` |
-| Personal notes | "Finally got this working!" | `fix(parser): accept brackets inside brackets` |
+| Implementation inventory | "Extract PermissionGate and replace controller checks" | `refactor(auth): Keep permission checks consistent` |
+| Unneeded jargon | "Improve p95 tail latency for product queries" | `perf(products): Speed up the slowest product requests` |
+| Missing context | "Update config" | `build(web): Make production downloads smaller` |
+| Personal notes | "Finally got this working!" | `fix(parser): Accept brackets inside brackets` |
 
 ## Emoji Commits (only if repo already uses them)
 

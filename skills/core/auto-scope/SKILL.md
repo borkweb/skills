@@ -27,56 +27,17 @@ Run only when the task plausibly touches **multiple files or an area not seen th
 
 If you're skipping, say nothing about scoping and proceed normally. A "I decided not to scope this" line is itself noise.
 
-## 2. Discover — use whatever search the environment has
+## 2. Discover
 
-Detect what's available before committing to a search method, then take the path that fits:
-
-- **grepika** (`mcp__*grepika*` tools) present → use its `search` / `refs` / `outline` for ranked, snippet-level discovery.
-- **graphify** (a `graphify-out/` dir or the graphify skill) present → query the graph for structure and relationships.
-- Neither → fall back to built-in **Grep** / **Glob**.
-
-State in one line which method you used, so the choice is visible and correctable.
-
-Whatever the tool, the discovery **goal** is the same — find:
-
-- the entry point(s) for the feature or bug
-- direct callers and callees of the symbols the change will touch
-- the test(s) covering that area
-- the config / schema / build files the change implies
-
-Don't exhaustively crawl. Stop when the named set is enough to start; the brief's OPEN section carries the rest.
+Use the current runtime's working search tool. Find entrypoints, direct callers, relevant tests and implicated config/schema files. Stop when there is enough evidence to start; do not inventory tools or narrate routine tool selection.
 
 ## 3. Degrade gracefully
 
 If discovery can't complete — no search tool resolves the area, the codebase is unfamiliar, or the task description is too vague to localize — **do not block and do not guess silently.** Emit a partial brief: list what you did find, mark it partial, and put what you couldn't localize in OPEN. A half-scoped task started honestly beats a fully-scoped one built on guesses.
 
-## 4. Emit the brief — fixed shape
+## 4. Briefly state scope
 
-Output exactly this block, nothing reformatted into prose:
-
-```
-## Scope: <task in one line>
-Discovery: <grepika | graphify | grep/glob> [+ "partial" if incomplete]
-
-IN — read / edit:
-  - path/to/a.ext        (why: entry point)
-  - path/to/b.ext        (why: caller)
-  - path/to/b.test.ext   (why: coverage)
-
-OUT — leave alone:
-  - vendor/, build/, generated output
-  - <unrelated module or area the task does NOT touch>
-
-OPEN — unresolved scope:
-  - <question, with the assumption you're proceeding on>
-```
-
-Rules for the block:
-
-- IN holds the working set — keep it to the files the task actually needs, not everything tangentially related. If IN exceeds ~15 entries, the task likely needs decomposition; say so.
-- Every IN entry carries a one-clause `why`.
-- OUT names concrete areas worth explicitly excluding (the ones an unscoped pass would waste reads on), not a generic "everything else."
-- OPEN states each open question **with the assumption you'll proceed under**, so silence from the user means the assumption stands.
+Name the relevant files and why, concrete areas to leave alone, and material unresolved scope. Use prose or IN/OUT/OPEN lists as appropriate. Distinguish assumptions safe to proceed on from questions that block dependent work; silence is not approval. Avoid a fixed template for an obvious scope.
 
 ## 5. Continue
 

@@ -69,7 +69,7 @@ And the consequence:
 - Only **~15%** were well-calibrated; **~3%** were underconfident.
 - Overconfidence rose with age in the sample (boomers most overconfident at ~84%, Gen Z least at ~75%).
 
-The skill's claim that "80%+ of UK adults are more confident than they are correct" maps directly to the 81% figure. **Well-calibrated** is defined as confidence tracking accuracy — the rare and valuable state.
+These are reported results from one general-knowledge sample, not a population-wide diagnosis or evidence about the current user. Verify the primary study before quoting its numbers. Calibration means confidence tracking accuracy.
 
 **The debiasing tools — with honest attribution.** The skill bundles these under Egan's "good form for thinking" toolkit. Two of them have older, separate origins worth knowing:
 

@@ -8,7 +8,7 @@ import assert from 'node:assert';
 import test from 'node:test';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const COMPLETE = readFileSync(join(HERE, 'SKILL.md'), 'utf8');
+const COMPLETE = readFileSync(join(HERE, 'external-orchestration.md'), 'utf8');
 const OFFLOAD = readFileSync(join(HERE, '..', 'offload', 'SKILL.md'), 'utf8');
 const DISPATCH = readFileSync(join(HERE, '..', 'offload', 'dispatch.sh'), 'utf8');
 const PANE = readFileSync(join(HERE, '..', 'offload', 'pane.mjs'), 'utf8');

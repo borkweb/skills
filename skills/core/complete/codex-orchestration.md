@@ -1,7 +1,7 @@
 # Codex orchestration
 
 Codex is the architect and orchestrator. Delegate implementation and independent
-reviews to `gpt-5.6-luna` subagents. The parent scopes work, freezes gates,
+reviews to the worker and reviewer models resolved from `roles.json` beside this file (explicit user choices override that configuration). The parent scopes work, freezes gates,
 resolves disagreements, verifies evidence, and maintains progress; it does not
 write implementation code. A later explicit user instruction can override the
 worker model or execution route.
@@ -16,7 +16,7 @@ forward without asking again. Delegation uses the current runtime's permissions.
 Read any supplied handoff and inspect the current checkout before resuming.
 Create a temporary directory for this run's state outside tracked files; report
 its absolute path. Keep an architect-owned ledger there containing the goal,
-endpoint, authorization, orchestrator `Codex`, worker model `gpt-5.6-luna`, and
+endpoint, authorization, orchestrator `Codex`, resolved worker and reviewer models, and
 one row per slice: ID, scope, dependencies, worktree/branch, handoff path, native
 agent ID, state, commits, gate evidence, and review verdict. On resume, use the
 ledger path from the handoff rather than creating a competing record. If the
@@ -38,12 +38,12 @@ worker state: that helper observes external processes and bridges.
    the first gates: `plan-eng-review` for architecture/data flow/concurrency,
    `plan-design-review` for UI, and `plan-devex-review` for consumed interfaces.
    Skip unnecessary reviews for trivial work. If delegated, these reviews also
-   use Luna.
+   use the resolved reviewer model.
 2. Write each slice's handoff before dispatch: exact goal, owned files, protected
    paths, dependencies, acceptance criteria, reproducible gate commands, worktree
    and branch, result path, and authorized commit/push behavior. Preserve any
    required RED-before-GREEN chronology. Freeze gates before results exist.
-3. Use the available native spawn tool with **`model: "gpt-5.6-luna"`**. With
+3. Use the available native spawn tool with **`model: <resolved worker or reviewer model>`**. With
    `collaboration.spawn_agent`, use `fork_turns: "none"` so the model override is
    accepted; provide the handoff path and enough context to work independently.
    Do not use `fork_turns: "all"` with a model override. Inspect the exposed tool
@@ -77,11 +77,11 @@ that is still running or claim an unreachable worker is active.
 
 Resolve a blocked worker's disagreements, record the ruling, and send it back.
 Use `council` for substantive judgment calls when it adds value; any delegated
-participants use Luna. If the requested model or native tools are unavailable,
+participants use the resolved reviewer model. If the requested model or native tools are unavailable,
 report the precise blocker and seek a user choice instead of selecting a fallback.
 
 When results arrive, compare raw gate evidence with the frozen acceptance
-criteria and inspect the actual diff. Run a separate Luna reviewer with the
+criteria and inspect the actual diff. Run a separate reviewer using the resolved reviewer model with the
 `review` skill against that slice's exact commit and base. Instruct the reviewer
 to stay read-only and return findings plus its verdict; review-skill fix behavior
 does not authorize that reviewer to edit. The builder cannot review itself.
@@ -100,7 +100,7 @@ is not acceptance. Verify that reviewed files/HEAD stayed stable during review.
 Confirm that every part of the goal is delivered and every ledger row is terminal;
 an abandoned or rejected row does not fulfill missing scope. Integrate accepted
 slices on the target branch through a delegated worker, then run relevant
-integration gates and a fresh independent Luna `review` over the full diff
+integration gates and a fresh independent `review` using the resolved reviewer model over the full diff
 against the intended base. Check the repository's required CI as well as local
 gates. Missing evidence or blocking findings means corrective work remains.
 
@@ -112,4 +112,4 @@ recording `merged`.
 
 When producing a continuation handoff, use `handoff` and preserve the ledger and
 result-file paths, authorization, frozen criteria, and the role split: Codex
-orchestrator, Luna workers. Keep these session artifacts out of commits.
+orchestrator, configured workers. Keep these session artifacts out of commits.

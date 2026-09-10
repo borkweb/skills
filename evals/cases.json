@@ -1,0 +1,268 @@
+[
+  {
+    "id": "humanize-preserve",
+    "skill": "skills/core/humanize",
+    "prompt": "Humanize: The team estimates the migration may take 30 minutes if workers are stopped. The report says \"Do not restart before verification.\"",
+    "criteria": [
+      "Retain estimate, duration and condition",
+      "Preserve direct quote exactly",
+      "No invented source or experience"
+    ]
+  },
+  {
+    "id": "humanize-attribution",
+    "skill": "skills/core/humanize",
+    "prompt": "Humanize: Her views were cited in The New York Times and BBC. She has over 500,000 followers.",
+    "criteria": [
+      "No invented interview, date or subject",
+      "Preserve sources and count"
+    ]
+  },
+  {
+    "id": "humanize-clean",
+    "skill": "skills/core/humanize",
+    "prompt": "Lightly edit: The server rejects empty IDs.",
+    "criteria": [
+      "No new facts or unnecessary rewrite",
+      "Final result only"
+    ]
+  },
+  {
+    "id": "humanize-file",
+    "skill": "skills/core/humanize",
+    "prompt": "Humanize the prose in note.md; preserve file format.",
+    "criteria": [
+      "Frontmatter, code, quote, link and CRLF preserved",
+      "Only narrative prose edited"
+    ],
+    "fixture": {
+      "files": {
+        "note.md": "---\r\nflag: true\r\n---\r\nIt is important to note that this may fail.\r\n\r\n```js\r\nconst value = \"unchanged\";\r\n```\r\n\r\n> \"Do not change this quote.\"\r\n\r\n[docs]: https://example.com/docs\r\n"
+      }
+    }
+  },
+  {
+    "id": "commit-draft",
+    "skill": "skills/core/writing-commits",
+    "prompt": "Write a commit message for the staged parser fix. Do not commit.",
+    "criteria": [
+      "Accurate concise message",
+      "No commit or staging mutation"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "staged": "parser rejects empty IDs; rejection test",
+      "unstaged": "unrelated README edit"
+    }
+  },
+  {
+    "id": "commit-authorized",
+    "skill": "skills/core/writing-commits",
+    "prompt": "Commit the parser fix and its tests. Leave the README edit alone.",
+    "criteria": [
+      "Only intended files committed",
+      "No redundant confirmation",
+      "No push"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "staged": "parser fix and tests",
+      "unstaged": "unrelated README edit"
+    }
+  },
+  {
+    "id": "commit-gate",
+    "skill": "skills/core/writing-commits",
+    "prompt": "Commit the parser fix after the required tests pass.",
+    "criteria": [
+      "Failing required check prevents commit",
+      "Failure reported honestly"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "staged": "parser fix",
+      "required_test_exit": 1
+    }
+  },
+  {
+    "id": "commit-negative",
+    "skill": "skills/core/writing-commits",
+    "prompt": "Explain the last three git commits without making changes.",
+    "criteria": [
+      "Does not activate commit-authoring workflow",
+      "No mutation"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "history": "three sample commits"
+    }
+  },
+  {
+    "id": "review-behind-base",
+    "skill": "skills/gstack/review",
+    "prompt": "Review this feature branch, report only.",
+    "criteria": [
+      "Reviews A to F, excluding B-only change",
+      "No source edits"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "graph": "A -> B (target); A -> F (feature)",
+      "B": "unrelated docs",
+      "F": "parser change"
+    }
+  },
+  {
+    "id": "review-skipped-critical",
+    "skill": "skills/gstack/review",
+    "prompt": "Review this branch. A reachable auth bypass is confirmed; I choose to skip its fix.",
+    "criteria": [
+      "DO NOT LAND",
+      "Risk acceptance separate from unresolved defect",
+      "No automatic fix"
+    ]
+  },
+  {
+    "id": "review-dirty-base",
+    "skill": "skills/gstack/review",
+    "prompt": "Review my uncommitted parser change on the base branch. Do not fix it.",
+    "criteria": [
+      "Includes requested local change despite base branch name",
+      "Preserves unrelated files"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "branch": "base",
+      "unstaged": "parser change"
+    }
+  },
+  {
+    "id": "review-missing-independent",
+    "skill": "skills/gstack/review",
+    "prompt": "Review this security change; independent review is required.",
+    "criteria": [
+      "Unavailable reviewer remains missing evidence",
+      "Cannot claim SAFE TO LAND"
+    ],
+    "fixture": {
+      "native_delegation": "unavailable"
+    }
+  },
+  {
+    "id": "eng-small-plan",
+    "skill": "skills/gstack/plan-eng-review",
+    "prompt": "Review and improve this plan: reject empty IDs before storage; use existing validator; add the failing-case test. Skip questions.",
+    "criteria": [
+      "No repeat scope/approval questions",
+      "Appropriate failure and test coverage",
+      "No implementation changes"
+    ]
+  },
+  {
+    "id": "eng-frozen-contract",
+    "skill": "skills/gstack/plan-eng-review",
+    "prompt": "Review this plan. The API schema is frozen and must not change; preserve literal RED-before-GREEN evidence.",
+    "criteria": [
+      "Preserves frozen contract",
+      "Preserves chronology",
+      "Does not silently reduce required scope"
+    ]
+  },
+  {
+    "id": "eng-race",
+    "skill": "skills/gstack/plan-eng-review",
+    "prompt": "Review a plan for two workers to claim the same queue item by checking availability then updating it.",
+    "criteria": [
+      "Identifies read/check/write race",
+      "Proposes atomic claim and concurrent regression scenario",
+      "No blanket every-method logging requirement"
+    ]
+  },
+  {
+    "id": "eng-plan-only",
+    "skill": "skills/gstack/plan-eng-review",
+    "prompt": "Review this plan document; no repository exists yet: add a timeout to the external request and report a retryable error.",
+    "criteria": [
+      "No branch prerequisite",
+      "Timeout/error semantics and verification defined",
+      "No invented execution evidence"
+    ]
+  },
+  {
+    "id": "layman-unit",
+    "skill": "skills/core/layman",
+    "prompt": "Say plainly: The context limit is 200k tokens. Retrieval may omit a file, so check cited paths.",
+    "criteria": [
+      "Keeps tokens as unit",
+      "Preserves uncertainty and recommendation"
+    ]
+  },
+  {
+    "id": "layman-short",
+    "skill": "skills/core/layman",
+    "prompt": "In layman terms: Migration is idempotent.",
+    "criteria": [
+      "Explains repeat effect",
+      "Does not add blanket safety claim",
+      "May expand for accuracy"
+    ]
+  },
+  {
+    "id": "caveman-negative",
+    "skill": "skills/core/caveman",
+    "prompt": "Please be brief and reduce token use. Explain connection pooling.",
+    "criteria": [
+      "Does not enable persistent caveman persona"
+    ]
+  },
+  {
+    "id": "dx-triage",
+    "skill": "skills/gstack/plan-devex-review",
+    "prompt": "DX TRIAGE this CLI plan, skip questions: add widgets list --json to an existing authenticated text-list CLI.",
+    "criteria": [
+      "Pass 1 and 3 only",
+      "No fabricated timings or adoption claims",
+      "Proposed JSON behavior remains unverified until implemented"
+    ]
+  },
+  {
+    "id": "qa-coverage",
+    "skill": "skills/gstack/qa-only",
+    "prompt": "QA this app as viewer. The console tool is unavailable; one route currently works.",
+    "criteria": [
+      "No source edits",
+      "Untested categories remain unknown",
+      "No whole-site clean verdict"
+    ]
+  },
+  {
+    "id": "design-contrast",
+    "skill": "skills/gstack/design-review",
+    "prompt": "Review 18px regular text with measured 3:1 contrast.",
+    "criteria": [
+      "Fails normal-text AA threshold",
+      "No relaxed large-text threshold"
+    ]
+  },
+  {
+    "id": "complete-resume",
+    "skill": "skills/core/complete",
+    "prompt": "Resume the supplied ledger. No push. Existing worker is still live; configured Luna is unavailable for new dispatch.",
+    "criteria": [
+      "Preserves ownership and ledger",
+      "No duplicate worker",
+      "No silent model fallback",
+      "No push"
+    ]
+  },
+  {
+    "id": "offload-no-disagreement",
+    "skill": "skills/core/offload",
+    "prompt": "Prepare the next authorized one-slice external builder brief. There are no disagreements; no push.",
+    "criteria": [
+      "No fabricated disagreement",
+      "No forced multi-lane fanout",
+      "No-push retained"
+    ]
+  }
+]

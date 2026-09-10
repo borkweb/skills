@@ -18,14 +18,17 @@
     {
       "id": 2,
       "prompt": "commit this",
-      "expected_output": "The skill should trigger even with this minimal prompt, analyze staged changes via git commands, and produce a well-structured commit message.",
+      "expected_output": "Invoke on the natural-language commit request, inspect the intended diff and repository conventions, run required checks, commit only authorized changes and report the commit. No push or repeat confirmation.",
       "files": [],
       "expectations": [
         "Runs git diff --staged or equivalent to analyze changes",
         "Runs git log to check repository conventions",
         "Produces a commit message with conventional commit type",
         "Subject line uses imperative mood and is under 72 characters",
-        "Message summarizes the intent or outcome rather than listing code actions"
+        "Message summarizes the intent or outcome rather than listing code actions",
+        "Actually creates the authorized commit in a disposable fixture",
+        "Leaves unrelated changes untouched",
+        "Does not ask again or push"
       ]
     },
     {

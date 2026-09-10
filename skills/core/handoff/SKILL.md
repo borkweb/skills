@@ -2,17 +2,13 @@
 name: handoff
 description: Compact the current conversation into a handoff document for another agent to pick up.
 argument-hint: "What will the next session be used for?"
-effort: low
 ---
 
-Write a handoff document summarising the current conversation so a fresh agent can continue the work. Create the target path with `f=$(mktemp -t handoff) && mv "$f" "$f.md" && echo "$f.md"` so it ends in `.md` on both macOS and Linux (read the file before you write to it).
+Write a handoff document summarising the current conversation so a fresh agent can continue the work. Create a unique temporary directory with the platform's secure temp helper (for Node, `fs.mkdtempSync(path.join(os.tmpdir(), "handoff-"))`) and write `handoff.md` inside it. Report the absolute path.
 
 If the user passed arguments, treat them as a description of what the next session will focus on and tailor the doc accordingly.
 
-For complete/handoff workflows, the default receiving session is a **Codex
-orchestrator**, which delegates work to **`gpt-5.6-luna`** subagents. Preserve
-that role split under **Key context**, together with any explicit user override.
-Writing this document does not itself launch a worker or change the parent model.
+Preserve the actual receiving runtime and resolved role/model configuration under **Key context**. Do not inject orchestration defaults into an unrelated continuation. Writing a handoff does not launch a worker or change the active model.
 When continuing a complete run, include its ledger and per-slice result paths
 under **Pointers**, and preserve authorization, frozen gates, unresolved rulings,
 and agent IDs needed to resume. The receiving Codex must verify agent liveness;

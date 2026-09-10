@@ -1,13 +1,11 @@
 ---
 name: agents-md-lint
 description: Audit and trim AI agent instruction files (AGENTS.md, CLAUDE.md, CONVENTIONS.md, .cursorrules, etc.) by testing which facts an AI agent can discover from code alone. Use when asked to lint, audit, optimize, prune, or trim any agent instruction file in a repository. Removes redundant documentation that wastes context tokens. Supports a dry-run mode that reports findings without modifying files.
-model: sonnet
-effort: medium
 ---
 
 # agents-md-lint
 
-Audit AI agent instruction files by spawning a blind sub-agent that tries to rediscover each documented fact from code search alone. Facts it finds easily → remove. Facts it can't → keep.
+Audit AI agent instruction files by spawning a blind sub-agent that tries to rediscover each documented fact from code search alone. Test descriptive facts for practical discovery cost. Preserve normative instructions even when examples of compliance are visible in code.
 
 This works on any file whose purpose is to give an AI agent context about a codebase: AGENTS.md, CLAUDE.md, CONVENTIONS.md, .cursorrules, or similar. The workflow refers to these collectively as "instruction files."
 
@@ -23,11 +21,11 @@ This works on any file whose purpose is to give an AI agent context about a code
 
 Scan the repo for instruction files. Common names: `AGENTS.md`, `CLAUDE.md`, `CONVENTIONS.md`, `.cursorrules`, `.github/copilot-instructions.md`. Ask the user if there are others, or if any should be excluded.
 
-**CLAUDE.md → AGENTS.md normalization:** If a `CLAUDE.md` exists but no `AGENTS.md`, rename `CLAUDE.md` to `AGENTS.md` and create a symlink `CLAUDE.md → AGENTS.md`. This keeps `AGENTS.md` as the canonical name while preserving compatibility with tools that look for `CLAUDE.md`. If both files already exist as separate files, leave them as-is and audit each independently. Skip this normalization in dry-run mode.
+Rename or symlink instruction files only when separately requested; trimming does not change their discovery paths.
 
 ### 2. Extract facts
 
-Read each instruction file. List every distinct fact as a numbered item, grouped by file. A "fact" is any single claim, convention, instruction, or piece of context — e.g., "tests use vitest," "branch names follow feature/JIRA-123 format," "never mock the database in integration tests."
+Separate mandatory conventions, prohibitions and acceptance contracts from descriptive facts. Keep the former unless explicitly superseded; code examples cannot prove that a rule is unnecessary. List every descriptive fact as a numbered item, grouped by file. A "fact" is any single claim, convention, instruction, or piece of context — e.g., "tests use vitest," "branch names follow feature/JIRA-123 format," "never mock the database in integration tests."
 
 ### 3. Chunk facts for testing
 
@@ -35,7 +33,7 @@ Sub-agents get unreliable when asked too many questions at once. If a file conta
 
 ### 4. Spawn blind reviewer(s)
 
-For each batch of facts, spawn a sub-agent with this task template. The key insight here is that the sub-agent must not have access to the instruction files — it should rely only on what it can find by searching the code. Rather than renaming or moving files (which risks data loss if something goes wrong), tell the sub-agent explicitly which files to ignore:
+For each batch of descriptive facts, spawn an isolated sub-agent without inherited conversation/instruction context with this task template. The key insight here is that the sub-agent must not have access to the instruction files — it should rely only on what it can find by searching the code. Rather than renaming or moving files (which risks data loss if something goes wrong), tell the sub-agent explicitly which files to ignore:
 
 ```
 You are reviewing the codebase at <REPO_PATH> to test what facts are easily
@@ -63,7 +61,7 @@ QUESTIONS:
 <numbered list of questions, one per extracted fact>
 ```
 
-Use Sonnet or equivalent for reliable results without defaulting to the highest-cost model.
+Use the selected runtime model or an explicit reviewer configuration. Record searches and elapsed lookup cost; disclose if instruction auto-loading prevented a blind review.
 
 ### 5. Score results
 
@@ -71,7 +69,7 @@ Compare each sub-agent's answers against the original facts. The scoring account
 
 | Agent confidence | Agent correct? | Verdict |
 |-----------------|----------------|---------|
-| HIGH | Yes | **Remove** — easily discoverable |
+| HIGH | Yes | **Candidate to remove** — only if future lookup cost is lower than retaining a short pointer |
 | HIGH | Partially | **Keep** the missing detail only |
 | MEDIUM | Yes | **Keep** — findable but buried; an agent without docs would likely miss it or waste time searching |
 | MEDIUM | Partially | **Keep** — not reliably found |
@@ -89,7 +87,7 @@ Show a summary table:
 | 3 | Auth middleware in src/middleware/auth.ts | MEDIUM | Yes | Keep (buried) |
 ```
 
-Report: total facts, removed count, kept count, line reduction percentage.
+Report the evidence, preserved conventions, proposed removals, line reduction and lookup cost. Context savings alone do not establish total efficiency.
 
 **If dry-run mode:** Stop here. Do not modify any files.
 
