@@ -19,8 +19,6 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 
 | Command | What it does |
 |---------|-------------|
-| [`/full-review`](#full-review) | Chains `/review` → `/design-review` → `/qa` with context passing. Combined ship-readiness verdict. |
-| [`/preflight`](#preflight) | Fast pre-merge safety check. Critical-only review + smoke test. Under 2 minutes. |
 | [`/status`](#status) | Read-only progress report. Where you are, what's done, what's next. |
 
 ### Agents
@@ -301,53 +299,6 @@ Claude: [Explores 12 pages, fills 3 forms, tests 2 flows]
 ## `/qa-only`
 
 Same methodology as `/qa` but report-only — finds and documents bugs with screenshots and health scores but never fixes anything or touches source code. Use when you want a pure bug report without code changes.
-
----
-
-## `/full-review`
-
-The complete review pipeline in one command.
-
-Instead of running `/review`, then `/design-review`, then `/qa` manually, `/full-review` chains all three with context passing between stages. Code review findings inform what to look for in design review. Design review findings inform QA testing priorities.
-
-```
-You:    /full-review http://localhost:3000
-
-Claude: [runs code review — 2 auto-fixed, 1 asked]
-        [runs design review on affected pages — grade B+]
-        [runs QA on affected pages — 1 bug found and fixed]
-
-        FULL REVIEW PIPELINE — SUMMARY
-        ═══════════════════════════════
-        Code Review:    3 issues (2 auto, 1 user)  — SAFE TO LAND
-        Design Review:  4 issues, 3 fixed           — Grade B+
-        QA:             1 bug found and fixed        — Health 92
-        Ship readiness: READY
-```
-
-Accepts `--quick` and `--exhaustive` for QA tier, `--skip-design` and `--skip-qa` to omit stages.
-
----
-
-## `/preflight`
-
-The fast lane for small PRs.
-
-`/full-review` is thorough but takes time. `/preflight` is the 2-minute version: critical-only code review (SQL injection, auth gaps, race conditions), a quick smoke test if a browser is available, and a test suite run.
-
-It auto-escalates — if the diff is over 200 lines or touches sensitive files, it recommends `/full-review` instead.
-
-```
-You:    /preflight
-
-Claude: PREFLIGHT CHECK
-        ═══════════════
-        Diff:              3 files, +22 -8
-        Critical Review:   CLEAN
-        Smoke Test:        CLEAN (3 pages checked)
-        Tests:             PASS (142 tests)
-        Verdict:           GO
-```
 
 ---
 

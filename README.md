@@ -80,10 +80,8 @@ Skills get an auto-generated invocation from the host agent — these commands a
 |---------|-------------|
 | `/commit` | Alias for `writing-commits`. Checks for unstaged changes, optionally stages them, then crafts the message. |
 | `/layman` | Alias for `layman`. Restates the previous message — or supplied text/file — in plain English. `/layman on` makes it stick until you say stop. |
-| `/full-review` | Chains `review` → `design-review` → `qa` into one pipeline. Passes context forward between stages. Produces a combined ship-readiness verdict. `review-security` auto-inserts as Stage 2 when the diff touches security-sensitive code; force on with `--security` or off with `--no-security`. |
 | `/offload` | Run one architect turn: judge ready results, spec the next slice, emit and optionally dispatch the builder block to the configured harness. |
 | `/complete` | Drive a goal to **merge-ready** with Codex orchestrating `gpt-5.6-luna` workers and independent reviewers. Tracks slices in a persistent ledger and verifies integration before handing back. Merges only when explicitly authorized; external-session dispatch remains available through the skill route. |
-| `/preflight` | Fast pre-merge safety check. Critical-only code review + smoke test + quick test run. Under 2 minutes. For small PRs where `/full-review` is overkill. |
 | `/status` | Read-only branch status and workflow progress report. Shows what's been done, what's left, and suggests the next step. |
 
 ## Agents
