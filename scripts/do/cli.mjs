@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { start, change, inspect } from './engine.mjs';
+import { readRun, recoverLock } from './store.mjs';
+import { compile, requireThat, validateContract } from './policy.mjs';
+
+function receipt(state) {
+  const recorded = state.history.at(-1);
+  const node = state.nodes.find(n => n.id === recorded?.node);
+  const decision = (state.decisions ?? []).find(d => d.id === recorded?.decision);
+  return { runId: state.runId, runDir: state.runDir, revision: state.revision, owner: state.owner,
+    snapshot: { digest: state.snapshot.digest, entries: state.snapshot.entries }, recorded,
+    nodeState: node?.state ?? null, attempt: node?.attempts.at(-1) ?? null, decision: decision ?? null };
+}
+
+export function main(argv) {
+  const [command, ...args] = argv; const options = {};
+  if (!command || ['help', '--help', '-h'].includes(command)) return {
+    usage: 'node /absolute/path/scripts/do/cli.mjs COMMAND --key value',
+    commands: {
+      plan: '--input CONTRACT.json (read-only validation and graph)',
+      start: '--input CONTRACT.json --owner CONTROLLER_ID [--root PRIVATE_STATE_DIR]',
+      status: '--run ABSOLUTE_RUN_DIR', next: '--run ABSOLUTE_RUN_DIR (same as status)',
+      show: '--run ABSOLUTE_RUN_DIR (full journal-derived state)',
+      'question | decide | reopen-decision | claim | brief | attach | result | recover-result | retry | correct | invalidate | replan | cancel | reconcile | adopt': '--run DIR --owner ID --revision INTEGER --input PAYLOAD.json',
+      'recover-lock': '--run DIR (only a verified dead local writer PID)',
+    },
+    note: 'The CLI never launches tools or agents. The host executes returned assignments under runtime permissions. See skills/core/do/references/runner.md for contracts and host protocol.',
+  };
+  const allowed = {
+    plan: ['input'], start: ['input', 'owner', 'root'], status: ['run'], next: ['run'], show: ['run'], 'recover-lock': ['run'],
+  };
+  const mutations = ['question', 'decide', 'reopen-decision', 'claim', 'brief', 'attach', 'result', 'recover-result', 'retry', 'correct', 'invalidate', 'replan', 'cancel', 'reconcile', 'adopt'];
+  const keys = allowed[command] ?? (mutations.includes(command) ? ['run', 'owner', 'revision', 'input'] : null);
+  requireThat(keys, `unknown command ${command}`);
+  for (let i = 0; i < args.length; i += 2) {
+    const key = args[i]?.slice(2);
+    requireThat(args[i]?.startsWith('--') && keys.includes(key) && !(key in options) && args[i + 1] !== undefined, `invalid option ${args[i]}`);
+    options[key] = args[i + 1];
+  }
+  const json = () => JSON.parse(readFileSync(options.input, 'utf8'));
+  if (command === 'plan') { const contract = validateContract(json()); return { contract, nodes: compile(contract) }; }
+  if (command === 'start') return receipt(start(json(), options.owner, options.root));
+  requireThat(options.run?.startsWith('/'), '--run must be an absolute path');
+  if (command === 'show') return readRun(options.run).state;
+  if (['status', 'next'].includes(command)) return inspect(options.run);
+  if (command === 'recover-lock') return recoverLock(options.run);
+  requireThat(/^\d+$/.test(options.revision ?? ''), '--revision is required and must be an integer');
+  return receipt(change(options.run, options.owner, Number(options.revision), command, json()));
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  try { process.stdout.write(JSON.stringify(main(process.argv.slice(2)), null, 2) + '\n'); }
+  catch (error) { process.stderr.write(JSON.stringify({ error: error.message }) + '\n'); process.exitCode = 1; }
+}
