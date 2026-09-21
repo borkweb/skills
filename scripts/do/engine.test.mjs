@@ -9,6 +9,7 @@ import { readRun, recoverLock } from './store.mjs';
 import { compile, decisionRequirements, validateContract } from './policy.mjs';
 import { fingerprint } from './snapshot.mjs';
 import { main } from './cli.mjs';
+import { renderPacket, writePacket } from './packet.mjs';
 
 function fixture(kind = 'implement', options = {}) {
   const temp = realpathSync(mkdtempSync(join(tmpdir(), 'bork-do-test-')));
@@ -49,12 +50,18 @@ test('small security change still requires independent review and security check
   const f = fixture('implement', { risk: 'light', surfaces: ['security'] });
   assert.equal(f.state.nodes.filter(n => n.role === 'reviewer').length, 2);
 });
-test('UI adds browser verification and checks fan out after the builder', () => {
+test('UI browser and review fan out; general verification consumes browser evidence afterward', () => {
   const f = fixture('implement', { surfaces: ['ui'] }); throughBuild(f);
-  assert.deepEqual(status(f.state).next.map(n => n.role).sort(), ['browser', 'check', 'reviewer']);
+  assert.deepEqual(status(f.state).next.map(n => n.role).sort(), ['browser', 'reviewer']);
   const assignments = status(f.state).next.map(n => f.claim(n.node, `reader-${n.role}`));
-  assert.equal(status(f.state).active.length, 3); assert.equal(status(f.state).next.length, 0);
+  assert.equal(status(f.state).active.length, 2); assert.equal(status(f.state).next.length, 0);
   for (const a of assignments) f.result(a);
+  const verify = status(f.state).next[0];
+  assert.equal(verify.node, 'g1-o1-verify');
+  assert.equal(verify.inputs[0].node, 'g1-o1-browser');
+  assert.equal(verify.inputs[0].snapshot, f.state.snapshot.digest);
+  assert.ok(existsSync(verify.inputs[0].result.evidence[0].path));
+  f.finish(verify.node, 'host-checker');
   assert.equal(status(f.state).next[0].role, 'reporter');
 });
 test('composed diagnosis then implementation retains the no-write diagnosis boundary', () => {
@@ -505,4 +512,160 @@ test('equivalent decision policies replan regardless of key or checkpoint orderi
   assert.equal(f.state.usage.replans, 1);
   c.decisionPolicy.checkpoints = ['approach'];
   assert.throws(() => f.apply('replan', { contract: c, reason: 'Remove delivery checkpoint' }), /decision policy/);
+});
+
+const hostActor = { runtime: 'host', id: 'real-host', model: 'fixture-model' };
+function cliMutation(f, command, payload, overrides = {}) {
+  const s = readRun(f.state.runDir).state;
+  const path = join(f.temp, 'cli-input.json'); writeFileSync(path, JSON.stringify(payload));
+  return main([command, '--run', s.runDir, '--owner', overrides.owner ?? s.owner, '--revision', String(overrides.revision ?? s.revision), '--input', path]);
+}
+test('claim-host persists intent and actual host atomically with one attempt and revision', () => {
+  const f = fixture('answer'); const before = f.state;
+  const r = cliMutation(f, 'claim-host', { node: 'g1-o1-work', worker: hostActor });
+  assert.equal(r.revision, before.revision + 1); assert.equal(r.nodeState, 'running');
+  assert.deepEqual(r.attempt.worker, hostActor); assert.equal(r.attempt.snapshot, before.snapshot.digest);
+  const s = readRun(r.runDir).state;
+  assert.equal(s.usage.attempts, 1);
+  assert.deepEqual(s.history.slice(-2).map(e => e.type), ['launch-intent', 'attached']);
+  assert.equal(s.nodes[0].attempts.length, 1);
+  assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-work', worker: hostActor }), /not eligible/);
+});
+test('claim-host failures leave no launch intent, attempt or partial attachment', () => {
+  const f = fixture('answer'); const before = readRun(f.state.runDir).state;
+  for (const worker of [{ ...hostActor, runtime: 'codex-native' }, { ...hostActor, model: '' }, { ...hostActor, fake: true }]) {
+    assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-work', worker }));
+    assert.deepEqual(readRun(f.state.runDir).state, before);
+  }
+  assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-work', worker: hostActor }, { owner: 'stranger' }), /ownership/);
+  assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-work', worker: hostActor }, { revision: 99 }), /stale revision/);
+  writeFileSync(join(f.repo, 'app.txt'), 'unexplained change');
+  assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-work', worker: hostActor }), /snapshot changed/);
+  assert.deepEqual(readRun(f.state.runDir).state, before);
+});
+test('claim-host preserves independent-review and live-writer boundaries', () => {
+  const f = fixture(); throughBuild(f);
+  const before = readRun(f.state.runDir).state;
+  assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-review', worker: { ...hostActor, id: 'builder' } }), /independent reviewer/);
+  assert.deepEqual(readRun(f.state.runDir).state, before);
+  const g = fixture(); g.finish();
+  cliMutation(g, 'claim-host', { node: 'g1-o1-build', worker: hostActor });
+  assert.throws(() => cliMutation(g, 'claim-host', { node: 'g1-o1-review', worker: { ...hostActor, id: 'reviewer' } }), /not eligible/);
+});
+test('claim-host preserves decision, budget and retained-evidence fences', () => {
+  const f = fixture('answer', { budgets: { corrections: 2, replans: 2, attempts: 1 } });
+  f.finish();
+  assert.throws(() => cliMutation(f, 'claim-host', { node: 'g1-o1-report', worker: hostActor }), /budget exhausted/);
+  const g = fixture('answer'); g.finish();
+  unlinkSync(g.state.nodes[0].attempts[0].result.evidence[0].path);
+  assert.throws(() => cliMutation(g, 'claim-host', { node: 'g1-o1-report', worker: hostActor }), /evidence is missing/);
+  const h = fixture('answer'); h.apply('question', { topic: 'approach', stakes: 'consequential', uncertain: false, question: 'Which?', options: ['A', 'B'], recommendation: 'A' });
+  assert.throws(() => cliMutation(h, 'claim-host', { node: 'g1-o1-work', worker: hostActor }), /pending decision/);
+});
+test('mutation receipts drive a complete host route without intermediate status calls', () => {
+  const f = fixture('answer');
+  const contractPath = join(f.temp, 'start.json'); writeFileSync(contractPath, JSON.stringify(f.contract));
+  const initial = main(['start', '--input', contractPath, '--owner', 'receipt-controller', '--root', join(f.temp, 'receipt-runs')]);
+  let r = initial;
+  for (let i = 0; i < 2; i++) {
+    const node = r.next[0].node;
+    const call = (command, payload) => {
+      writeFileSync(contractPath, JSON.stringify(payload));
+      return main([command, '--run', r.runDir, '--owner', r.owner, '--revision', String(r.revision), '--input', contractPath]);
+    };
+    r = call('claim-host', { node, worker: hostActor });
+    r = call('result', { node, attempt: r.attempt.id, snapshot: r.attempt.snapshot, status: 'pass', summary: 'Actual fixture result', evidence: [f.evidence] });
+  }
+  assert.equal(r.state, 'complete'); assert.deepEqual(r.next, []);
+  assert.equal(r.revision, 4); assert.equal(inspect(r.runDir).state, 'complete');
+});
+test('receipts expose blockers and never turn post-mutation inspection failure into replay', () => {
+  const f = fixture('answer');
+  const r = cliMutation(f, 'question', { topic: 'approach', stakes: 'consequential', uncertain: false, question: 'Which?', options: ['A', 'B'], recommendation: 'A' });
+  assert.equal(r.state, 'waiting-decision'); assert.deepEqual(r.next, []);
+  assert.equal(r.attention.decisions[0].id, r.decision.id);
+  const g = fixture('answer', { scope: ['nested/app.txt'] });
+  const elsewhere = join(g.temp, 'elsewhere'); mkdirSync(elsewhere);
+  symlinkSync(elsewhere, join(g.repo, 'nested'));
+  const adopted = cliMutation(g, 'adopt', { newOwner: 'next-controller', reason: 'Verified handoff' });
+  assert.equal(adopted.state, 'inspection-required'); assert.deepEqual(adopted.next, []);
+  assert.match(adopted.inspectionError, /symlink/);
+  assert.equal(readRun(g.state.runDir).state.owner, 'next-controller');
+  assert.equal(adopted.revision, 1);
+});
+test('generated packets preserve eight headings and exact recorded constraints without changing state', () => {
+  const f = fixture('implement', { checks: [{ id: 'exact-gate', kind: 'check', instruction: 'node gate.mjs; expect 7 passed, 0 failed' }] });
+  f.finish(); const r = f.apply('claim', { node: 'g1-o1-build' });
+  const a = r.nodes.find(n => n.id === 'g1-o1-build').attempts.at(-1);
+  const context = { branch: 'feature/test', resultPath: join(f.temp, 'worker-result.md'), context: 'Preserve the original failed criterion.\n## Not a new heading', skills: ['auto-scope'], resolvedHarness: 'codex-native', resolvedModel: 'fixture-model' };
+  const draft = renderPacket(r, 'g1-o1-build', a.id, context);
+  assert.deepEqual(draft.match(/^#{1,2} .+$/gm).map(s => s.startsWith('# Handoff:') ? '# Handoff:' : s), ['# Handoff:', '## Goal', '## Current state', '## Next steps', '## Open questions / blockers', '## Key context', '## Pointers', '## Suggested skills']);
+  for (const fact of [f.repo, f.state.runDir, a.id, a.snapshot, 'node gate.mjs; expect 7 passed, 0 failed', 'Fixture authorizes write', 'feature/test', 'fixture-model', 'every genuine disagreement']) assert.ok(draft.includes(fact), fact);
+  const input = join(f.temp, 'context.json'); writeFileSync(input, JSON.stringify(context));
+  const output = join(f.temp, 'handoff.md');
+  const packet = main(['packet', '--run', r.runDir, '--node', 'g1-o1-build', '--attempt', a.id, '--input', input, '--out', output]);
+  assert.equal(packet.needsReview, true); assert.equal(readFileSync(output, 'utf8'), draft);
+  assert.deepEqual(readRun(r.runDir).state, r);
+  f.apply('brief', { node: 'g1-o1-build', attempt: a.id, path: output });
+  f.apply('attach', { node: 'g1-o1-build', attempt: a.id, worker: { runtime: 'codex-native', id: 'actual-fixture-worker', model: 'fixture-model' } });
+  assert.equal(f.state.nodes.find(n => n.id === 'g1-o1-build').state, 'running');
+});
+test('packet output rejects source paths, symlinks, overwrites and stale assignments', () => {
+  const f = fixture('answer'); f.apply('claim', { node: 'g1-o1-work' });
+  const a = f.state.nodes[0].attempts.at(-1);
+  const context = { branch: 'main', resultPath: join(f.temp, 'result.md') };
+  const output = join(f.temp, 'handoff.md');
+  assert.throws(() => writePacket(f.state, 'g1-o1-work', 'old-attempt', context, output), /current unattached/);
+  assert.ok(!existsSync(output));
+  assert.throws(() => writePacket(f.state, 'g1-o1-work', a.id, context, join(f.repo, 'new.md')), /outside/);
+  assert.ok(!existsSync(join(f.repo, 'new.md')));
+  assert.throws(() => renderPacket(f.state, 'g1-o1-work', a.id, { ...context, resultPath: join(f.repo, 'result.md') }), /outside/);
+  symlinkSync(join(f.repo, 'app.txt'), context.resultPath);
+  assert.throws(() => renderPacket(f.state, 'g1-o1-work', a.id, context), /regular file/);
+  unlinkSync(context.resultPath);
+  symlinkSync(f.repo, join(f.temp, 'alias'));
+  assert.throws(() => writePacket(f.state, 'g1-o1-work', a.id, context, join(f.temp, 'alias', 'new.md')), /canonical/);
+  symlinkSync(f.evidence, output);
+  assert.throws(() => writePacket(f.state, 'g1-o1-work', a.id, context, output), /EEXIST/);
+  unlinkSync(output); writeFileSync(output, 'existing user draft');
+  assert.throws(() => writePacket(f.state, 'g1-o1-work', a.id, context, output), /EEXIST/);
+  assert.equal(readFileSync(output, 'utf8'), 'existing user draft');
+  assert.throws(() => renderPacket(f.state, 'g1-o1-work', a.id, { ...context, authority: {} }), /unknown packet/);
+  f.apply('cancel', { reason: 'Stop' });
+  assert.throws(() => renderPacket(f.state, 'g1-o1-work', a.id, context), /stopped/);
+});
+test('operator packets describe exact effects instead of claiming read-only work', () => {
+  const f = fixture('deliver'); f.finish(); f.apply('claim', { node: 'g1-o1-action' });
+  const a = f.state.nodes.find(n => n.id === 'g1-o1-action').attempts.at(-1);
+  const packet = renderPacket(f.state, 'g1-o1-action', a.id, { branch: 'main', resultPath: join(f.temp, 'result.md') });
+  assert.match(packet, /Perform only the recorded assignment effects/);
+  assert.doesNotMatch(packet, /This assignment is read-only/);
+});
+test('explicit gates release consolidation with current evidence, never after failure or corruption', () => {
+  const f = fixture('implement', { checks: [{ id: 'regression', kind: 'check', instruction: 'Run exact regression' }] });
+  throughBuild(f);
+  assert.ok(!status(f.state).next.some(n => n.node === 'g1-o1-verify'));
+  const gate = f.claim('g1-o1-custom-regression', 'checker'); f.result(gate);
+  const verify = status(f.state).next.find(n => n.node === 'g1-o1-verify');
+  assert.equal(verify.inputs[0].snapshot, f.state.snapshot.digest);
+  assert.equal(verify.inputs[0].result.status, 'pass');
+  unlinkSync(verify.inputs[0].result.evidence[0].path);
+  assert.deepEqual(status(f.state).next, []);
+  assert.throws(() => f.claim('g1-o1-verify'), /evidence is missing/);
+  const g = fixture('implement', { checks: f.contract.checks }); throughBuild(g);
+  const fail = g.claim('g1-o1-custom-regression'); g.result(fail, { status: 'fail', category: 'defect' });
+  assert.ok(!status(g.state).next.some(n => n.node === 'g1-o1-verify'));
+});
+test('later writing outcomes consolidate only revalidated gates on the new snapshot', () => {
+  const f = fixture('implement', { outcomes: [{ kind: 'implement', goal: 'First', effects: ['write'] }, { kind: 'implement', goal: 'Second', effects: ['write'] }], checks: [{ id: 'regression', kind: 'check', instruction: 'Run exact regression', outcomes: [0] }] });
+  while (status(f.state).next[0]?.node !== 'g1-o2-build') { const n = status(f.state).next[0]; f.finish(n.node, n.role === 'reviewer' ? 'reviewer' : 'builder'); }
+  const build = f.claim('g1-o2-build', 'builder'); writeFileSync(join(f.repo, 'app.txt'), 'new snapshot'); f.result(build);
+  const verify = f.state.nodes.find(n => n.revalidates === 'g1-o1-verify');
+  const regression = f.state.nodes.find(n => n.revalidates === 'g1-o1-custom-regression');
+  assert.deepEqual(verify.consolidates, [regression.id]); assert.ok(verify.deps.includes(regression.id));
+  assert.ok(!status(f.state).next.some(n => n.node === verify.id));
+  f.finish(regression.id, 'checker');
+  const ready = status(f.state).next.find(n => n.node === verify.id);
+  assert.equal(ready.inputs[0].node, regression.id); assert.equal(ready.inputs[0].snapshot, f.state.snapshot.digest);
+  assert.notEqual(ready.inputs[0].snapshot, f.state.nodes.find(n => n.id === 'g1-o1-custom-regression').attempts[0].snapshot);
 });

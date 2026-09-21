@@ -107,11 +107,14 @@ export function compile(c, generation = 1) {
     if (o.kind === 'implement') {
       const scope = first('scope', 'planner', `Confirm scope and frozen acceptance for: ${o.goal}`);
       const build = add(i, 'build', 'builder', [scope], o.goal, o.effects);
-      ends = [add(i, 'verify', 'check', [build], 'Verify requested behavior, meaningful regression coverage and applicable project gates. Return raw results; missing required evidence is blocked.', [], true)];
+      ends = [add(i, 'verify', 'check', [build], 'Verify requested behavior, meaningful regression coverage and applicable project gates. Consolidate accepted check evidence from this snapshot and run only uncovered checks; do not repeat a command already evidenced unless changes, failures or a concrete concern justify it. Return raw results and identify reused evidence; missing required evidence is blocked.', [], true)];
       if (c.risk !== 'light' || c.surfaces.includes('security') || c.surfaces.includes('data')) ends.push(add(i, 'review', 'reviewer', [build], 'Independently review the pinned final scope for defects, scope and required evidence.', [], true));
       if (c.surfaces.includes('ui')) ends.push(add(i, 'browser', 'browser', [build], 'Verify applicable rendered interactions against the pinned snapshot using isolated resources.', [], true));
       for (const surface of c.surfaces.filter(s => s !== 'ui')) ends.push(add(i, surface, surface === 'security' ? 'reviewer' : 'check', [build], `Verify the ${surface} contracts and failure paths implicated by this change.`, [], true));
       for (const check of checks) ends.push(add(i, `custom-${check.id}`, check.kind === 'review' ? 'reviewer' : check.kind, [build], check.instruction, [], true));
+      const verification = nodes.find(n => n.id === ends[0]);
+      const covered = ends.slice(1).filter(id => nodes.find(n => n.id === id).role !== 'reviewer');
+      if (covered.length) { verification.consolidates = covered; verification.deps.push(...covered); }
     } else if (['deliver', 'operate'].includes(o.kind)) {
       const pre = first('preflight', 'check', `Verify exact targets, authority and prerequisites: ${o.goal}`);
       const prerequisites = [pre];
@@ -130,11 +133,18 @@ export function compile(c, generation = 1) {
     // do not replay historical diagnosis/planning or earlier builders.
     if (o.effects.includes('write')) {
       const writer = nodes.find(n => n.outcome === i && n.effects.includes('write'));
+      const copies = new Map();
       for (const gate of acceptance) {
         const id = add(i, `integration-${gate.id}`, gate.role, [writer.id],
           `Revalidate earlier outcome on the current snapshot: ${c.outcomes[gate.outcome].goal}\n${gate.instruction}`, [], true);
         nodes.at(-1).revalidates = gate.id;
+        copies.set(gate.id, nodes.at(-1));
         ends.push(id);
+      }
+      for (const gate of acceptance.filter(n => n.consolidates?.length)) {
+        const copy = copies.get(gate.id);
+        copy.consolidates = gate.consolidates.map(id => copies.get(id).id);
+        copy.deps.push(...copy.consolidates);
       }
     }
     if (o.kind === 'implement') acceptance.push(...nodes.filter(n => n.outcome === i && n.snapshot && !n.revalidates));

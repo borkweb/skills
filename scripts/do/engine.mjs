@@ -64,6 +64,22 @@ function canStart(state, node) {
   if (external(node) && staleVerification(state).length) return false;
   return true;
 }
+function attachWorker(state, node, attempt, worker) {
+  assertPayload(worker, ['runtime', 'id', 'model']);
+  for (const key of ['runtime', 'id', 'model']) text(worker[key], `worker.${key}`);
+  requireThat(['host', 'codex-native', 'claude-native', 'external'].includes(worker.runtime), 'unsupported runtime');
+  if (worker.runtime !== 'host') {
+    requireThat(attempt.handoff, 'delegated worker requires a saved handoff brief before launch');
+    const info = lstatSync(attempt.handoff.path);
+    requireThat(info.isFile() && !info.isSymbolicLink() && hash(readFileSync(attempt.handoff.path)) === attempt.handoff.digest, 'handoff evidence changed');
+  }
+  if (node.role === 'reviewer') {
+    const builders = [...state.nodes, ...state.archived.flatMap(g => g.nodes)].filter(n => n.effects.includes('write')).flatMap(n => n.attempts).map(a => a.worker).filter(Boolean);
+    requireThat(!builders.some(w => w.runtime === worker.runtime && w.id === worker.id), 'builder cannot act as independent reviewer');
+  }
+  attempt.worker = worker; attempt.state = node.state = 'running';
+  event(state, 'attached', { node: node.id, attempt: attempt.id, worker });
+}
 export function status(state) {
   const live = active(state);
   const changed = live.some(n => n.effects.includes('write')) ? false : stale(state);
@@ -79,7 +95,9 @@ export function status(state) {
     active: live.map(n => ({ node: n.id, state: n.state, attempt: attemptOf(n) })),
     blocked: failures.map(n => ({ node: n.id, result: attemptOf(n)?.result })),
     evidenceInvalid, verificationStale, decisions,
-    next: changed || evidenceInvalid.length || state.usage.attempts >= state.contract.budgets.attempts ? [] : state.nodes.filter(n => canStart(state, n)).map(n => ({ node: n.id, role: n.role, instruction: n.instruction, effects: n.effects, snapshot: n.snapshot ? state.snapshot.digest : null })),
+    next: changed || evidenceInvalid.length || state.usage.attempts >= state.contract.budgets.attempts ? [] : state.nodes.filter(n => canStart(state, n)).map(n => ({ node: n.id, role: n.role, instruction: n.instruction, effects: n.effects, snapshot: n.snapshot ? state.snapshot.digest : null,
+      ...(n.consolidates?.length ? { inputs: n.consolidates.map(id => { const source = find(state, id); const a = attemptOf(source); return { node: id, snapshot: a?.snapshot, result: a?.result }; }) } : {}),
+    })),
     budgetExhausted: state.usage.attempts >= state.contract.budgets.attempts && !finished,
   };
 }
@@ -166,8 +184,9 @@ export function change(dir, owner, revision, command, payload = {}) {
         if (node?.state === 'blocked' && attemptOf(node)?.id === decision.blockedAttempt && attemptOf(node).result?.category === 'decision') node.state = 'pending';
       }
       event(state, 'decision', { decision: decision.id, by: payload.by, choice: payload.choice });
-    } else if (command === 'claim') {
-      assertPayload(payload, ['node']); const node = find(state, payload.node);
+    } else if (command === 'claim' || command === 'claim-host') {
+      assertPayload(payload, command === 'claim-host' ? ['node', 'worker'] : ['node']); const node = find(state, payload.node);
+      if (command === 'claim-host') requireThat(payload.worker?.runtime === 'host', 'claim-host requires the actual host actor; delegate through claim, brief and attach');
       requireThat(canStart(state, node), 'node is not eligible; inspect status and dependencies');
       requireThat(state.usage.attempts < state.contract.budgets.attempts, 'run attempt budget exhausted');
       requireThat(!stale(state), 'snapshot changed; invalidate and reconcile before new work');
@@ -175,6 +194,7 @@ export function change(dir, owner, revision, command, payload = {}) {
       const attempt = { id: randomUUID(), state: 'launching', snapshot: state.snapshot.digest, created: now(), worker: null };
       node.attempts.push(attempt); node.state = 'launching'; state.usage.attempts++;
       event(state, 'launch-intent', { node: node.id, attempt: attempt.id });
+      if (command === 'claim-host') attachWorker(state, node, attempt, payload.worker);
     } else if (command === 'brief') {
       assertPayload(payload, ['node', 'attempt', 'path']); const { node, attempt } = nodeAttempt(state, payload);
       requireThat(node.state === 'launching' && !state.stop && !attempt.handoff, 'brief requires an unbriefed launch intent');
@@ -183,20 +203,7 @@ export function change(dir, owner, revision, command, payload = {}) {
     } else if (command === 'attach') {
       assertPayload(payload, ['node', 'attempt', 'worker']); const { node, attempt } = nodeAttempt(state, payload);
       requireThat(node.state === 'launching' && !state.stop, 'attempt is not awaiting attachment');
-      assertPayload(payload.worker, ['runtime', 'id', 'model']);
-      for (const key of ['runtime', 'id', 'model']) text(payload.worker[key], `worker.${key}`);
-      requireThat(['host', 'codex-native', 'claude-native', 'external'].includes(payload.worker.runtime), 'unsupported runtime');
-      if (payload.worker.runtime !== 'host') {
-        requireThat(attempt.handoff, 'delegated worker requires a saved handoff brief before launch');
-        const info = lstatSync(attempt.handoff.path);
-        requireThat(info.isFile() && !info.isSymbolicLink() && hash(readFileSync(attempt.handoff.path)) === attempt.handoff.digest, 'handoff evidence changed');
-      }
-      if (node.role === 'reviewer') {
-        const builders = [...state.nodes, ...state.archived.flatMap(g => g.nodes)].filter(n => n.effects.includes('write')).flatMap(n => n.attempts).map(a => a.worker).filter(Boolean);
-        requireThat(!builders.some(w => w.runtime === payload.worker.runtime && w.id === payload.worker.id), 'builder cannot act as independent reviewer');
-      }
-      attempt.worker = payload.worker; attempt.state = node.state = 'running';
-      event(state, 'attached', { node: node.id, attempt: attempt.id, worker: payload.worker });
+      attachWorker(state, node, attempt, payload.worker);
     } else if (command === 'result' || command === 'recover-result') {
       assertPayload(payload, ['node', 'attempt', 'status', 'summary', 'category', 'evidence', 'snapshot']);
       const { node, attempt } = nodeAttempt(state, payload);

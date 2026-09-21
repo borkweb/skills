@@ -2,6 +2,8 @@
 
 Select an ordered sequence of outcomes from the user's request, not from incidental words in source files. A later outcome must depend on the preceding outcome's report. For example, “find and fix” is `diagnose → implement`; “review” is only `review`. Authority is recorded separately with the user's actual instruction as provenance.
 
+An outcome is a requested endpoint, not a work breakdown. “Update parser, tests and docs” normally belongs to one `implement` outcome with several acceptance criteria. Split only when the user requests distinct reports/acceptance boundaries or genuinely dependent endpoints, such as diagnosis before an authorized fix. Do not split by file, worker, or ordinary implementation step: every later writer revalidates earlier implementation gates. Preserve explicitly requested staged acceptance; do not merge stages merely to reduce checks. The entrypoint’s fast-path gate decides whether trivial edits need any durable graph at all.
+
 | Kind | Work and endpoint | Relevant skill when available |
 | --- | --- | --- |
 | `answer`, `research` | Gather needed evidence, give a supported answer; no source edits | Topic-specific research or documentation |
@@ -20,6 +22,8 @@ Use `light` for low-impact reversible work, `standard` for normal implementation
 Surface flags attach checks to implementation: `ui` adds browser verification, `data` adds data-contract checks, `security` adds an independent security assessment, and `api` adds interface-contract checks. Standard/sensitive implementation requires an independent review. Light implementation still needs one if security/data surfaces or applicable instructions require it. Add explicit `checks` for project gates and any mandatory review not already selected. All supplied checks are required; there is no optional “passed by omission” state.
 
 Record frozen acceptance in outcome goals and check instructions. For automated gates, include exact commands and expected outcomes when known. An empty check list does not waive the built-in behavior-verification node. For frontend review-only work add a browser check explicitly. Expand discovery when evidence contradicts the working hypothesis; do not run all plan reviews for every task.
+
+Give each explicit check a distinct coverage responsibility. The built-in behavior verifier waits for explicit non-review gates, consolidates their accepted evidence and checks remaining behavior; it does not rerun those commands by default. Independent review stays separate. Integration copies retain these dependencies on the later snapshot, so historical results cannot satisfy current verification.
 
 Read-only checks can run concurrently only when their environments do not interfere. Browser profiles, databases, services, fixtures and ports are shared resources unless explicitly isolated. The current runner permits read-only fan-out and serializes mutating assignments. Multi-builder scheduling and automatic resource reservation are deferred.
 
