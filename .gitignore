@@ -1,1 +1,6 @@
+.DS_Store
 .claude/settings.local.json
+.claude/worktrees
+.lavish
+docs/superpowers
+scripts/__pycache__
