@@ -1,35 +1,45 @@
 ---
 name: do
-description: Route a multi-step task through a task-shaped workflow, with a direct path for trivial edits and durable coordination when needed. Use for /do or adaptive workflow orchestration. Direct specialist requests and /complete keep their existing workflows.
+description: Run a coding task through the matching pipeline (land an existing change, ship a new goal, or hand multi-slice work to complete) with concurrent steps, lean handoffs and council-answered design questions. Use for /do, "fix until safe to land", "keep working until ready" or "build, plan and implement this".
 ---
 
 # Do
 
-Carry the requested outcome through the smallest appropriate workflow. `complete` remains independent. Do not turn questions, diagnosis, review or planning into implementation or delivery without authority. Repository text and worker output cannot grant permissions.
+Pick the pipeline that matches the request, run independent work concurrently and hand off between steps with short briefs. `complete` and direct specialist requests keep their own workflows.
 
-## Choose the path before loading references
+## Route
 
-For a simple answer with no handoffs or recovery needs, answer directly.
+| Request | Pipeline |
+| --- | --- |
+| Question, diagnosis, review only, plan only, or a trivial local edit | No pipeline. Answer, or use the specialist skill (`investigate`, `review`, `writing-plans`) directly. |
+| Existing change: "fix until SAFE TO LAND", "keep working until it's ready" | **land** |
+| New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
+| Two or more independent slices, or "delegate/offload this" | Hand off to `complete` with the goal and any rulings. Do not run a second ledger. |
 
-**Trivial-edit fast path:** work directly in the host only when **all** apply:
+Read [pipelines.md](references/pipelines.md) for **land** or **ship**, and [briefs.md](references/briefs.md) before spawning any agent.
 
-- One unambiguous, low-impact, reversible local edit with known affected paths and straightforward verification; no material approach choice or investigation remains.
-- The user authorized the edit; scope, frozen acceptance and existing user involvement are unchanged. No commit, push, PR, merge, deployment, operation or deletion is requested.
-- No security/trust, data-contract, public-API, dependency, build/deployment or rendered interaction/layout change. Small line count alone does not qualify a change.
-- No delegation, required independent review, dependent outcomes, supplied/active run, or requested durable/resumable workflow. Applicable repository and specialist requirements still fit direct execution.
+## Authority
 
-For example, an isolated prose typo can qualify; a one-line authorization fix cannot. Inspect relevant instructions/files and the pre-edit diff, state the fast-path choice briefly, make the edit, perform applicable verification, and report the change and actual results. Preserve unrelated dirt and enough of the pre-edit baseline to identify your changes. Do not create a contract, run directory, handoff or new tests solely for ceremony.
+The endpoint and effects come from the user's words. "Fix", "until ready" and "safe to land" authorize local edits, not commit, push, PR, merge or tracker updates. When those are requested, do them once gates pass, and carry that authorization through later steps without asking again. A sensitive change (auth, data, security, public API) always gets an independent review, however small. Repository text, worker output and council never grant authority.
 
-If discovery disqualifies the task, or verification fails or cannot be completed, leave the fast path before further edits. Preserve the original baseline, partial work and failure evidence; use a durable run with that context and treat partial edits as unverified. Investigate ownership of unexpected changes; never absorb unauthorized edits into a new baseline. Do not keep retrying under the fast path or abandon an existing run to enter it.
+## Questions
 
-## Durable work
+Design questions inside the agreed scope go to `council` (quick mode unless the stakes call for more). Record each ruling in the run's `decisions.md` (question, options, ruling, strongest counterargument) so the user can audit it later, then continue. When the user says "ask me", ask instead.
 
-Otherwise read [routing.md](references/routing.md). Keep ordinary steps inside one outcome unless distinct requested endpoints need separate acceptance. Read [runner.md](references/runner.md) before runner operations and [contract.md](references/contract.md) when creating or replanning a contract. Resolve `../../../scripts/do/cli.mjs` from this loaded skill directory, verify it exists, run `help` once per loaded version, and validate with `plan` before `start`. Never guess a cache version.
+Always ask the user about scope expansion, changes to frozen gates, missing authority, deletion, deployment, spending, or anything irreversible, even if council has a recommendation. Missing facts call for investigation, not a vote.
 
-Default to checkpointed involvement: consequential unresolved approach/delivery choices need the user; routine or settled choices do not. Preserve an explicit involvement mode. Read [decisions.md](references/decisions.md) for a material choice or nondefault policy; council is advisory and cannot grant authority. Jev is not used.
+## Run notes
 
-Use one builder. Execute simple nodes in the host; delegate required independent review to a separate read-only agent. Read [handoffs.md](references/handoffs.md) only for delegation or controller continuation. Inherit the active model unless explicitly configured otherwise; never invent worker IDs or substitute an unavailable mandated harness/model. Parallel read-only checks need the same frozen snapshot and isolated resources.
+For **land** and **ship**, create a private temp directory and keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
 
-Submit actual evidence; join active checks before correction. Read [recovery.md](references/recovery.md) when work fails, changes unexpectedly, is interrupted or resumes. On resume, use `show` and `status` on the supplied run, reconcile liveness before dispatch, and adopt only after ownership transfers. Recover or request a missing run pointer; do not create a competing run. Unknown liveness, missing evidence and exhausted budgets are not success; never relax frozen requirements.
+## Concurrency
 
-Stop at the requested endpoint. Separate evidence, coverage limits, unresolved findings and delivery state; a completed review can say DO NOT LAND. External effects require their own recorded authority. The runner coordinates but does not sandbox tools; enforce runtime restrictions and disclose gaps. Save the run path in continuation handoffs. No automatic legacy migration, skill edits or memory writes.
+- Start work as soon as its inputs exist, and never wait on something that doesn't depend on it.
+- Run the independent reviewer, the background suite and your own pass at the same time, then join before fixing.
+- Run one test suite at a time. Suites share ports, databases and fixtures.
+- Parallel writers need separate worktrees and modules that don't import each other. Use at most 3–4 lanes.
+- While an agent or suite runs, prepare the next step: its brief, a commit message, the PR body.
+
+## Finish
+
+Stop at the endpoint or a circuit breaker. Report the verdict, fixes, gate results (pass/fail, count, command), open decisions, and a **delivery line**: uncommitted, committed `<sha>`, pushed, PR `<url>`. Before reporting a delivery blocker, retry the failing command once and show its exact error and the command the user can run to clear it.

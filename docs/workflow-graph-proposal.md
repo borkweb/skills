@@ -1,7 +1,7 @@
 # Adaptive workflow graph proposal
 
 Date: 2026-09-20  
-Status: Architecture proposal with an initial host-mediated implementation under `do`; advanced adapters and Jev remain deferred.  
+Status: Superseded (2026-09-27). The runner was removed after real use showed no task needed it; `do` now runs pipelines built from observed workflows (see `skills/core/do`).  
 Scope: A reusable workflow for Claude, Codex, and configured external harnesses. Jev is an optional later addition.
 
 ## Goal and recommended decisions
