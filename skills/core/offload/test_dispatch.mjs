@@ -1,7 +1,7 @@
 // test_dispatch.mjs — stub frontends + harness binaries on PATH and assert
 // candidate selection, template contents, and frontend branch selection.
 import { execFileSync, spawn } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -91,12 +91,13 @@ const writeConfig = (use) => writeFileSync(CONFIG, JSON.stringify({
 }));
 writeConfig([{ harness: 'codex' }]);
 
-const run = (extraEnv, args = []) => {
+const run = (extraEnv, args = [], cwd = undefined) => {
   rmSync(LOG, { force: true });
   const stdout = execFileSync(
     'bash', [DISPATCH, BOX, BLOCK, HANDOFF, 'sess-Z', ...args],
     {
       encoding: 'utf8',
+      cwd,
       // HERDR_ENV / HERDR_WORKSPACE_ID are cleared by default so a real herdr
       // session in the test runner's env doesn't steal the branch or workspace;
       // herdr tests opt back in explicitly.
@@ -282,28 +283,57 @@ test('claude launch installs Stop/Notification hooks touching the turn-end marke
   writeConfig([{ harness: 'codex' }]);
 });
 
-test('dispatch clears a stale turn-end marker and writes the codex activity sidecar', () => {
+// The sidecar must never name a shared log root: every other open session
+// (the architect's included) writes there, so a stopped builder never idles.
+const REAL_BOX = realpathSync(BOX);
+const claudeDirOf = (home, cwd) => join(home, '.claude', 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+
+test('dispatch clears a stale turn-end marker and writes a cwd-scoped codex rollout rule', () => {
   writeFileSync(`${HANDOFF}.turn-ended`, '');
   const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
   assert.match(log, /^tmux new-window/m);
   assert.ok(!existsSync(`${HANDOFF}.turn-ended`), 'stale turn-end marker not cleared');
-  assert.equal(
-    readFileSync(`${HANDOFF}.activity`, 'utf8').trim(),
-    join(CODEX_HOME, 'sessions'),
-    'activity sidecar should point at the codex sessions dir',
-  );
+  const lines = readFileSync(`${HANDOFF}.activity`, 'utf8').trim().split('\n');
+  assert.ok(!lines.includes(join(CODEX_HOME, 'sessions')), 'sidecar must not name the whole sessions root');
+  const [kind, root, since, cwd] = lines[0].split('\t');
+  assert.equal(kind, 'codex-rollouts');
+  assert.equal(root, join(CODEX_HOME, 'sessions'));
+  assert.match(since, /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
+  assert.equal(cwd, REAL_BOX);
 });
 
-test('claude activity sidecar points at the claude projects dir', () => {
+test('claude builder gets a pinned session id and the sidecar names only its transcript', () => {
   const home = join(BOX, 'home');
   mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
   writeConfig([{ harness: 'claude' }]);
-  run({ TMUX: '/tmp/tmux-1,1,0', HOME: home });
-  assert.equal(
-    readFileSync(`${HANDOFF}.activity`, 'utf8').trim(),
-    join(home, '.claude', 'projects'),
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0', HOME: home });
+  const m = launchScriptOf(log).match(/--session-id ([0-9a-f-]{36}) /);
+  assert.ok(m, 'launch command should pin --session-id');
+  const dir = claudeDirOf(home, REAL_BOX);
+  assert.deepEqual(
+    readFileSync(`${HANDOFF}.activity`, 'utf8').trim().split('\n'),
+    [join(dir, `${m[1]}.jsonl`), join(dir, m[1])],
   );
   writeConfig([{ harness: 'codex' }]);
+});
+
+test('claude without a session id: repo transcript dir, or no sidecar when the architect shares the cwd', () => {
+  const home = join(BOX, 'home');
+  mkdirSync(join(home, '.claude', 'projects'), { recursive: true });
+  const uuidgen = join(BIN, 'uuidgen');
+  writeFileSync(uuidgen, '#!/usr/bin/env bash\nexit 0\n');
+  chmodSync(uuidgen, 0o755);
+  writeConfig([{ harness: 'claude' }]);
+  try {
+    const { log } = run({ TMUX: '/tmp/tmux-1,1,0', HOME: home }, [], tmpdir());
+    assert.ok(!launchScriptOf(log).includes('--session-id'), 'no id to pin');
+    assert.equal(readFileSync(`${HANDOFF}.activity`, 'utf8').trim(), claudeDirOf(home, REAL_BOX));
+    run({ TMUX: '/tmp/tmux-1,1,0', HOME: home }, [], BOX);
+    assert.ok(!existsSync(`${HANDOFF}.activity`), 'shared cwd is not discriminating');
+  } finally {
+    rmSync(uuidgen, { force: true });
+    writeConfig([{ harness: 'codex' }]);
+  }
 });
 
 test('first candidate missing from PATH falls through to the next', () => {

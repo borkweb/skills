@@ -142,12 +142,17 @@ turn_candidate=""
 turn_candidate_at=0
 turn_candidate_cpu=0
 
-# Optional activity sidecar (written by dispatch.sh): directories, one per line,
-# whose file activity proves the builder is alive — typically the harness's own
-# session-log dir, which grows whenever the builder streams model output. Any
-# write there resets the idle timer exactly like a CPU burst, so I/O-bound work
-# that burns no CPU (the false-idle case) no longer trips the detector, while a
-# builder whose log is frozen still does.
+# Optional activity sidecar (written by dispatch.sh): paths, one per line, whose
+# file activity proves the builder is alive — the builder's own session log,
+# which grows whenever it streams model output. Any write there resets the idle
+# timer exactly like a CPU burst, so I/O-bound work that burns no CPU (the
+# false-idle case) no longer trips the detector, while a builder whose log is
+# frozen still does. A path may be a file or dir and need not exist yet (the
+# builder creates its log after launch). A line of the form
+#   codex-rollouts<TAB><sessions_root><TAB><since><TAB><cwd>
+# matches codex rollouts started at/after <since> (local, filename format)
+# whose session_meta cwd is <cwd>. Paths must never be a shared log root: every
+# other open session writes there too and would mask a stopped builder.
 ACTIVITY_FILE="$HANDOFF.activity"
 ACTIVITY_STAMP=""
 if [ -f "$ACTIVITY_FILE" ]; then
@@ -155,13 +160,36 @@ if [ -f "$ACTIVITY_FILE" ]; then
   trap 'rm -f "$ACTIVITY_STAMP"' EXIT
 fi
 
-# True when any listed dir holds an entry modified after the stamp.
+# True when a codex rollout under <root> started at/after <since> for <cwd> was
+# written after the stamp. Rollouts are dated by start, so only the start date's
+# dir and today's can hold one.
+codex_rollout_seen() {
+  local root="$1" since="$2" cwd="$3" day f name
+  for day in "${since:0:4}/${since:5:2}/${since:8:2}" "$(date +%Y/%m/%d)"; do
+    [ -d "$root/$day" ] || continue
+    while IFS= read -r f; do
+      name="${f##*/}"
+      [[ ! "$name" < "rollout-$since" ]] || continue
+      head -n 1 "$f" 2>/dev/null | grep -qF "\"cwd\":\"$cwd\"" && return 0
+    done < <(find "$root/$day" -maxdepth 1 -name 'rollout-*.jsonl' -newer "$ACTIVITY_STAMP" 2>/dev/null)
+  done
+  return 1
+}
+
+# True when any listed path holds an entry modified after the stamp.
 activity_seen() {
-  local dir
+  local path root since cwd
   [ -n "$ACTIVITY_STAMP" ] || return 1
-  while IFS= read -r dir; do
-    [ -n "$dir" ] && [ -e "$dir" ] || continue
-    if [ -n "$(find "$dir" -newer "$ACTIVITY_STAMP" -print -quit 2>/dev/null)" ]; then
+  while IFS= read -r path; do
+    case "$path" in
+      codex-rollouts$'\t'*)
+        IFS=$'\t' read -r _ root since cwd <<< "$path"
+        codex_rollout_seen "$root" "$since" "$cwd" && return 0
+        continue
+        ;;
+    esac
+    [ -n "$path" ] && [ -e "$path" ] || continue
+    if [ -n "$(find "$path" -newer "$ACTIVITY_STAMP" -print -quit 2>/dev/null)" ]; then
       return 0
     fi
   done < "$ACTIVITY_FILE"

@@ -168,21 +168,67 @@ claude_hook_settings() {
   printf '{"hooks":{"Stop":%s,"Notification":%s}}' "$hook" "$hook"
 }
 
-# Activity sidecar for the wait bridge's idle detector: the harness's session-log
-# dir grows whenever the builder streams model output, which distinguishes
-# "working but CPU-quiet" from "stopped". No known dir -> no sidecar (the bridge
-# falls back to its CPU heuristic).
-write_activity_sidecar() {
-  local h="$1" dir=""
-  case "$h" in
-    codex)  dir="${CODEX_HOME:-$HOME/.codex}/sessions" ;;
-    claude) dir="$HOME/.claude/projects" ;;
-  esac
-  if [ -n "$dir" ] && [ -d "$dir" ]; then
-    printf '%s\n' "$dir" > "$HANDOFF.activity"
-  else
-    rm -f "$HANDOFF.activity"
+# Fresh session id for a claude builder, so its transcript path is known before
+# launch. Empty when no generator exists (the sidecar then falls back).
+new_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif [ -r /proc/sys/kernel/random/uuid ]; then
+    cat /proc/sys/kernel/random/uuid
   fi
+}
+
+# Claude Code's transcript dir for a cwd: every non-alphanumeric byte becomes
+# '-' (/Users/matt/.hermes -> -Users-matt--hermes). Names past 200 chars are
+# truncated and hashed by Claude, which we cannot reproduce — fail instead.
+claude_project_dir() {
+  local enc
+  enc=$(printf '%s' "$1" | sed 's/[^A-Za-z0-9]/-/g')
+  [ "${#enc}" -le 200 ] || return 1
+  printf '%s/.claude/projects/%s\n' "$HOME" "$enc"
+}
+
+# Activity sidecar for the wait bridge's idle detector: a session log that grows
+# whenever the builder streams model output distinguishes "working but
+# CPU-quiet" from "stopped". It must name logs ONLY the builder writes — the
+# whole harness log root also takes every other open session's writes
+# (including the architect's own), so a stopped builder never read as idle and
+# only surfaced at the 7200s timeout. Nothing discriminating -> no sidecar (the
+# bridge falls back to its CPU heuristic).
+#   claude: the transcript for the pinned --session-id (plus its subagents dir);
+#           without an id, the cwd's transcript dir unless the architect shares it.
+#   codex:  a `codex-rollouts` rule — rollouts started after now whose
+#           session_meta cwd is the builder's repo (resolved by the bridge).
+write_activity_sidecar() {
+  local h="$1" pdir="" here root since
+  rm -f "$HANDOFF.activity"
+  case "$h" in
+    claude)
+      pdir=$(claude_project_dir "$RESOLVED_REPO") || return 0
+      if [ -n "$BUILDER_SID" ]; then
+        printf '%s\n' "$pdir/$BUILDER_SID.jsonl" "$pdir/$BUILDER_SID" > "$HANDOFF.activity"
+        return 0
+      fi
+      here=$(pwd -P 2>/dev/null || true)
+      [ "$RESOLVED_REPO" != "$here" ] || return 0
+      [ "$RESOLVED_REPO" != "${CLAUDE_PROJECT_DIR:-}" ] || return 0
+      printf '%s\n' "$pdir" > "$HANDOFF.activity"
+      ;;
+    codex)
+      root="${CODEX_HOME:-$HOME/.codex}/sessions"
+      [ -d "$root" ] || return 0
+      # The bridge matches the cwd as a literal JSON string; skip paths JSON
+      # would escape rather than risk a rule that never matches.
+      case "$RESOLVED_REPO$REPO" in *'"'*|*\\*|*$'\t'*) return 0 ;; esac
+      since=$(date +%Y-%m-%dT%H-%M-%S)
+      {
+        printf 'codex-rollouts\t%s\t%s\t%s\n' "$root" "$since" "$RESOLVED_REPO"
+        # `codex exec -C "$REPO"` may record the path as given, not resolved.
+        [ "$REPO" = "$RESOLVED_REPO" ] ||
+          printf 'codex-rollouts\t%s\t%s\t%s\n' "$root" "$since" "$REPO"
+      } > "$HANDOFF.activity"
+      ;;
+  esac
 }
 
 # The verified interactive launch command per harness (prompt = block contents).
@@ -204,9 +250,10 @@ interactive_cmd() {
         "$(printf %q "$(codex_notify_toml)")" \
         "$(printf %q "$BLOCK")" ;;
     claude)
-      printf 'claude --permission-mode %s %s--settings %s "$(cat %s)"' \
+      printf 'claude --permission-mode %s %s--settings %s %s"$(cat %s)"' \
         "$(printf %q "$pm")" "${m:+--model $(printf %q "$m") }" \
-        "$(printf %q "$(claude_hook_settings)")" "$(printf %q "$BLOCK")" ;;
+        "$(printf %q "$(claude_hook_settings)")" \
+        "${BUILDER_SID:+--session-id $BUILDER_SID }" "$(printf %q "$BLOCK")" ;;
     opencode)
       printf 'OPENCODE_CONFIG_CONTENT=%s opencode %s--prompt "$(cat %s)"' \
         "$(printf %q '{"permission":{"*":"allow"}}')" \
@@ -246,7 +293,7 @@ run_headless() {
     claude)
       ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
           claude -p --dangerously-skip-permissions ${m:+--model "$m"} \
-            "$(cat "$BLOCK")" > "$out" ) ;;
+            ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
       ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
           opencode run ${m:+--model "$m"} "$(cat "$BLOCK")" > "$out" ) ;;
@@ -453,6 +500,9 @@ stop_existing_bridges
 LAUNCHED=""
 while IFS=$'\t' read -r h m e pm custom; do
   [ -n "$h" ] || continue
+  # A fresh id per candidate: a failed attempt must not own the next one's log.
+  BUILDER_SID=""
+  [ "$h" = "claude" ] && [ "${custom:--}" = "-" ] && BUILDER_SID=$(new_uuid)
   if [ "${custom:--}" != "-" ]; then
     CMD=$(build_custom "$custom")
   elif ! command -v "$h" >/dev/null 2>&1; then

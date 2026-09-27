@@ -535,6 +535,150 @@ case_activity_stale_idle() {
     fail_case "missing builder-idle"
 }
 
+# Append to a file every 2s in the background (a session streaming output).
+start_log_writer() {
+  local file="$1"
+  mkdir -p "${file%/*}"
+  (
+    trap 'exit 0' TERM INT
+    while :; do
+      echo tick >> "$file"
+      sleep 2
+    done
+  ) &
+  WRITER_PID=$!
+  track_pid "$WRITER_PID"
+}
+
+case_activity_unrelated_session_idle() {
+  # Regression: the sidecar once named the whole harness log root, so the
+  # architect's own session (writing continuously under that root) kept a
+  # stopped builder "alive" until the 7200s timeout. Writes to a sibling
+  # session's log must not count; the builder's log (not yet created) is quiet.
+  local handoff output root rc
+  handoff=$(new_handoff activity-unrelated)
+  output="$TEST_ROOT/activity-unrelated.out"
+  root="$TEST_ROOT/activity-unrelated-projects"
+  mkdir -p "$root/-builder-worktree"
+  printf '%s\n' "$root/-builder-worktree/sid-b.jsonl" "$root/-builder-worktree/sid-b" \
+    > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  start_log_writer "$root/-architect-checkout/sid-a.jsonl"
+
+  run_waiter_capped "$output" 20 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
+    "$WAITER" "$handoff" builder 30 8
+  rc=$?
+  stop_pid "$WRITER_PID"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 5 ] || { fail_case "exit=$rc expected=5 (unrelated session counted)"; return 1; }
+  grep -q 'WAITER: builder-idle' "$output" ||
+    fail_case "missing builder-idle"
+}
+
+case_activity_builder_file_not_idle() {
+  # The builder's transcript file does not exist when the bridge starts; once
+  # the builder creates and appends to it, that counts as activity.
+  local handoff output root updater rc
+  handoff=$(new_handoff activity-builder-file)
+  output="$TEST_ROOT/activity-builder-file.out"
+  root="$TEST_ROOT/activity-builder-file-projects"
+  printf '%s\n' "$root/-builder-worktree/sid-b.jsonl" "$root/-builder-worktree/sid-b" \
+    > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  start_log_writer "$root/-builder-worktree/sid-b.jsonl"
+  (
+    sleep 12
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 20 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
+    "$WAITER" "$handoff" builder 30 8
+  rc=$?
+  stop_pid "$WRITER_PID"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "missing WAITER: ready"
+}
+
+# Seed a codex rollout whose first line records <cwd>.
+seed_rollout() {
+  local file="$1" cwd="$2"
+  mkdir -p "${file%/*}"
+  printf '{"type":"session_meta","payload":{"id":"x","cwd":"%s"}}\n' "$cwd" > "$file"
+}
+
+case_codex_rollout_unrelated_idle() {
+  # Codex rule: rollouts for another cwd, and a same-cwd rollout that predates
+  # the dispatch (e.g. an architect session in the same checkout), must not
+  # count even while they are being written.
+  local handoff output root day since repo rc w1 w2
+  handoff=$(new_handoff codex-unrelated)
+  output="$TEST_ROOT/codex-unrelated.out"
+  root="$TEST_ROOT/codex-unrelated-sessions"
+  repo="$TEST_ROOT/codex-unrelated-repo"
+  day="$root/$(date +%Y/%m/%d)"
+  since=$(date +%Y-%m-%dT%H-%M-%S)
+  seed_rollout "$day/rollout-${since}-other.jsonl" "/elsewhere"
+  seed_rollout "$day/rollout-2000-01-01T00-00-00-old.jsonl" "$repo"
+  printf 'codex-rollouts\t%s\t%s\t%s\n' "$root" "$since" "$repo" > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  start_log_writer "$day/rollout-${since}-other.jsonl"
+  w1="$WRITER_PID"
+  start_log_writer "$day/rollout-2000-01-01T00-00-00-old.jsonl"
+  w2="$WRITER_PID"
+
+  run_waiter_capped "$output" 20 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
+    "$WAITER" "$handoff" builder 30 8
+  rc=$?
+  stop_pid "$w1"
+  stop_pid "$w2"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 5 ] || { fail_case "exit=$rc expected=5 (unrelated rollout counted)"; return 1; }
+  grep -q 'WAITER: builder-idle' "$output" ||
+    fail_case "missing builder-idle"
+}
+
+case_codex_rollout_builder_not_idle() {
+  # A rollout started after the dispatch for the builder's cwd is its log.
+  local handoff output root day since repo updater rc
+  handoff=$(new_handoff codex-builder)
+  output="$TEST_ROOT/codex-builder.out"
+  root="$TEST_ROOT/codex-builder-sessions"
+  repo="$TEST_ROOT/codex-builder-repo"
+  day="$root/$(date +%Y/%m/%d)"
+  since=$(date +%Y-%m-%dT%H-%M-%S)
+  seed_rollout "$day/rollout-${since}-builder.jsonl" "$repo"
+  printf 'codex-rollouts\t%s\t%s\t%s\n' "$root" "$since" "$repo" > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  start_log_writer "$day/rollout-${since}-builder.jsonl"
+  (
+    sleep 12
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 20 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
+    "$WAITER" "$handoff" builder 30 8
+  rc=$?
+  stop_pid "$WRITER_PID"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "missing WAITER: ready"
+}
+
 run_case() {
   local name="$1" function_name="$2"
   CASE_ERROR=""
@@ -563,6 +707,10 @@ run_case stale-turn-marker-consumed case_stale_turn_marker_consumed
 run_case turn-ended-ready-wins case_turn_ended_ready_wins
 run_case activity-fresh-not-idle case_activity_fresh_not_idle
 run_case activity-stale-idle case_activity_stale_idle
+run_case activity-unrelated-session-idle case_activity_unrelated_session_idle
+run_case activity-builder-file-not-idle case_activity_builder_file_not_idle
+run_case codex-rollout-unrelated-idle case_codex_rollout_unrelated_idle
+run_case codex-rollout-builder-not-idle case_codex_rollout_builder_not_idle
 
 echo "TESTS: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]
