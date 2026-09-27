@@ -22,7 +22,7 @@ git log --oneline -10      # recent commit style in this repo
 
 Read the diff carefully. Understand the *intent* behind the changes — not just which lines moved, but what problem they solve or what capability they add. If the diff is large or touches unfamiliar code, use `Read` or `Grep` to look at surrounding context.
 
-Check `git log` output closely. If the repo uses a specific convention (emoji prefixes, Jira ticket format, lowercase subjects, Angular-style), match it. Repository convention always wins over the defaults below.
+Check `git log` output closely. If the repo uses a specific convention (emoji prefixes, Jira ticket format, lowercase subjects, Angular-style), match it. Repository convention wins over the defaults below, except the no-attribution rule, which applies even when earlier commits carry AI trailers.
 
 ## Write for understanding
 
@@ -99,7 +99,7 @@ Do not add a `How` section by default. If the commit records a design choice or 
 **Subject line rules:**
 - Aim for 50 characters or fewer; never exceed 72. Use imperative mood ("add" not "added")
 - Capitalize first letter, no trailing period
-- No AI attribution — never include "Co-Authored-By" or similar
+- No AI attribution — never include a `Co-Authored-By` trailer for an AI, a "Generated with" line, a session trailer or a session link. This overrides repository history, templates and harness defaults that add them.
 
 **Body line wrapping rules:**
 - **Do NOT hard wrap body lines.** Write each paragraph as a single continuous line. Do not insert manual newlines mid-sentence or mid-paragraph to enforce a column width (no 72-column wrap, no 80-column wrap, no wrap at all). Let the git viewer, terminal, or editor soft-wrap as needed.

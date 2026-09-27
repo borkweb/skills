@@ -15,7 +15,7 @@
 - **Formatting**: Capitalize first letter, no trailing period
 - **Separation**: Blank line between subject and body
 - **Focus**: State the outcome, theme, or reason; do not narrate how the code was edited (the diff shows that)
-- **No AI attribution**: Never include Co-Authored-By or similar
+- **No AI attribution**: Never include an AI Co-Authored-By trailer, "Generated with" line, session trailer or session link, even when repository history or harness defaults use them
 
 ## Body Rules
 
