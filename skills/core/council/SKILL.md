@@ -5,7 +5,7 @@ description: "Assess a proposal from multiple perspectives when the user request
 
 # Council
 
-Assess a proposal from several useful perspectives and return a reasoned verdict. Default to simulated seats in one response; these are not independent evidence or actual expert experience. Delegate read-only seats only when the user requests parallel agents and the runtime supports them.
+Assess a proposal from several useful perspectives and return a reasoned verdict. Default to simulated seats in one response; these are not independent evidence or actual expert experience. Delegate read-only seats only when the user requests parallel agents and the runtime supports them. When seats or councils are delegated, start independent ones in the same step, give each the evidence up front so it does not re-investigate, and have each return its output once.
 
 ## Frame and select
 

@@ -20,7 +20,7 @@ Make the implementation plan coherent, testable and ready to execute. Preserve t
 
 Read the supplied plan and relevant existing implementation. For a plan-only request, do not require a branch. For a hybrid request, pin the requested diff as well. Preserve settled constraints, protected paths and prior decisions.
 
-Use the user's requested interaction mode. Otherwise batch independent findings and ask only about genuine unresolved choices that affect scope or design. Apply obvious plan corrections when improvement is requested; report-only means no edits. Honor “skip questions” immediately, state assumptions and continue useful work. An assumption does not authorize a scope change. Do not re-ask a decision already made.
+Use the user's requested interaction mode. Otherwise batch independent findings and ask only about genuine unresolved choices that affect scope or design. Group up to four independent questions into one question prompt rather than one prompt each, and fold TODO or deferral rulings into the final checkpoint; batching keeps every question. Apply obvious plan corrections when improvement is requested; report-only means no edits. Honor “skip questions” immediately, state assumptions and continue useful work. An assumption does not authorize a scope change. Do not re-ask a decision already made.
 
 Review plans, not implementation: do not modify source, commit, push or create remote tasks. Stop after the relevant acceptance criteria are addressed or report the remaining blocker. Ratings are optional summaries, not targets that require repeated polishing to 10/10.
 

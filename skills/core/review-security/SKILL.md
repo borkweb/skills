@@ -43,6 +43,8 @@ Each pattern file contains:
 
 For a branch, verify its target ref, record base SHA, HEAD and merge-base, and review `git diff <merge-base> <head>`. The optional `../../../scripts/review-scope.py --base <verified-ref>` helper records this evidence. Include local changes only when requested and snapshot them separately; a file-specific request limits the subject but may require tracing its callers. Resolve paths from this loaded package on either runtime. Stop and re-pin if scoped files change.
 
+Once scope is pinned, evaluate the Step 4 triggers. If any apply, start that independent pass in the background now and run Steps 2–3 while it works; join its results before Step 6 so every fix gets one verification run.
+
 Default to report-only; applying a fix requires a fix request or existing authorization. Missing evidence limits the verdict.
 
 ## Step 2: Pick the relevant pattern files
@@ -99,7 +101,7 @@ For each selected pattern:
 
 ## Step 4: Adversarial pass (for non-trivial diffs)
 
-Use the runtime’s available native delegation tool for an independent read-only pass when any of (and report unavailable coverage when delegation is unavailable):
+Started after Step 1 when triggered. Use the runtime’s available native delegation tool for an independent read-only pass when any of (and report unavailable coverage when delegation is unavailable):
 - More than 200 lines changed
 - Touches crypto, auth, parsers, deserialization, or CI/CD workflows
 - Introduces a new external service / new dependency
@@ -121,7 +123,7 @@ For high-stakes reviews (release audits, new auth systems, new crypto code), cro
 - `catalog/caught-in-review.md` — 106 bugs caught by audits / fuzzing / static analysis / peer review
 - `catalog/concurrency-and-crypto-bugs.md` — deep dive on 30 concurrency + crypto failures
 
-If a finding matches a cataloged pattern, cite it: "IDOR on `/orders/:id` — same shape as I30 in catalog."
+These files are large: search them (`Grep`/`rg`) for the finding's pattern, CWE, API or bug shape and read only the matching entries rather than reading a file whole. If a finding matches a cataloged pattern, cite it: "IDOR on `/orders/:id` — same shape as I30 in catalog."
 
 ---
 

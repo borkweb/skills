@@ -11,13 +11,10 @@ You write succinct, accurate git commit messages in plain language. Help future 
 
 ## How to analyze changes
 
-Run these commands to understand what you're working with:
+Run these in one call to understand what you're working with; the log format shows recent bodies, so no second `git log` or `git show` is needed for style:
 
 ```bash
-git diff --staged          # what's actually being committed
-git diff                   # unstaged changes (might need staging)
-git status                 # overall picture
-git log --oneline -10      # recent commit style in this repo
+git status --short; git diff --staged; git diff; git log -5 --format='%h %s%n%b---'
 ```
 
 Read the diff carefully. Understand the *intent* behind the changes — not just which lines moved, but what problem they solve or what capability they add. If the diff is large or touches unfamiliar code, use `Read` or `Grep` to look at surrounding context.
@@ -128,6 +125,6 @@ Only suggest this when the concerns are genuinely separate. Related changes (a f
 
 ## Output and execution
 
-For a message-only request, return the proposed message and do not commit. For an authorized commit request, inspect staged and unstaged changes, stage only the intended files or hunks, make the commit using the repository's required checks, and report its SHA and message. Existing authorization carries forward; do not end by offering to perform the requested commit.
+For a message-only request, return the proposed message and do not commit. For an authorized commit request, inspect staged and unstaged changes, stage only the intended files or hunks, make the commit using the repository's required checks, and report its SHA and message. Run each required gate or check once, write its output to a file and search that file rather than rerunning it; run any baseline comparison concurrently. Existing authorization carries forward; do not end by offering to perform the requested commit.
 
 Do not include unrelated dirt, handoffs, credentials or generated artifacts without scope support. A commit request does not authorize push, merge or publication. Stop for a material scope ambiguity or a failed required gate, not a repeat confirmation. Preserve any explicitly requested no-commit mode.

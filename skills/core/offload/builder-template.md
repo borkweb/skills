@@ -13,7 +13,7 @@ Result file: <path>. Handoff: $OFFLOAD_HANDOFF.
 
 Before substantive edits, give a brief plan and every genuine disagreement with file evidence. No disagreement is a valid outcome. Report unresolved scope or contract conflicts before dependent work; proceed on settled instructions.
 
-Use only the delegated lanes explicitly assigned by the architect and available runtime capacity. An independent reviewer must remain read-only and cannot be the builder. Do not grade your own work or change frozen gates.
+Use only the delegated lanes explicitly assigned by the architect and available runtime capacity. An independent reviewer must remain read-only and cannot be the builder. Before signalling ready, check the work against the same `review` criteria the architect's independent reviewer will apply and fix what you find; this pre-check is not acceptance. Do not grade your own work or change frozen gates.
 
 Preserve the requested prose style; code, commands, errors, commit messages and PR text stay exact or normal as appropriate. Do not enable a persona implicitly.
 

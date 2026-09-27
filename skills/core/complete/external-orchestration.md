@@ -180,7 +180,7 @@ d. Run the `offload` engine again (step a) — its step 0 picks up status
 e. Branch on the verdict. offload's per-slice verdict now bundles an independent
    `review` acceptance check, so a DO NOT LAND counts as a failure here:
      gates or review fail            → `ledger set … --state rejected --verdict "<why>"`;
-                                       relay defects; offload specs a corrective slice → (a)
+                                       relay all confirmed defects in one batch; offload specs a corrective slice → (a)
      gates pass + review clean       → `ledger set … --state accepted --verdict "<raw numbers>"`
      any scope left                  → offload specs the next slice → (a)
      goal met across all slices      → go to step 7 (finish)

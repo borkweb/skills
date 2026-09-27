@@ -7,7 +7,7 @@ You are running the `/complete` command. The user's goal follows the command (e.
 
 ## Process
 
-1. Read `skills/core/complete/SKILL.md`.
+1. Invoke the `bork:complete` skill with the Skill tool, unless it is already loaded in this turn. Do not read or search for its SKILL.md file; the Skill tool loads the installed version.
 2. Execute that skill's loop in full for the given goal.
 
 ## Notes

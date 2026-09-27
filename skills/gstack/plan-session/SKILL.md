@@ -20,7 +20,7 @@ Understand the problem and produce a concrete design or plan. Use Product mode f
 
 ## Conversation
 
-Read existing briefs and constraints first. Ask a focused question only for consequential missing information; batch independent questions when useful. Preserve the user's answers, scope rulings and preferred pace. Honor “skip questions” on the first request, state any assumptions and proceed. Do not require a final forcing question or another confirmation of settled context.
+Read existing briefs and constraints first. Ask a focused question only for consequential missing information; batch independent questions when useful. Group up to four independent questions into one question prompt rather than one prompt each, and fold TODO or deferral rulings into the final checkpoint; batching keeps every question. Preserve the user's answers, scope rulings and preferred pace. Honor “skip questions” on the first request, state any assumptions and proceed. Do not require a final forcing question or another confirmation of settled context.
 
 Challenge a premise with evidence when it matters. No fabricated disagreement, adversarial performance or diagnostic labels. If the user wants a creative experiment, do not force a commercial demand test. If the problem is already defined, move directly to alternatives or the design.
 

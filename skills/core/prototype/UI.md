@@ -53,6 +53,8 @@ Draft each variant. Hold each one to:
 
 Variants must be **structurally different** — different layout, different information hierarchy, different primary affordance, not just different colours. Three slightly-tweaked card grids isn't a UI prototype, it's wallpaper. If two drafts come out too similar, redo one with explicit "do not use a card grid" guidance.
 
+For 3+ variants, the runtime's native delegation tool may draft them in parallel — one file per variant, each assigned a distinct structural direction up front — while you write the switcher. You still review every draft against the structural-difference rule and redo any that converge.
+
 ### 3. Wire them together
 
 Create a single switcher component on the route:
@@ -92,6 +94,8 @@ Behaviour:
 Put the switcher in a single shared component so both sub-shapes can reuse it. Locate it wherever shared UI lives in the project.
 
 ### 5. Hand it over
+
+Verify in this order before handing over: typecheck, then a smoke render of each variant, then a browser check only if the dev server is already reachable. Make one attempt; never bootstrap a stack just to check, and report which checks ran.
 
 Surface the URL (and the `?variant=` keys). The user will flip through whenever they get to it. The interesting feedback is usually **"I want the header from B with the sidebar from C"** — that's the actual design they want.
 

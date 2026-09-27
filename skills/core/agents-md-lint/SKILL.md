@@ -13,13 +13,13 @@ This works on any file whose purpose is to give an AI agent context about a code
 
 **Default (rewrite):** Produces a report and rewrites the instruction files with only the surviving facts.
 
-**Dry-run:** Produces the report but does not modify any files. Use this when the user wants to see what would change before committing, or says things like "just show me," "report only," or "what's redundant." Ask which mode the user wants if it's ambiguous.
+**Dry-run:** Produces the report but does not modify any files. Use this when the user wants to see what would change before committing, or says things like "just show me," "report only," or "what's redundant." Ask which mode the user wants if it's ambiguous, in the same question as Step 1's extra/excluded files check.
 
 ## Workflow
 
 ### 1. Discover and normalize instruction files
 
-Scan the repo for instruction files. Common names: `AGENTS.md`, `CLAUDE.md`, `CONVENTIONS.md`, `.cursorrules`, `.github/copilot-instructions.md`. Ask the user if there are others, or if any should be excluded.
+Scan the repo for instruction files. Common names: `AGENTS.md`, `CLAUDE.md`, `CONVENTIONS.md`, `.cursorrules`, `.github/copilot-instructions.md`. Ask the user if there are others, or if any should be excluded — together with the mode question when mode is ambiguous, so the user answers once.
 
 Rename or symlink instruction files only when separately requested; trimming does not change their discovery paths.
 
@@ -29,7 +29,7 @@ Separate mandatory conventions, prohibitions and acceptance contracts from descr
 
 ### 3. Chunk facts for testing
 
-Sub-agents get unreliable when asked too many questions at once. If a file contains more than 25 facts, split them into batches of 20–25 and spawn a separate sub-agent for each batch. Each batch should be self-contained — include enough context in the prompt so the sub-agent understands the domain without needing to see the other batches.
+Sub-agents get unreliable when asked too many questions at once. If a file contains more than 25 facts, split them into batches of 20–25 and spawn a separate sub-agent for each batch. Each batch should be self-contained — include enough context in the prompt so the sub-agent understands the domain without needing to see the other batches. Start every batch across all instruction files in one parallel dispatch rather than file by file.
 
 ### 4. Spawn blind reviewer(s)
 

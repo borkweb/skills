@@ -94,11 +94,16 @@ and bridge. If a ledger exists for this session, keep it current: set
    each with a one-line reason, recorded under *Decisions + why*. Clear the
    resolved disagreements. Use `council` for substantive judgment calls when multiple perspectives add value; routine rulings use the scope and evidence already available.
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
-   numbers only — ignore *Work summary* and any narrative when grading. **Spot-check:**
-   re-run any gate you doubt via its reproduce command (you have Bash). Once the raw
-   gates pass, run `review` on the work this slice added (its commit range) as an
-   **independent acceptance check** — a **DO NOT LAND** verdict fails the slice no
-   matter how the gates read; spec a corrective slice for its blockers. **LAND WITH
+   numbers only — ignore *Work summary* and any narrative when grading. Once the raw
+   gates pass, start `review` on the work this slice added (its commit range) as an
+   **independent acceptance check** and, at the same time, **spot-check:** re-run any
+   gate you doubt via its reproduce command (you have Bash). A failed spot-check fails
+   the slice: stop or discard that review and send the failure back. A **DO NOT
+   LAND** verdict fails the slice no matter how the gates read; spec one corrective
+   slice carrying every confirmed blocker. Scope a corrective's review to the change:
+   give it the prior blockers and the corrective's own range (previously reviewed
+   commit..new HEAD), confirm each blocker is resolved, and check for regressions
+   against the slice's original range where the corrective touched shared code. **LAND WITH
    CAUTION** → record the caveats and rule (proceed or correct). This is your own
    gate, separate from the builder's internal reviewer agent. Record the gate verdict
    and the review verdict (and any human ruling) under *Decisions + why*, and write

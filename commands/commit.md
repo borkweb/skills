@@ -10,7 +10,7 @@ You are running the `/commit` command.
 
 ## Process
 
-1. Read `skills/core/writing-commits/SKILL.md`.
+1. Invoke the `bork:writing-commits` skill with the Skill tool, unless it is already loaded in this turn. Do not read or search for its SKILL.md file; the Skill tool loads the installed version.
 2. Execute that skill's workflow in full.
 3. Treat `$ARGUMENTS` as additional user context for the commit message.
 

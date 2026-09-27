@@ -6,7 +6,7 @@ Use this reference when the council request calls for a rigorous assessment, mul
 
 Run this protocol without assuming any specific agent orchestration feature.
 
-- Claude: if Task/Agent Teams are available and appropriate, seats may be delegated as read-only analysis; otherwise simulate seats internally.
+- Claude: delegate seats as read-only analysis only when the user requests parallel agents and Task/Agent Teams are available; otherwise simulate seats internally.
 - Codex: only use subagents when the user explicitly asks for parallel agent work; otherwise simulate seats internally.
 - Gemini: use the same internal council structure unless its runtime provides an equivalent explicit delegation mechanism.
 - Any platform: do not require direct seat-to-seat messages. Cross-examination can be represented as structured challenges and responses in one transcript.

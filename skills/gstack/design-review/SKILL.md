@@ -42,7 +42,7 @@ Calibrate to DESIGN.md, tokens, components, brand assets and rendered pages. Use
 
 Separate visible/computed defects from aesthetic suggestions. A font, grid, color or border radius is not evidence of a defect by itself. Preserve intentional brand choices. Inspect actual text/background colors and font size/weight: 18px regular text is normal text and needs 4.5:1 at WCAG AA. The large-text threshold is 24px regular or about 18.67px bold.
 
-Trace critical interactions across pages. Confirm focus order, error/recovery states and continuity, not just static screenshots. Consolidate repeated symptoms into a systemic finding when the evidence supports a shared cause. Record severity from user impact, a screenshot or computed evidence, reproduction and the proposed correction.
+Trace critical interactions across pages. Confirm focus order, error/recovery states and continuity, not just static screenshots. Where the browser tool supports script evaluation, gather console errors, failed requests, contrast, font loading and focus order in one scripted evaluation after each navigation, and capture all relevant viewports in one pass; the checks stay the same, only the round trips drop. Consolidate repeated symptoms into a systemic finding when the evidence supports a shared cause. Record severity from user impact, a screenshot or computed evidence, reproduction and the proposed correction.
 
 ## Correct and verify
 

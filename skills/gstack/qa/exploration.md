@@ -6,7 +6,7 @@ This procedure is shared by qa and qa-only. The invoking skill controls whether 
 
 Use the supplied URL, local running app or documented launch command. Use available browser tools with their actual schemas; do not assume a Claude-specific tool exists. If the browser or required credentials are unavailable, report incomplete coverage instead of pretending to test.
 
-For diff-aware work, verify the base ref and pin the merge-base/head using `../../../scripts/review-scope.py` relative to the invoking skill directory. Include requested local changes explicitly. Trace changed controllers, components, styles, services, migrations and API consumers to affected routes. Do not hardcode main or scan unrelated services when the project URL is available.
+For diff-aware work, verify the base ref and pin the merge-base/head using `../../../scripts/review-scope.py` relative to the invoking skill directory. Include requested local changes explicitly. Trace changed controllers, components, styles, services, migrations and API consumers to affected routes. Do not hardcode main or scan unrelated services when the project URL is available. Map diff-affected routes while the app starts rather than after it is up.
 
 | Mode | Work |
 |---|---|
@@ -21,7 +21,7 @@ Use task scope/time limits to bound exploration; zero findings is valid. No mini
 
 1. Record URL, build/commit, viewport, mode, time and available roles. Create report/screenshot artifacts outside unrelated source paths. Redact credentials and sensitive data.
 2. Walk the critical journey using realistic safe test data. Test navigation including back/forward, forms and validation, loading/empty/error states and recovery. Respect authorization for submissions or destructive/external actions; local QA does not imply permission to transact on production.
-3. Check visible layout and responsive behavior at relevant sizes. Inspect console and network after meaningful interactions; correlate failures to the actual user consequence. Expected validation errors are not bugs just because a request is 4xx.
+3. Check visible layout and responsive behavior at relevant sizes. Inspect console and network after meaningful interactions; correlate failures to the actual user consequence. Expected validation errors are not bugs just because a request is 4xx. Same checks, fewer round trips: where the browser tool supports script evaluation, collect console errors, failed requests, text contrast, font loading and focus order in one scripted evaluation after each navigation, and capture the relevant viewports in one pass; fall back to separate calls only when the tool cannot script them.
 4. Check keyboard navigation, focus, labels, semantics and relevant announcements. Text contrast AA: 4.5:1 normal; 3:1 for large text (18pt/24px regular or 14pt/about 18.67px bold). Respect standard exceptions. Restore any temporary viewport/throttling overrides.
 5. Where credentials permit, test actual role boundaries and stale state after role changes. UI hiding alone is not authorization. Never imply an untested role passed.
 6. Measure performance where relevant: timings, oversized assets, repeated requests, layout shift and responsiveness under the recorded conditions. Treat thresholds as investigation signals; severity requires a demonstrated consequence or violated requirement. Do not infer memory leaks from console output alone.

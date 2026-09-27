@@ -6,7 +6,7 @@ You are running the `/offload` command.
 
 ## Process
 
-1. Read `skills/core/offload/SKILL.md`.
+1. Invoke the `bork:offload` skill with the Skill tool, unless it is already loaded in this turn. Do not read or search for its SKILL.md file; the Skill tool loads the installed version.
 2. Execute that skill's workflow in full for one architect turn.
 
 ## Notes

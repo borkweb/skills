@@ -14,5 +14,6 @@ Apply this prose layer within the task's chosen planning workflow. Inherit the a
 - For an unresolved decision, name the choice, viable options and tradeoffs, then recommend an option when evidence supports it. Do not invent alternatives for settled or trivial choices.
 - Sequence milestones by dependencies and outputs. Preserve real deadlines or a requested schedule; label uncertain estimates and separate coding time from review or rollout elapsed time. Do not fabricate calendar commitments.
 - Keep lists for parallel items and prose for relationships. A heading or paragraph must add information.
+- For a long document, write a skeleton first, then add or edit one section per write so no single response approaches the output limit.
 
 Examples: “To” replaces “In order to facilitate.” “The content is the problem” replaces “This isn't a checkout problem. It's a content problem.” Preserve technical terms and domain-specific constraints that matter.

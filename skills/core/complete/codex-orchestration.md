@@ -66,7 +66,7 @@ delegate again without the architect assigning that work.
 Use native messages and completion notifications to supervise workers. With
 the collaboration tools, use `send_message` for a running worker,
 `followup_task` to resume an idle worker, and `wait_agent` when there is no other
-useful work. Keep waits within the runtime's communication limits. Do not launch
+useful work. Use the longest wait timeout the runtime allows rather than short polls. Do not launch
 `dispatch.sh`, shell wait bridges, or a second external builder for a native slice.
 
 At every wake or resume, read the ledger and reconcile it with live agent status
@@ -91,8 +91,12 @@ the ledger. This preserves review evidence without giving the reviewer write
 access to either the source or the ledger.
 
 Accept only when gates pass and the independent review has no blocking findings.
-Otherwise record rejection and dispatch the corrective work with the findings.
-Re-review after corrections. A worker's successful exit or prose summary alone
+Otherwise record rejection and dispatch the corrective work with every confirmed
+blocking finding in one batch. Re-review after corrections, scoped to the change:
+give the reviewer the prior blockers and the corrective's own range (previously
+reviewed commit..new HEAD), have it confirm each blocker is resolved, and check
+for regressions against the slice's original range where the corrective touched
+shared code. A worker's successful exit or prose summary alone
 is not acceptance. Verify that reviewed files/HEAD stayed stable during review.
 
 ## Finish and hand off

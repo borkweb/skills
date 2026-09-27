@@ -46,6 +46,17 @@ BREAKING CHANGE: Changed API response format.
 Signed-off-by: Name <email@example.com>
 ```
 
+## Staging Hunks for a Split Commit
+
+Without interactive `git add -p`, stage part of a file from a patch:
+
+```bash
+git diff -- path/to/file > /tmp/split.patch   # capture the unstaged hunks
+# edit the patch: delete hunks that belong to the other commit
+git apply --cached /tmp/split.patch           # stage only the kept hunks
+git diff --staged                             # confirm before committing
+```
+
 ## Semantic Versioning Connection
 
 In automated release systems, commits drive version bumps:
