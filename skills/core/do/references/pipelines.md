@@ -35,12 +35,7 @@ For a new goal that should end merge-ready.
 
    Join. Send each open question the reviews raise to council, log the rulings, and fold them into the spec.
 3. **Plan and freeze.** Write the plan with `writing-plans`. Freeze the acceptance gates as exact commands with expected results before any code exists. From here on, nobody edits the gates.
-4. **Implement.**
-   - For one lane, implement in the host, test-first where there's behavior to prove.
-   - For independent modules, use up to 3–4 lane agents with builder briefs, each in its own worktree. Commit any contracts the lanes share before dispatching them.
-   - For work too large for one session's lanes, hand the plan to `complete` and stop running this pipeline yourself.
-
-   Lanes return gate results and changed files. Merge the lanes and run the integration gates once.
+4. **Implement.** Follow Build work in SKILL.md. Hand the frozen plan, gates and council rulings to `complete`, which runs the slices in its own worktrees and workers. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once. Implement in the host only for a single small task or when the user asked to keep it local.
 5. **Land.** Run **land** from step 2 on the result. Pass along the gates already frozen; don't re-derive them.
 
 ## Council during a pipeline

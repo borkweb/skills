@@ -1,6 +1,6 @@
 ---
 name: do
-description: Run a coding task through the matching pipeline (land an existing change, ship a new goal, or hand multi-slice work to complete) with concurrent steps, lean handoffs and council-answered design questions. Use for /do, "fix until safe to land", "keep working until ready" or "build, plan and implement this".
+description: Run a coding task through the matching pipeline (land an existing change, ship a new goal, or build a plan through complete) with concurrent steps, lean handoffs and council-answered design questions. Use for /do, "fix until safe to land", "keep working until ready" or "build, plan and implement this".
 ---
 
 # Do
@@ -14,9 +14,19 @@ Pick the pipeline that matches the request, run independent work concurrently an
 | Question, diagnosis, review only, plan only, or a trivial local edit | No pipeline. Answer, or use the specialist skill (`investigate`, `review`, `writing-plans`) directly. |
 | Existing change: "fix until SAFE TO LAND", "keep working until it's ready" | **land** |
 | New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
-| Two or more independent slices, or "delegate/offload this" | Hand off to `complete` with the goal and any rulings. Do not run a second ledger. |
+| A plan or spec to build, or "delegate/offload this" | Build through `complete` (see Build work), then run **land** on the result. Do not run a second ledger. |
 
 Read [pipelines.md](references/pipelines.md) for **land** or **ship**, and [briefs.md](references/briefs.md) before spawning any agent.
+
+## Build work
+
+Before launching anything that writes code, decide where it runs:
+
+- **Through `complete`** (its external route, via `offload`) when the work comes from a written plan or spec, has two or more tasks, is more than a trivial local edit, or the user said "workers", "delegate", "offload", "herdr" or "tabs". This is the default for **ship**'s implement step. Hand over the frozen plan, gates and rulings; `complete` owns dispatch, worktrees, the ledger and worker tabs.
+- **In the host or a subagent** only for **land** fixes, a single small task, or when the user says to keep it local. Reviewers, council and investigations always use subagents.
+- Never launch builders yourself: no `Agent` builders, and no raw `herdr`, tmux or headless commands.
+- If the work qualifies but `complete` can't run (no session key, no herdr), say so and ask. Don't fall back quietly.
+- Log the choice and reason in `notes.md` and state it in the first status line.
 
 ## Authority
 
