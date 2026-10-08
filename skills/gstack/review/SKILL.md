@@ -72,7 +72,48 @@ In report-only mode, stop at findings, background check results and verdict. In 
 
 ## Result
 
-Report reviewed base/head and local scope, findings, fixes if any, checks with results, independent-review status, unresolved decisions and delivery state. Keep the summary concise.
+Use this readable output contract for the human-facing report. An explicit caller schema may replace the presentation for a machine-consumed pass; the primary owner still reports the evidence and verdict.
+
+Start with `Pre-Landing Review: N issues (X critical, Y informational)`. Count distinct confirmed findings, including ones fixed during this review. Classify by demonstrated impact: **CRITICAL** findings block landing while unresolved; **INFORMATIONAL** findings are nonblocking. Checklist category, source and whether a fix is mechanical do not determine severity. Keep unconfirmed investigation leads separate and out of the counts.
+
+Show both sections, critical first, with `None.` for an empty section. Keep each finding brief but concrete:
+
+```markdown
+### CRITICAL — X findings
+
+1. **file:line — Problem title** — UNRESOLVED / FIXED / RISK ACCEPTED
+
+   Problem: failing scenario, consequence and evidence.
+
+   Fix: proposed correction, or the correction applied and its verification status.
+
+### INFORMATIONAL — Y findings
+
+2. **file:line — Problem title** — UNRESOLVED / FIXED / RISK ACCEPTED
+
+   Problem: failing scenario, consequence and evidence.
+
+   Fix: proposed correction, or the correction applied and its verification status.
+```
+
+Then show a compact Markdown completion table. Fill it with actual results; use `NOT RUN`, `SKIPPED` or `NO RESPONSE` with the reason where applicable. Preserve failing check details and unresolved finding references rather than burying them in counts.
+
+| Completion summary | Result |
+|---|---|
+| Reviewed scope | Base and head SHAs; committed and/or requested local changes |
+| Diff size | Files changed, insertions and deletions |
+| Scope check | CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING, with details |
+| CRITICAL findings | X total; fixed and unresolved counts; accepted risks noted separately |
+| INFORMATIONAL findings | Y total; fixed and unresolved counts; accepted risks noted separately |
+| Fixes | Applied corrections, or report-only |
+| Checks | Commands and PASS / FAIL / NOT RUN results, including affected post-fix checks |
+| Independent review | Completed result / SKIPPED / NO RESPONSE / unavailable, with scope and reason |
+| Unresolved items | Finding references, decisions and missing required evidence, or None |
+| Delivery state | Report-only / uncommitted fixes / other explicitly authorized delivery |
+
+For zero findings, use `Pre-Landing Review: 0 issues (0 critical, 0 informational)`, `None.` in both sections, and the same table. Zero findings does not imply completed verification.
+
+Finish with a bold landing verdict and a short reason, using the existing gates below:
 
 - **SAFE TO LAND:** no unresolved blockers; required verification and independent review completed against stable final files.
 - **LAND WITH CAUTION:** no unresolved blockers and all required gates complete, with explicitly nonblocking caveats or optional coverage gaps.

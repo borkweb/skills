@@ -149,6 +149,67 @@
     }
   },
   {
+    "id": "review-readable-zero-findings",
+    "skill": "skills/gstack/review",
+    "prompt": "Review this small documentation correction, report only. Do not launch additional reviewers.",
+    "criteria": [
+      "Zero issue-count header and both severity sections explicitly empty",
+      "Completion table reports pinned scope, passed checks and independent review skipped because not required",
+      "SAFE TO LAND based on completed required evidence, without invented findings or edits"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "diff": "README spelling correction; documented behavior remains accurate",
+      "required_checks": "all passed against stable final files",
+      "independent_review": "not required"
+    }
+  },
+  {
+    "id": "review-readable-mixed-impact",
+    "skill": "skills/gstack/review",
+    "prompt": "Review the supplied small pinned change, report only. Do not launch additional reviewers.",
+    "criteria": [
+      "Two issue-count header: one critical and one informational",
+      "Error handling that loses an import is critical despite belonging to the second checklist pass",
+      "Bounded admin-list N+1 query cost is informational despite belonging to SQL and data safety",
+      "Findings include file/line, trigger, consequence and fix under separate severity sections",
+      "Completion table distinguishes unresolved findings from passed checks; DO NOT LAND for the confirmed blocker",
+      "No automatic fixes or additional reviewers"
+    ],
+    "fixture": {
+      "disposable_git": true,
+      "diff": "Under 50 changed lines; no auth, payment or new external integration",
+      "confirmed_findings": [
+        {
+          "location": "app/services/importer.rb:42",
+          "evidence": "A storage exception is caught and success returned; the caller discards the only source copy on success, losing the import"
+        },
+        {
+          "location": "app/controllers/admin/items_controller.rb:18",
+          "evidence": "The list is capped at 20 items; reading each owner adds 20 avoidable queries with measured latency, but no functional, security or data loss consequence"
+        }
+      ],
+      "required_checks": "all passed against stable final files",
+      "independent_review": "not required"
+    }
+  },
+  {
+    "id": "review-readable-zero-unverified",
+    "skill": "skills/gstack/review",
+    "prompt": "Report the review of this pinned security change using the supplied evidence. Do not fix files or launch additional reviewers.",
+    "criteria": [
+      "Zero issue-count header and empty critical/informational sections without inventing a defect",
+      "Completion table records NOT RUN checks and NO RESPONSE for the required independent pass with reasons",
+      "DO NOT LAND states readiness unverified rather than claiming a confirmed defect"
+    ],
+    "fixture": {
+      "confirmed_findings": [],
+      "required_checks": "not run; required test service unavailable",
+      "independent_review": "required, dispatched, returned no response",
+      "native_delegation": "unavailable"
+    }
+  },
+  {
     "id": "eng-small-plan",
     "skill": "skills/gstack/plan-eng-review",
     "prompt": "Review and improve this plan: reject empty IDs before storage; use existing validator; add the failing-case test. Skip questions.",
