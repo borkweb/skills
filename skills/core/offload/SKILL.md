@@ -49,6 +49,11 @@ This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`
   `… section get|append|set|clear "$HANDOFF" "<heading>" [--text s|--file f]`.
   Hand-splicing this file with ad-hoc regex is how the one document the loop
   trusts gets corrupted. Section writes carry the same ownership guard.
+- **A builder writes its handoff as the architect.** `dispatch.sh` exports the doc as
+  `$OFFLOAD_HANDOFF` and the architect's id as `$OFFLOAD_SESSION_ID`, because Claude
+  Code replaces an inherited `$CLAUDE_CODE_SESSION_ID` with the builder's own id inside
+  its tool calls. Status and section writes honor the carried id for that one doc only;
+  any other doc is still checked against the caller's own session.
 
 ## The ledger (when a run has more than one slice)
 

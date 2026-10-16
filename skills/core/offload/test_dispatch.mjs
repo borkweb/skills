@@ -381,6 +381,37 @@ test('headless claude uses -p with full bypass, not auto mode', () => {
   writeConfig([{ harness: 'codex' }]);
 });
 
+// Claude Code replaces an inherited $CLAUDE_CODE_SESSION_ID with its own session
+// id inside tool calls, so the architect's id must also travel in a variable no
+// harness owns. handoff.mjs honors it for the builder's assigned handoff only.
+test('every launch carries the architect id in OFFLOAD_SESSION_ID beside the handoff', () => {
+  for (const harness of ['claude', 'codex']) {
+    writeConfig([{ harness }]);
+    const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0' }).log);
+    assert.match(script, /^export OFFLOAD_SESSION_ID=sess-Z$/m, `${harness} launch carries the id`);
+    assert.match(script, /^export OFFLOAD_HANDOFF=\S+handoff\.md$/m);
+  }
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('a headless builder gets OFFLOAD_SESSION_ID in its environment', () => {
+  unameReports('Linux');
+  writeConfig([{ harness: 'claude' }]);
+  const envStub = join(BIN, 'claude');
+  writeFileSync(
+    envStub,
+    `#!/usr/bin/env bash\necho "claude-env OFFLOAD_SESSION_ID=$OFFLOAD_SESSION_ID OFFLOAD_HANDOFF=$OFFLOAD_HANDOFF" >> "${LOG}"\n`,
+  );
+  chmodSync(envStub, 0o755);
+  try {
+    const { log } = run({ TMUX: '' });
+    assert.match(log, /^claude-env OFFLOAD_SESSION_ID=sess-Z OFFLOAD_HANDOFF=\S+handoff\.md$/m);
+  } finally {
+    stub('claude');
+    writeConfig([{ harness: 'codex' }]);
+  }
+});
+
 test('headless path skips interactive-only harnesses for the next candidate', () => {
   unameReports('Linux');
   stub('grok'); // on PATH so select keeps it, but it has no headless form

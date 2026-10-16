@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
 import test from 'node:test';
@@ -15,18 +15,23 @@ process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 
 // run() lets each call set the ambient session id, since the ownership guard
 // reads $CLAUDE_CODE_SESSION_ID. Pass { session } to control it; omit to run
-// with no session in the env (to exercise the empty-id guard).
-const run = (args, { session } = {}) => {
+// with no session in the env (to exercise the empty-id guard). { env } adds the
+// variables a dispatched builder carries ($OFFLOAD_HANDOFF, $OFFLOAD_SESSION_ID).
+// Both are cleared first, so a suite run inside a builder stays hermetic.
+const run = (args, { session, env: extra = {} } = {}) => {
   const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
   delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.OFFLOAD_HANDOFF;
+  delete env.OFFLOAD_SESSION_ID;
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
+  Object.assign(env, extra);
   return execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env }).trim();
 };
 
 // runFail() expects a non-zero exit; returns the captured stderr.
-const runFail = (args, { session } = {}) => {
+const runFail = (args, { session, env } = {}) => {
   try {
-    run(args, { session });
+    run(args, { session, env });
     throw new Error('expected command to fail but it exited 0');
   } catch (e) {
     if (!('status' in e) || e.status === 0) throw e;
@@ -151,6 +156,55 @@ test('status/ready REFUSE a write from a different session (the tripwire)', () =
   assert.match(err, /sess-OWNER/);
   assert.match(err, /sess-INTRUDER/);
   // The doc must be untouched — still specced, not results-ready.
+  assert.match(readFileSync(p, 'utf8'), /status: specced/);
+});
+
+// Claude Code replaces an inherited $CLAUDE_CODE_SESSION_ID with the builder's
+// own session id inside its tool calls, so a Claude builder can never present
+// the architect's id there. dispatch.sh carries it in $OFFLOAD_SESSION_ID too,
+// scoped to the one doc it handed the builder in $OFFLOAD_HANDOFF.
+test('a builder writes its assigned handoff with the carried architect id', () => {
+  const p = run(['init', repo('carried'), 'sess-ARCH']);
+  const builder = { session: 'sess-BUILDER', env: { OFFLOAD_HANDOFF: p, OFFLOAD_SESSION_ID: 'sess-ARCH' } };
+  run(['section', 'set', p, 'Gate results', '--text', 'PASS 3/3'], builder);
+  run(['ready', p], builder);
+  const body = readFileSync(p, 'utf8');
+  assert.match(body, /status: results-ready/);
+  assert.match(body, /PASS 3\/3/);
+  assert.match(body, /claude_session: sess-ARCH/, 'ownership is unchanged by the write');
+});
+
+test('the carried id matches the assigned handoff however its path is spelled', () => {
+  const p = run(['init', repo('carried-spelling'), 'sess-ARCH']);
+  const spelled = join(dirname(p), '.', basename(p));
+  run(['blocked', p], { session: 'sess-BUILDER', env: { OFFLOAD_HANDOFF: spelled, OFFLOAD_SESSION_ID: 'sess-ARCH' } });
+  assert.match(readFileSync(p, 'utf8'), /status: blocked/);
+});
+
+test('the carried id opens only the assigned handoff, never another doc', () => {
+  const mine = run(['init', repo('carried-mine'), 'sess-ARCH']);
+  const other = run(['init', repo('carried-other'), 'sess-ARCH']);
+  const builder = { session: 'sess-BUILDER', env: { OFFLOAD_HANDOFF: mine, OFFLOAD_SESSION_ID: 'sess-ARCH' } };
+  const err = runFail(['ready', other], builder);
+  assert.match(err, /refusing/);
+  assert.match(err, /sess-BUILDER/);
+  const errSection = runFail(['section', 'set', other, 'Gate results', '--text', 'x'], builder);
+  assert.match(errSection, /refusing/);
+  assert.match(readFileSync(other, 'utf8'), /status: specced/);
+});
+
+test('the carried id is ignored without an assigned handoff', () => {
+  const p = run(['init', repo('carried-unassigned'), 'sess-ARCH']);
+  const err = runFail(['ready', p], { session: 'sess-BUILDER', env: { OFFLOAD_SESSION_ID: 'sess-ARCH' } });
+  assert.match(err, /refusing/);
+  assert.match(readFileSync(p, 'utf8'), /status: specced/);
+});
+
+test('a carried id that does not own the assigned handoff is still refused', () => {
+  const p = run(['init', repo('carried-wrong'), 'sess-ARCH']);
+  const err = runFail(['ready', p], { session: 'sess-BUILDER', env: { OFFLOAD_HANDOFF: p, OFFLOAD_SESSION_ID: 'sess-OTHER' } });
+  assert.match(err, /refusing/);
+  assert.match(err, /sess-OTHER/);
   assert.match(readFileSync(p, 'utf8'), /status: specced/);
 });
 

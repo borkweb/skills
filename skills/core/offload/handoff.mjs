@@ -40,9 +40,16 @@
 // a silent wrong-document write impossible — the failure mode that motivated it
 // was the loop re-deriving a path under an empty/foreign session id (e.g. the
 // builder's own session) and clobbering or minting the wrong file.
+//
+// A dispatched builder writes its handoff as the architect. Claude Code replaces
+// an inherited $CLAUDE_CODE_SESSION_ID with the builder's own session id inside
+// its tool calls, so dispatch.sh also carries the architect's id in
+// $OFFLOAD_SESSION_ID. Status and section writes honor that id only for the one
+// doc named in $OFFLOAD_HANDOFF; every other doc still keys on the caller's own
+// session, so the tripwire holds everywhere else.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DIR, fileFor, listFiles, tokenOf, field, age, prune } from './dir.mjs';
 import {
@@ -70,6 +77,23 @@ function requireDoc(p) {
 // `hash(cwd)--.md` is a degenerate path that silently collides across sessions.
 function cleanSession(id) { return (id == null ? '' : String(id)).trim(); }
 const envSession = () => cleanSession(process.env.CLAUDE_CODE_SESSION_ID);
+
+// One canonical spelling of a path, so `/a/./b.md` and a symlinked tmpdir name
+// the same doc.
+function canonicalPath(p) {
+  const abs = resolvePath(String(p));
+  try { return realpathSync(abs); } catch { return abs; }
+}
+
+// The session a status or section write to `p` is checked against: the
+// architect id dispatch.sh carried in $OFFLOAD_SESSION_ID when `p` is the
+// builder's assigned $OFFLOAD_HANDOFF, else the caller's own session.
+function writerSession(p) {
+  const carried = cleanSession(process.env.OFFLOAD_SESSION_ID);
+  const assigned = cleanSession(process.env.OFFLOAD_HANDOFF);
+  if (carried && assigned && canonicalPath(assigned) === canonicalPath(p)) return carried;
+  return envSession();
+}
 
 function requireSession(id, hint) {
   const s = cleanSession(id);
@@ -223,7 +247,7 @@ function setStatus(p, value, steal) {
     );
   }
   const expected = requireSession(
-    envSession(),
+    writerSession(p),
     'A status write must verify ownership against $CLAUDE_CODE_SESSION_ID, which is empty here.',
   );
   assertOwner(p, expected, steal, `set status=${v} on`);
@@ -281,7 +305,7 @@ function readPayload(rest) {
 function sectionWrite(p, heading, text, mode, steal) {
   requireDoc(p);
   const expected = requireSession(
-    envSession(),
+    writerSession(p),
     'A section write must verify ownership against $CLAUDE_CODE_SESSION_ID, which is empty here.',
   );
   assertOwner(p, expected, steal, `write section "${heading}" of`);

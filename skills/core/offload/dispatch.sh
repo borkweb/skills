@@ -286,20 +286,20 @@ run_headless() {
   out=$(mktemp -t offload-result.XXXXXX) && mv "$out" "$out.md" && out="$out.md"
   case "$h" in
     codex)
-      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" CLAUDE_CODE_SESSION_ID="$SID" \
           codex exec ${m:+-m "$m"} ${e:+--config "model_reasoning_effort=$e"} \
             --dangerously-bypass-approvals-and-sandbox -C "$REPO" \
             --output-last-message "$out" - < "$BLOCK" ) ;;
     claude)
-      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" CLAUDE_CODE_SESSION_ID="$SID" \
           claude -p --dangerously-skip-permissions ${m:+--model "$m"} \
             ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
-      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" CLAUDE_CODE_SESSION_ID="$SID" \
           opencode run ${m:+--model "$m"} "$(cat "$BLOCK")" > "$out" ) ;;
     *)
       [ "$custom" = "-" ] && return 1
-      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" CLAUDE_CODE_SESSION_ID="$SID" \
+      ( cd "$REPO" && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" CLAUDE_CODE_SESSION_ID="$SID" \
           bash -c "$(build_custom "$custom")" > "$out" ) ;;
   esac && echo "dispatch: ran $h headless; builder's final message at $out"
 }
@@ -317,6 +317,9 @@ make_launch() {
     echo '#!/usr/bin/env bash'
     echo "cd $(printf %q "$REPO")"
     echo "export OFFLOAD_HANDOFF=$(printf %q "$HANDOFF")"
+    # Claude Code replaces CLAUDE_CODE_SESSION_ID with the builder's own id inside
+    # its tool calls; handoff.mjs reads the architect's id from here instead.
+    echo "export OFFLOAD_SESSION_ID=$(printf %q "$SID")"
     echo "export CLAUDE_CODE_SESSION_ID=$(printf %q "$SID")"
     if [ -n "$MARKER" ]; then
       printf 'echo $$ > %s\n' "$(printf %q "$MARKER")"

@@ -25,5 +25,5 @@ Use `node "<resolved handoff.mjs>" section append|set "$OFFLOAD_HANDOFF" "<headi
 
 At completion, run `node "<resolved handoff.mjs>" ready "$OFFLOAD_HANDOFF"`.
 For a mid-slice blocker, record Open disagreements, then run `node "<resolved handoff.mjs>" blocked "$OFFLOAD_HANDOFF"` and report what needs a ruling. Do not silently wait.
-Ownership refusal is a blocker: do not use --steal or edit the path to bypass it. The dispatcher supplies the architect's session identity. Use only the status vocabulary documented by the CLI.
+Ownership refusal is a blocker: do not use --steal or edit the path to bypass it. The dispatcher supplies the architect's session identity in `$OFFLOAD_SESSION_ID`, which the CLI honors for `$OFFLOAD_HANDOFF` even when your own `$CLAUDE_CODE_SESSION_ID` differs. Use only the status vocabulary documented by the CLI.
 ```
