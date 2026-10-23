@@ -34,7 +34,7 @@ For a new goal that should end merge-ready.
    - dependency installation, fixture setup and baseline suite runs, so later gates start warm.
 
    Join. Send each open question the reviews raise to council, log the rulings, and fold them into the spec.
-3. **Plan and freeze.** Write the plan with `writing-plans`. Freeze the acceptance gates as exact commands with expected results before any code exists. From here on, nobody edits the gates.
+3. **Plan and freeze.** Write the plan with `writing-plans` in `writing-plan-documents` style. Freeze the acceptance gates as exact commands with expected results before any code exists. From here on, nobody edits the gates.
 4. **Implement.** Follow Build work in SKILL.md. Hand the frozen plan, gates and council rulings to `complete`, which runs the slices in its own worktrees and workers. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once. Implement in the host only for a single small task or when the user asked to keep it local.
 5. **Land.** Run **land** from step 2 on the result. Pass along the gates already frozen; don't re-derive them.
 

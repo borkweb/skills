@@ -325,5 +325,51 @@
       "No forced multi-lane fanout",
       "No-push retained"
     ]
+  },
+  {
+    "id": "writing-plans-ste-spec",
+    "skill": "skills/core/writing-plans",
+    "prompt": "Write a short product spec: we're going to be leveraging the existing retry queue in order to ensure failed webhook deliveries get reattempted; if the error rate goes above 2% the rollout should probably be halted. No deadline has been set.",
+    "criteria": [
+      "Procedural sentences have 20 words or fewer; descriptive sentences 25 or fewer",
+      "Instructions use the imperative with the condition first (If the error rate is more than 2%, stop the rollout)",
+      "No progressive or perfect tenses, -ing words outside technical names, or semicolons",
+      "Keeps the 2% threshold exactly",
+      "Invents no deadline or calendar commitment",
+      "Does not claim STE100 compliance"
+    ]
+  },
+  {
+    "id": "writing-plans-ste-preserve",
+    "skill": "skills/core/writing-plans",
+    "prompt": "Rewrite this plan section: The frozen gate is `npm test -- --runInBand` and must print \"42 passing\". We've been seeing flaky failures in src/queue/retry.ts which is why we're gonna pin the seed.",
+    "criteria": [
+      "Command `npm test -- --runInBand` is byte-identical",
+      "Quote \"42 passing\" is byte-identical",
+      "Path src/queue/retry.ts is unchanged",
+      "Surrounding prose follows STE rules: no 'gonna', no progressive tense, active voice",
+      "Gate is not reworded or weakened"
+    ]
+  },
+  {
+    "id": "review-ste-report",
+    "skill": "skills/gstack/review",
+    "prompt": "Review report fixture: one confirmed defect in src/db/pool.ts:88 where we're not releasing the handle on the error path so under load the pool gets exhausted and requests queue until the 30s timeout. Write the report-only result.",
+    "criteria": [
+      "Header reads Pre-Landing Review: 1 issues (1 critical, 0 informational) or the correct counts in the contract format",
+      "Section headers, status tokens, table labels and verdict token are unchanged from the contract",
+      "Problem and Fix prose uses STE sentence rules (active voice, no -ing outside technical names, sentences of 25 words or fewer)",
+      "Keeps src/db/pool.ts:88 and the 30s timeout exactly"
+    ]
+  },
+  {
+    "id": "writing-plans-negative-slack",
+    "skill": "skills/core/writing-plans",
+    "prompt": "Draft a casual Slack message inviting the team to Friday lunch at noon.",
+    "criteria": [
+      "writing-plan-documents does not activate",
+      "No STE rewrite rules are applied or mentioned",
+      "Keeps Friday and noon"
+    ]
   }
 ]

@@ -58,7 +58,7 @@ startup instructions already in the conversation.
 | **review-security** | Deep security review grounded in 20 CVE-based pattern libraries (Heartbleed, Log4Shell, Next.js bypass, runc escape, xz backdoor, etc.). Callable standalone or as a reference from `review`. |
 | **session-budget** | X-rays context composition (stale vs. load-bearing), gives a compact/clear/leave-it verdict, and — only when a handoff would carry state not recoverable from disk/git — writes a reinit-ready handoff to a consume-once `~/.agent-handoffs/` mailbox. |
 | **writing-commits** | Analyzes staged changes and generates conventional commit messages matching repository style. |
-| **writing-plans** | Applies concise writing style to plan documents — strips filler, bans inflated adjectives, requires structured decisions. |
+| **writing-plans** | Writes plan documents and product specs in ASD-STE100 Simplified Technical English — strips filler, bans inflated adjectives, requires structured decisions. Its `ste100.md` rules also govern `review` reports and PR bodies and comments. |
 | **writing-sql** | Enforces strict vertical SQL formatting conventions for raw files, inline PHP, migrations, and framework query builders. |
 
 ## Gstack ports (`skills/gstack/`)

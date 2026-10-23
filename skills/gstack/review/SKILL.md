@@ -72,6 +72,8 @@ In report-only mode, stop at findings, background check results and verdict. In 
 
 ## Result
 
+Write finding prose, the verdict reason and any PR comment to the ASD-STE100 rules in [ste100.md](../../core/writing-plans/ste100.md). Keep the headers, status tokens, table labels and verdict tokens below exactly as shown.
+
 Use this readable output contract for the human-facing report. An explicit caller schema may replace the presentation for a machine-consumed pass; the primary owner still reports the evidence and verdict.
 
 Start with `Pre-Landing Review: N issues (X critical, Y informational)`. Count distinct confirmed findings, including ones fixed during this review. Classify by demonstrated impact: **CRITICAL** findings block landing while unresolved; **INFORMATIONAL** findings are nonblocking. Checklist category, source and whether a fix is mechanical do not determine severity. Keep unconfirmed investigation leads separate and out of the counts.
