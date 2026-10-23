@@ -463,3 +463,12 @@ test('OFFLOAD_FORCE=1 replaces a running builder instead of refusing', () => {
     cleanMarker();
   }
 });
+
+test('builder launch never impersonates the architect native session', () => {
+  writeConfig([{ harness: 'claude', model: 'sonnet' }]);
+  const { log } = run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', CODEX_SESSION_ID: 'native-architect' });
+  const script = launchScriptOf(log);
+  assert.match(script, /^export OFFLOAD_SESSION_ID=sess-Z$/m);
+  assert.match(script, /^unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID$/m);
+  assert.doesNotMatch(script, /^export CLAUDE_CODE_SESSION_ID=/m);
+});

@@ -42,3 +42,12 @@ test('multiple handoffs -> menu, no full documents injected', () => {
   assert.match(ctx, /\[2\]/);
   assert.doesNotMatch(ctx, /## Gate results|--steal|Resolve YOUR/);
 });
+
+test('Codex handoff notice shows the actual architect owner without impersonation', () => {
+  const cwd = join(BOX, 'codex-repo');
+  const id = 'codex:01a16a67-f178-70e2-9b40-c0babe791262';
+  hoff(['init', cwd, id, 'Codex project']);
+  const ctx = JSON.parse(fireHook(cwd)).hookSpecificOutput.additionalContext;
+  assert.ok(ctx.includes(`owner "${id}"`));
+  assert.doesNotMatch(ctx, /owner "unknown"/);
+});

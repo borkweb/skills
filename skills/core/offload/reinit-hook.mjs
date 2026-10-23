@@ -15,7 +15,7 @@ if (!files.length) process.exit(0);
 
 let context = `[offload] ${files.length} saved offload handoff(s) for this project. Load the offload skill if resuming an external workflow. Resume only the intended run after verifying its owner is no longer active; this notice does not authorize takeover.\n`;
 for (const [i, f] of files.entries()) {
-  context += `  [${i + 1}] ${tokenOf(f)} ${JSON.stringify(field(f, 'title'))} — owner ${JSON.stringify(field(f, 'claude_session') || 'unknown')}, ${field(f, 'status')} · ${age(f)} old\n`;
+  context += `  [${i + 1}] ${tokenOf(f)} ${JSON.stringify(field(f, 'title'))} — owner ${JSON.stringify(field(f, 'architect_session') || field(f, 'claude_session') || 'unknown')}, ${field(f, 'status')} · ${age(f)} old\n`;
 }
 
 process.stdout.write(`${JSON.stringify({

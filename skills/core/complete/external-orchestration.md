@@ -33,13 +33,15 @@ whether merge was authorized) against it every turn.
 
 ## 2. Open the ledger — first, and before any slice exists
 
+Resolve `SID` with `node "<…>/handoff.mjs" key`. This supports native Claude and namespaced Codex identities. Never export a Codex id as a Claude session id.
+
 ```
 node "<…>/handoff.mjs" ledger init "$PWD" "<the goal, verbatim>"
 ```
 
 This is the architect's own file, one per session, and **builders never write
 it**. It is the only place a slice's terminal state lives. Each slice also gets
-its own handoff doc (`handoff.mjs init "<worktree>" "$CLAUDE_CODE_SESSION_ID"`),
+its own handoff doc (`handoff.mjs init "<worktree>" "$SID"`),
 which is the builder's mailbox — spec in, gates out. Two different records; do
 not conflate them.
 
@@ -151,8 +153,7 @@ a. Invoke the `offload` skill for ONE architect turn on the slice that needs it.
    raw frontend or harness command.
 b. After each valid dispatch — including the required tab-id postcondition inside
    herdr — `ledger set … --state dispatched --pane <pane>` and launch that slice's
-   WAIT BRIDGE backgrounded (below). Then stop your turn — do NOT poll, do NOT
-   ScheduleWakeup. The harness re-invokes you when a bridge exits.
+   WAIT BRIDGE backgrounded (below). In Claude, stop your turn for the background completion. In Codex, await the bridge through an exec session. Do not repeatedly read the builder pane for progress.
 c. On wake, run `board` (above), then read the background task's final `WAITER:`
    line and branch:
      WAITER: ready                       → go to (d)
@@ -236,15 +237,15 @@ Claude side never polls. After each dispatch, run:
 
 ```
 Bash(run_in_background: true):
-  H=$(node "<…>/offload/handoff.mjs" path "<the slice's worktree>" "$CLAUDE_CODE_SESSION_ID")
+  H=$(node "<…>/offload/handoff.mjs" path "<the slice's worktree>" "$SID")
   bash "<core>/complete/wait-for-ready.sh" "$H" builder
 ```
 
 One bridge per dispatched slice, each on that slice's own handoff. Re-derive the
 path here — shell variables do not survive the harness wake between dispatch and
-this bridge. Use `path <worktree> "$CLAUDE_CODE_SESSION_ID"` for a slice in a
+this bridge. Use `path <worktree> "$SID"` for a slice in a
 worktree, or `resolve "$PWD"` for one in the repo root; both refuse when
-`$CLAUDE_CODE_SESSION_ID` is empty — surface that, don't guess a path. Resolve
+both native session variables are empty — surface that, don't guess a path. Resolve
 `<core>` as the parent of the offload dir from the SessionStart `[offload]` line
 (i.e. `wait-for-ready.sh` sits next to the offload dir under `skills/core/`). The
 script blocks — via `fswatch` when available, else a cheap detached sleep-poll —

@@ -1,7 +1,7 @@
 ---
 name: offload
 description: >
-  Make this Claude session the ARCHITECT and offload implementation to a
+  Make this session the ARCHITECT and offload implementation to a
   configured builder harness (codex, claude, opencode, pi, grok, or a custom
   command) you can watch. Reads the session handoff, arbitrates the builder's
   disagreements, judges raw gate results against frozen criteria plus an
@@ -19,7 +19,7 @@ You never write implementation code. The repo's commits are the permanent code r
 
 ## Resolve the handoff CLI and session key
 
-This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`'s native route unless an external session was explicitly requested and a real supported session identity is available. Do not run bridge commands during unrelated tasks.
+The external bridge supports native Claude and Codex architect identities. `handoff.mjs key` reads `$CLAUDE_CODE_SESSION_ID`, or namespaced `$CODEX_SESSION_ID` when Claude's variable is absent. Never copy a Codex identity into a Claude variable. Do not run bridge commands during unrelated tasks.
 
 
 - Locate `handoff.mjs` beside this loaded `SKILL.md` and use its absolute path with
@@ -27,14 +27,14 @@ This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`
   versions may contain stale paths; the current skill location is authoritative.
   If that location is also gone after an upgrade, refresh skill discovery and load
   the current offload skill. Do not guess a cache version or create a replacement
-  helper. Your session key is `$CLAUDE_CODE_SESSION_ID`.
+  helper. Resolve your session key with `SID=$(node "<…>/handoff.mjs" key)`. Use that key for explicit identity arguments.
 - **While this external workflow is active, resolve your handoff on each resumed turn:**
   `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD" "<project/slice title>")`. This derives
-  the one canonical path from `$CLAUDE_CODE_SESSION_ID`, creating it on the first turn
+  the one canonical path from the native session environment, creating it on the first turn
   (the title is applied only at creation) and returning the same path on every later
   turn. Shell variables do **not** survive between turns, so re-run `resolve` to recover
   `$HANDOFF` rather than guessing a path or scanning `list`. `resolve` refuses (non-zero
-  exit) if `$CLAUDE_CODE_SESSION_ID` is empty — if that happens, STOP and surface it;
+  exit) if both native session variables are empty — if that happens, STOP and surface it;
   never fall back to a hand-built path.
 - **Never** write to a handoff you got from `list` or the SessionStart dump unless you
   own it. `status`/`ready`/`reattach` enforce this: a write to a doc owned by another
@@ -42,7 +42,7 @@ This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`
   tripwire — treat it as a real signal, not noise to override.
 - **Resuming a prior session's handoff** (e.g. after `/clear`): the SessionStart context
   flags a doc from another session. Taking it over is deliberate — confirm it's the right
-  project, then `… reattach "<path>" "$CLAUDE_CODE_SESSION_ID" --steal`, and use the
+  project, then `… reattach "<path>" "$SID" --steal`, and use the
   returned path. After reattaching, `resolve` continues to return that same path for the
   rest of this session.
 - **Edit a handoff's sections with the CLI, not by hand:**
@@ -50,9 +50,7 @@ This external bridge requires `$CLAUDE_CODE_SESSION_ID`. In Codex use `complete`
   Hand-splicing this file with ad-hoc regex is how the one document the loop
   trusts gets corrupted. Section writes carry the same ownership guard.
 - **A builder writes its handoff as the architect.** `dispatch.sh` exports the doc as
-  `$OFFLOAD_HANDOFF` and the architect's id as `$OFFLOAD_SESSION_ID`, because Claude
-  Code replaces an inherited `$CLAUDE_CODE_SESSION_ID` with the builder's own id inside
-  its tool calls. Status and section writes honor the carried id for that one doc only;
+  `$OFFLOAD_HANDOFF` and the architect's id as `$OFFLOAD_SESSION_ID`, while each builder obtains its own native runtime identity. Status and section writes honor the carried id for that one doc only;
   any other doc is still checked against the caller's own session.
 
 ## The ledger (when a run has more than one slice)
@@ -140,7 +138,7 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
-2. Run: `bash "<…>/skills/core/offload/dispatch.sh" "$PWD" "$f.md" "$HANDOFF" "$CLAUDE_CODE_SESSION_ID"`
+2. Run: `bash "<…>/skills/core/offload/dispatch.sh" "$PWD" "$f.md" "$HANDOFF" "$SID"`
    (resolve dispatch.sh next to the handoff.mjs path from the `[offload]` line).
    dispatch.sh resolves the harness chain itself via harness.mjs and falls
    through to the next candidate when a launch hard-fails; pass an explicit

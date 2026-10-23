@@ -76,7 +76,20 @@ function requireDoc(p) {
 // Trimmed session id, or '' when unset/blank. A blank id can never key a file:
 // `hash(cwd)--.md` is a degenerate path that silently collides across sessions.
 function cleanSession(id) { return (id == null ? '' : String(id)).trim(); }
-const envSession = () => cleanSession(process.env.CLAUDE_CODE_SESSION_ID);
+const envSession = () => {
+  const claude = cleanSession(process.env.CLAUDE_CODE_SESSION_ID);
+  if (claude) return claude;
+  const codex = cleanSession(process.env.CODEX_SESSION_ID);
+  if (!codex) return '';
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(codex)) die('refusing: invalid Codex session id');
+  return `codex:${codex}`;
+};
+
+function setOwner(body, sessionId) {
+  body = setField(body, 'architect_session', sessionId);
+  // Preserve legacy Claude readers without mislabelling a Codex native identity.
+  return setField(body, 'claude_session', sessionId.startsWith('codex:') ? '' : sessionId);
+}
 
 // One canonical spelling of a path, so `/a/./b.md` and a symlinked tmpdir name
 // the same doc.
@@ -100,7 +113,7 @@ function requireSession(id, hint) {
   if (!s) {
     die(
       'refusing: empty session id — cannot key a handoff to no session.\n' +
-      (hint || 'Set $CLAUDE_CODE_SESSION_ID (or pass an explicit session id).'),
+      (hint || 'Provide a native $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID (or pass an explicit session id).'),
     );
   }
   return s;
@@ -108,7 +121,7 @@ function requireSession(id, hint) {
 
 // The session id recorded in a doc's frontmatter, or '' if absent/unreadable.
 function ownerOf(p) {
-  try { return cleanSession(field(p, 'claude_session')); } catch { return ''; }
+  try { return cleanSession(field(p, 'architect_session')) || cleanSession(field(p, 'claude_session')); } catch { return ''; }
 }
 
 // Refuse to mutate a doc that belongs to a different session. An empty owner
@@ -146,7 +159,7 @@ function ensureDoc(cwd, sessionId, title) {
     b = setField(b, 'title', title || '(untitled)');
     b = setField(b, 'cwd', cwd);
     b = setField(b, 'branch', gitBranch(cwd));
-    b = setField(b, 'claude_session', sessionId);
+    b = setOwner(b, sessionId);
     // A doc that exists is not a builder that is running. The architect flips
     // this to `dispatched` at dispatch time (offload SKILL step 6); starting it
     // there made every not-yet-launched slice read as in-flight.
@@ -164,7 +177,7 @@ function ensureDoc(cwd, sessionId, title) {
 function resolve(cwd, title) {
   const sid = requireSession(
     envSession(),
-    '`resolve` reads the session from $CLAUDE_CODE_SESSION_ID, which is empty here.',
+    '`resolve` reads the session from $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   process.stdout.write(ensureDoc(cwd, sid, title) + '\n');
 }
@@ -216,7 +229,7 @@ function reattach(p, sessionId, steal) {
     );
   }
   let b = readFileSync(p, 'utf8');
-  b = setField(b, 'claude_session', sid);
+  b = setOwner(b, sid);
   b = setField(b, 'updated', nowIso());
   writeFileSync(p, b);
   if (dest !== p) {
@@ -248,7 +261,7 @@ function setStatus(p, value, steal) {
   }
   const expected = requireSession(
     writerSession(p),
-    'A status write must verify ownership against $CLAUDE_CODE_SESSION_ID, which is empty here.',
+    'A status write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   assertOwner(p, expected, steal, `set status=${v} on`);
   let b = readFileSync(p, 'utf8');
@@ -306,7 +319,7 @@ function sectionWrite(p, heading, text, mode, steal) {
   requireDoc(p);
   const expected = requireSession(
     writerSession(p),
-    'A section write must verify ownership against $CLAUDE_CODE_SESSION_ID, which is empty here.',
+    'A section write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   assertOwner(p, expected, steal, `write section "${heading}" of`);
   const { body, span } = requireSection(p, heading);
@@ -365,7 +378,7 @@ function flagFields(rest) {
 function ledgerCmd(rest) {
   const [sub, ...args] = rest;
   const pos = positional(args);
-  const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID, which is empty here.');
+  const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
   const cwd = pos[0] ?? process.cwd();
   switch (sub) {
     case 'init': process.stdout.write(`${initLedger(cwd, sid, pos[1])}\n`); break;
@@ -400,6 +413,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const pos = positional(rest);
   const steal = hasFlag(rest, '--steal');
   switch (cmd) {
+    case 'key': process.stdout.write(requireSession(envSession()) + '\n'); break;
     case 'resolve':  resolve(pos[0] ?? process.cwd(), pos[1]); break;
     case 'init':     init(pos[0], pos[1], pos[2]); break;
     case 'path':     path(pos[0], pos[1]); break;
@@ -428,7 +442,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     case 'ledger':   ledgerCmd(rest); break;
     case 'board': {
-      const sid = requireSession(envSession(), 'The board is keyed to $CLAUDE_CODE_SESSION_ID, which is empty here.');
+      const sid = requireSession(envSession(), 'The board is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
       process.stdout.write(renderBoard(pos[0] ?? process.cwd(), sid, {
         json: hasFlag(rest, '--json'),
         withGit: !hasFlag(rest, '--no-git'),

@@ -44,9 +44,10 @@ test('complete command examples never launch a builder with raw herdr creation c
 });
 
 test('offload still routes dispatch through the tab-creating implementation', () => {
+  assert.match(OFFLOAD, /SID=\$\(node .*handoff\.mjs.* key\)/);
   assert.match(
     OFFLOAD,
-    /bash "<…>\/skills\/core\/offload\/dispatch\.sh" "\$PWD" "\$f\.md" "\$HANDOFF" "\$CLAUDE_CODE_SESSION_ID"/,
+    /bash "<…>\/skills\/core\/offload\/dispatch\.sh" "\$PWD" "\$f\.md" "\$HANDOFF" "\$SID"/,
   );
   assert.match(DISPATCH, /out=\$\(herdr tab create/);
   assert.match(DISPATCH, /launched \$h in new herdr tab \$tab/);

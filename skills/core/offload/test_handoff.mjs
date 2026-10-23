@@ -21,6 +21,7 @@ process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 const run = (args, { session, env: extra = {} } = {}) => {
   const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
   delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.CODEX_SESSION_ID;
   delete env.OFFLOAD_HANDOFF;
   delete env.OFFLOAD_SESSION_ID;
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
@@ -341,4 +342,46 @@ test('section names the sections present when the heading is unknown', () => {
   const err = runFail(['section', 'get', p, 'Nope'], { session: 'sess-SM' });
   assert.match(err, /no "## Nope" section/);
   assert.match(err, /Frozen gates/);
+});
+
+const codexId = '01a16a67-f178-70e2-9b40-c0babe791262';
+const codexEnv = { CODEX_SESSION_ID: codexId };
+test('Codex owns a stable namespaced handoff without pretending to be Claude', () => {
+  const cwd = repo('codex-native');
+  const p = run(['resolve', cwd], { env: codexEnv });
+  assert.equal(run(['resolve', cwd], { env: codexEnv }), p);
+  assert.equal(run(['key'], { env: codexEnv }), `codex:${codexId}`);
+  const body = readFileSync(p, 'utf8');
+  assert.match(body, new RegExp(`architect_session: codex:${codexId}`));
+  assert.doesNotMatch(body, new RegExp(`claude_session: .*${codexId}`));
+  run(['ready', p], { env: codexEnv });
+  assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
+  const other = run(['resolve', cwd], { session: codexId });
+  assert.notEqual(p, other);
+  assert.match(runFail(['ready', p], { session: codexId }), /wrong-document/);
+});
+test('Codex carries ownership only for its assigned builder handoff', () => {
+  const mine = run(['resolve', repo('codex-builder')], { env: codexEnv });
+  const foreign = run(['init', repo('codex-foreign'), 'foreign']);
+  const builder = { session: 'builder', env: { OFFLOAD_HANDOFF: mine, OFFLOAD_SESSION_ID: `codex:${codexId}` } };
+  run(['ready', mine], builder);
+  assert.match(runFail(['ready', foreign], builder), /wrong-document/);
+});
+test('Codex ledger and board use the same native key', () => {
+  const cwd = repo('codex-ledger');
+  run(['ledger', 'init', cwd, 'native goal'], { env: codexEnv });
+  run(['ledger', 'add', cwd, '--id', 'one', '--title', 'first'], { env: codexEnv });
+  const ledger = JSON.parse(run(['ledger', 'show', cwd], { env: codexEnv }));
+  assert.equal(ledger.session, `codex:${codexId}`);
+  assert.equal(ledger.slices[0].id, 'one');
+  assert.match(run(['board', cwd, '--no-git', '--no-pane'], { env: codexEnv }), /first/);
+});
+test('missing native identity still fails closed and malformed Codex ids cannot escape the directory', () => {
+  assert.match(runFail(['resolve', repo('no-native')]), /empty session id/);
+  for (const id of ['../foreign', 'bad\nid', 'bad/id']) {
+    assert.match(runFail(['resolve', repo('bad-native')], { env: { CODEX_SESSION_ID: id } }), /invalid Codex session id/);
+  }
+});
+test('real Claude identity takes precedence over inherited Codex environment', () => {
+  assert.equal(run(['key'], { session: 'actual-claude', env: codexEnv }), 'actual-claude');
 });
