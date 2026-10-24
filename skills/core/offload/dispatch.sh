@@ -285,6 +285,8 @@ interactive_cmd() {
         "$(printf %q "$(codex_notify_toml)")" \
         "$(printf %q "$BLOCK")" ;;
     claude)
+      # The MCP flags sit before --settings on purpose: --mcp-config is variadic
+      # and would swallow the prompt if it came last.
       printf 'claude --permission-mode %s %s%s--settings %s %s"$(cat %s)"' \
         "$(printf %q "$pm")" "${m:+--model $(printf %q "$m") }" \
         "$(claude_mcp_flags)" \
@@ -328,9 +330,11 @@ run_headless() {
             --output-last-message "$out" - < "$BLOCK" ) ;;
     claude)
       claude_mcp_argv
+      # --mcp-config is variadic: it swallows every following non-flag token, so
+      # it must never sit directly before the prompt. A flag always follows here.
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
-          claude -p --dangerously-skip-permissions ${m:+--model "$m"} \
-            ${CLAUDE_MCP_ARGV[@]+"${CLAUDE_MCP_ARGV[@]}"} \
+          claude -p --dangerously-skip-permissions ${CLAUDE_MCP_ARGV[@]+"${CLAUDE_MCP_ARGV[@]}"} \
+            --output-format text ${m:+--model "$m"} \
             ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
