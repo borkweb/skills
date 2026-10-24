@@ -227,3 +227,43 @@ test('corrective without a prior handoff is refused', () => {
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /no handoff/);
 });
+
+// --- unattended -------------------------------------------------------------
+//
+// A detached bridge + architect-wake chain instead of the NEXT line, so the run
+// continues after the interactive session is gone. The chain is real; the
+// `claude` it resumes is the stub, which logs its argv.
+test('--unattended arms a detached wake that resumes this architect session when the bridge fires', async () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-unattended');
+  const wakeEnv = { WFR_GRACE: '2', WFR_POLL: '1' };
+  const { stdout } = run([R, WT, 'feat/un', BLOCK, '--title', 'un', '--unattended'], wakeEnv);
+  assert.match(stdout, /^UNATTENDED: bridge and architect wake armed \(pid \d+\); log \S+\.wake\.log$/m);
+  assert.doesNotMatch(stdout, /^NEXT/m);
+  const doc = hoff(['path', WT, 'arch']);
+  // No builder marker exists (the stubbed pane never ran the launch script), so
+  // the bridge reports never-started after the grace period and the wake fires.
+  const deadline = Date.now() + 20000;
+  let log = '';
+  while (Date.now() < deadline) {
+    try { log = readFileSync(LOG, 'utf8'); } catch {}
+    if (/^claude -p --resume arch /m.test(log)) break;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  assert.match(log, /^claude -p --resume arch --permission-mode auto/m, 'the architect session was resumed headlessly');
+  assert.match(log, /--strict-mcp-config/);
+  assert.match(log, /\[unattended wake\]/);
+  assert.match(log, /WAITER: never-started/);
+  assert.match(log, /--unattended/, 'the wake prompt keeps the run in unattended mode');
+  const wakeLog = readFileSync(`${doc}.wake.log`, 'utf8');
+  assert.match(wakeLog, /bridge exited 3/);
+  assert.match(wakeLog, /architect turn finished/);
+});
+
+test('--unattended refuses a Codex architect, which cannot be resumed with claude', () => {
+  const R = repo();
+  const r = runFail([R, join(BOX, 'wt-codex'), 'feat/c', BLOCK, '--unattended'],
+    { CLAUDE_CODE_SESSION_ID: '', CODEX_SESSION_ID: '0199-codex' });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Codex architect/);
+});

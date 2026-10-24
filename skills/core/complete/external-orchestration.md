@@ -77,8 +77,9 @@ ones: every slice costs a spec review, a dispatch, a review and a handoff.
 Run these concurrently, as read-only agents:
 
 - for each slice, a **spec reviewer** (`do`'s briefs.md) with the `review`
-  checklist over the slice spec, returning the acceptance criteria it would reject
-  on;
+  checklist and `do`'s review-criteria.md over the slice spec, returning the
+  acceptance criteria it would reject on (correctives skip this: their criteria
+  are the blockers);
 - the plan review(s) the first slice's surface calls for (more than one can apply):
   architecture / data flow / concurrency / migrations → `plan-eng-review`;
   UI / visual / interaction → `plan-design-review`;
@@ -172,6 +173,26 @@ an `accepted` row that CI or a later regression proved wrong goes back to
 `rejected` with the reason the turn you learn it. The Stop hook refuses the turn
 end once if a row still owes a judgment, a ruling or an owner; when a human ruling
 is genuinely required, say so and end the turn.
+
+### Leaving the run unattended
+
+In-session bridges die with the session. Before the user closes it, run
+`bash "<core>/complete/unattended.sh" "$PWD"`: for every live slice it stops the
+in-session bridge and starts a detached `architect-wake.sh` chain that resumes
+this session headlessly when the bridge fires, prompt = the `WAITER:` line plus
+the board. In that mode every dispatch and corrective uses
+`dispatch-slice.sh … --unattended`, which arms the next chain itself. Wakes run
+under `--permission-mode auto` unless `OFFLOAD_WAKE_PERMISSIONS=bypass`; a denied
+command or a needed human ruling is written to the handoff's *Open
+disagreements* and the turn ends. Each wake appends to `<handoff>.wake.log`; read
+those and the board when the user returns. Claude architects only.
+
+### Compaction is safe at a slice boundary
+
+The SessionStart hook restores the board and your handoff path after a
+compaction, so a long run no longer has to carry slice state in its context. When
+the session-budget check says COMPACT, say so in the status line at the next
+terminal state and do not defer it; nothing a wake needs lives only in context.
 
 ### Reporting progress
 

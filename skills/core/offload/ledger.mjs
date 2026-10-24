@@ -23,7 +23,7 @@
 //   node handoff.mjs ledger set   <cwd> <id> --state accepted [--verdict "..."] [--pr url]
 //                                       [--note n] [--pane w:p1] [--handoff p] [--branch b]
 //   node handoff.mjs ledger goal  <cwd> "<goal text>"
-//   node handoff.mjs ledger report [<cwd>] [--all] [--json]   -> build/judge minutes per slice, rejections, concurrency
+//   node handoff.mjs ledger report [<cwd>] [--all] [--json|--verdicts]   -> build/judge minutes per slice, rejections, concurrency
 //   node handoff.mjs board        <cwd> [--json] [--no-git] [--no-pane]
 //
 // Ownership: the ledger filename is keyed on $CLAUDE_CODE_SESSION_ID, and every
@@ -467,6 +467,19 @@ export function reportLedger(l, p) {
     median_judge_min: median(slices.map((s) => s.judge_min)),
     max_concurrent: maxConcurrent(slices),
   };
+}
+
+// The review-only rejection verdicts, one per line: the raw material for
+// do/references/review-criteria.md.
+export function renderVerdicts(runs) {
+  let out = '';
+  for (const r of runs) {
+    for (const s of r.slices) {
+      if (s.state !== 'rejected' || !REVIEW_ONLY(s.verdict)) continue;
+      out += `${(r.created || '').slice(0, 10)} ${pad(s.id, 4)} ${s.verdict.replace(/\s+/g, ' ')}\n`;
+    }
+  }
+  return out || '(no review-only rejections recorded)\n';
 }
 
 export function renderReport(runs, { json = false } = {}) {

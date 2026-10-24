@@ -32,6 +32,7 @@ A slice is one coherent feature, not one PR. Split only where files or contracts
 
 Rules that hold at every tier:
 
+- Before any tier that dispatches a builder, run the **spec reviewer** ([briefs.md](references/briefs.md)) over the slice spec and fold its criteria into the frozen gates and the builder brief, so the builder and the acceptance reviewer hold one bar. A corrective skips it: its criteria are the blockers.
 - Reviewers, council and investigations always use subagents.
 - Never launch builders yourself: no `Agent` builders, and no raw `herdr`, tmux or headless commands. `offload`'s dispatcher is the only launcher.
 - If the tier needs `offload` or `complete` and it can't run (no session key, no herdr), say so and ask. Don't fall back quietly.

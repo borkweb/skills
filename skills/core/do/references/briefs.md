@@ -23,7 +23,7 @@ For a delta re-review, send only: the diff since the last review, the finding ID
 
 ## Spec reviewer
 
-Independent, read-only, runs before gates are frozen and concurrently with worktree setup. Reads the slice spec, the plan and the repo instructions with the `review` skill's checklist in hand, and answers one question: what would make me return DO NOT LAND on a correct implementation of this spec? Does not review code and does not propose designs.
+Independent, read-only, runs before gates are frozen and concurrently with worktree setup. Reads the slice spec, the plan and the repo instructions with the `review` skill's checklist and [review-criteria.md](review-criteria.md) (the classes past reviewers rejected on after green gates) in hand, and answers one question: what would make me return DO NOT LAND on a correct implementation of this spec? For every class in review-criteria.md the slice can exhibit, it writes one criterion. Does not review code and does not propose designs. Not run for a corrective: its criteria are the confirmed blockers.
 
 Returns:
 - a numbered list of acceptance criteria, each testable, each tied to a checklist item or repo rule, with the smallest check that proves it (a command, a test name, or a file:line condition);
@@ -36,6 +36,7 @@ The architect folds the criteria into the frozen gates and the builder brief, so
 1. Before any code, reply with a plan and every disagreement with the brief, citing real files. Silent compliance and silent scope additions both count as failures.
 2. Settle a genuinely ambiguous design question with `council`, and record the ruling in the result. If it needs a change to scope or a gate, stop and report it as a blocker.
 3. Implement only within **Owns**. Don't edit frozen gates or contracts, and don't grade your own work.
+4. While iterating, run the narrowest gate that covers the file being edited (one test file, one linter target). Run the full frozen gate set once, after the last edit and before reporting; that run is the one whose numbers go in the result.
 
 Returns:
 - **Gate results**: one line per gate, with pass/fail, the count and the command that reproduces it. No logs.

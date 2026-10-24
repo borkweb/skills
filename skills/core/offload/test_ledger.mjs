@@ -455,3 +455,16 @@ test('ledger report --all aggregates every ledger on disk, read-only, across ses
   assert.match(text, /TOTALS/);
   assert.match(text, /slices/);
 });
+
+test('ledger report --verdicts lists only the review-only rejection verdicts', () => {
+  const REPO = repo('verdicts');
+  fixtureLedger(REPO, 'arch', [
+    { id: '1', title: 'a', state: 'rejected', verdict: 'gates pass but review = do not land: token leak', history: hist(['dispatched', '09:00'], ['rejected', '09:30']) },
+    { id: '2', title: 'b', state: 'rejected', verdict: 'g3 failed 0/3', history: hist(['dispatched', '09:00'], ['rejected', '09:30']) },
+    { id: '3', title: 'c', state: 'accepted', verdict: 'SAFE TO LAND', history: hist(['dispatched', '09:00'], ['accepted', '09:30']) },
+  ]);
+  const out = run(['ledger', 'report', REPO, '--verdicts']);
+  assert.match(out, /token leak/);
+  assert.doesNotMatch(out, /g3 failed/);
+  assert.doesNotMatch(out, /SAFE TO LAND/);
+});

@@ -53,7 +53,7 @@ import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DIR, fileFor, listFiles, tokenOf, field, age, prune } from './dir.mjs';
 import {
-  SLICE_STATES, addSlice, allLedgers, initLedger, ledgerFor, pruneLedgers, readLedger, renderReport, reportLedger,
+  SLICE_STATES, addSlice, allLedgers, initLedger, ledgerFor, pruneLedgers, readLedger, renderReport, renderVerdicts, reportLedger,
   renderBoard, setGoal, setSlice,
 } from './ledger.mjs';
 
@@ -381,8 +381,9 @@ function ledgerCmd(rest) {
   if (sub === 'report') {
     // Read-only survey: --all crosses sessions on purpose, so no session is required.
     const json = hasFlag(args, '--json');
+    const render = (runs) => (hasFlag(args, '--verdicts') ? renderVerdicts(runs) : renderReport(runs, { json }));
     if (hasFlag(args, '--all')) {
-      process.stdout.write(renderReport(allLedgers().map(({ p, l }) => reportLedger(l, p)), { json }));
+      process.stdout.write(render(allLedgers().map(({ p, l }) => reportLedger(l, p))));
       return;
     }
     const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
@@ -390,7 +391,7 @@ function ledgerCmd(rest) {
     const p = ledgerFor(cwd, sid);
     const l = readLedger(p);
     if (!l) die(`no ledger for this session.\nStart one: handoff.mjs ledger init "${cwd}" "<goal>"\nOr survey every run: handoff.mjs ledger report --all`);
-    process.stdout.write(renderReport([reportLedger(l, p)], { json }));
+    process.stdout.write(render([reportLedger(l, p)]));
     return;
   }
   const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');

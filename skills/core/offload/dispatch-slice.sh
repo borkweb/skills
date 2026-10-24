@@ -12,7 +12,7 @@
 # Usage:
 #   dispatch-slice.sh <repo_root> <worktree> <branch> <block_file>
 #                     [--id <slice-id>] [--title <title>] [--base <ref>]
-#                     [--harness harness[:model[:effort]]] [--corrective]
+#                     [--harness harness[:model[:effort]]] [--corrective] [--unattended]
 #
 #   repo_root   the checkout the ledger belongs to ($PWD for the architect)
 #   worktree    the slice's worktree; created from <branch> (and --base, default
@@ -23,9 +23,15 @@
 #   --corrective  the slice already has a handoff and a verdict; put the new
 #               block under Next slice and send it into the warm builder's pane
 #               when that builder is still alive, else re-dispatch cold
+#   --unattended  instead of printing the bridge command, start a detached
+#               bridge + architect-wake.sh chain that resumes this architect
+#               session headlessly when the bridge fires, so the run continues
+#               after the interactive session is closed (Claude architects only)
 #
 # Output: dispatch.sh's own lines, a worktree line, a slice line and finally
 #   NEXT (background): WFR_BOARD_CWD="<repo>" bash "<core>/complete/wait-for-ready.sh" "<doc>" builder
+#   or, with --unattended:
+#   UNATTENDED: bridge and architect wake armed (pid <n>); log <doc>.wake.log
 # Exit: 0 dispatched · 2 usage · dispatch.sh's code when the launch failed.
 set -uo pipefail
 
@@ -33,15 +39,16 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HANDOFF_MJS="$SCRIPT_DIR/handoff.mjs"
 DISPATCH="$SCRIPT_DIR/dispatch.sh"
 BRIDGE="$(cd "$SCRIPT_DIR/../complete" 2>/dev/null && pwd)/wait-for-ready.sh"
+WAKE="$(cd "$SCRIPT_DIR/../complete" 2>/dev/null && pwd)/architect-wake.sh"
 
 usage() {
   printf '%s\n' \
-    'Usage: dispatch-slice.sh <repo_root> <worktree> <branch> <block_file> [--id ID] [--title T] [--base REF] [--harness SPEC] [--corrective]' >&2
+    'Usage: dispatch-slice.sh <repo_root> <worktree> <branch> <block_file> [--id ID] [--title T] [--base REF] [--harness SPEC] [--corrective] [--unattended]' >&2
 }
 die() { echo "dispatch-slice: $*" >&2; exit 1; }
 
 POS=()
-ID=""; TITLE=""; BASE=""; HARNESS=""; CORRECTIVE=0
+ID=""; TITLE=""; BASE=""; HARNESS=""; CORRECTIVE=0; UNATTENDED=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --id) ID="${2:-}"; shift 2 ;;
@@ -49,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     --base) BASE="${2:-}"; shift 2 ;;
     --harness) HARNESS="${2:-}"; shift 2 ;;
     --corrective) CORRECTIVE=1; shift ;;
+    --unattended) UNATTENDED=1; shift ;;
     -h|--help) usage; exit 2 ;;
     -*) echo "dispatch-slice: unknown flag $1" >&2; usage; exit 2 ;;
     *) POS+=("$1"); shift ;;
@@ -69,6 +77,10 @@ REPO=$(absolute "$REPO"); WT=$(absolute "$WT")
 
 hoff() { node "$HANDOFF_MJS" "$@"; }
 SID=$(hoff key) || die "could not resolve the session key (CLAUDE_CODE_SESSION_ID / CODEX_SESSION_ID)"
+if [ "$UNATTENDED" -eq 1 ]; then
+  case "$SID" in codex:*) die "--unattended resumes the architect with claude --resume; a Codex architect ($SID) cannot be resumed that way" ;; esac
+  [ -f "$WAKE" ] || die "architect-wake.sh not found at $WAKE"
+fi
 
 LEDGER=$(hoff ledger path "$REPO" 2>/dev/null || true)
 HAS_LEDGER=0
@@ -103,9 +115,37 @@ builder_pid() {
   printf '%s\n' "$pid"
 }
 
+# Any bridge still watching this handoff from this session would double-wake.
+stop_bridges_for() {
+  local doc="$1" pid cmd
+  while read -r pid cmd; do
+    case "$cmd" in
+      *wait-for-ready.sh\ "$doc"*) kill "$pid" 2>/dev/null && echo "dispatch-slice: stopped existing bridge pid $pid" ;;
+    esac
+  done < <(ps -axo pid=,command= 2>/dev/null)
+}
+
+# Detached: a new session so the chain survives this shell and the Claude
+# Code process that spawned it. node is already a dependency; setsid is not
+# on macOS.
+arm_unattended() {
+  stop_bridges_for "$DOC"
+  node -e '
+    const { spawn } = require("node:child_process");
+    const p = spawn("bash", process.argv.slice(1), { detached: true, stdio: "ignore" });
+    p.unref(); console.log(p.pid);
+  ' "$WAKE" "$REPO" "$DOC" "$SID"
+}
+
 print_next() {
   echo "dispatch-slice: slice ${ID:--} ${TITLE:+\"$TITLE\" }handoff $DOC"
-  echo "NEXT (background): WFR_BOARD_CWD=\"$REPO\" bash \"$BRIDGE\" \"$DOC\" builder"
+  if [ "$UNATTENDED" -eq 1 ]; then
+    local pid
+    pid=$(arm_unattended) || die "could not start the detached wake for $DOC"
+    echo "UNATTENDED: bridge and architect wake armed (pid $pid); log $DOC.wake.log"
+  else
+    echo "NEXT (background): WFR_BOARD_CWD=\"$REPO\" bash \"$BRIDGE\" \"$DOC\" builder"
+  fi
 }
 
 # Launch a fresh builder through dispatch.sh. Leaves status/ledger at specced
