@@ -53,6 +53,18 @@ test('offload still routes dispatch through the tab-creating implementation', ()
   assert.match(DISPATCH, /launched \$h in new herdr tab \$tab/);
 });
 
+// The one-call dispatcher is a wrapper, not a second launcher: every slice it
+// starts still goes through dispatch.sh, and the skill names it as the only way
+// to dispatch a slice.
+test('dispatch-slice.sh launches only through dispatch.sh', () => {
+  const SLICE = readFileSync(join(HERE, '..', 'offload', 'dispatch-slice.sh'), 'utf8');
+  assert.match(SLICE, /DISPATCH="\$SCRIPT_DIR\/dispatch\.sh"/);
+  assert.match(SLICE, /bash "\$DISPATCH" "\$WT" "\$BLOCK" "\$DOC" "\$SID"/);
+  assert.doesNotMatch(SLICE, /herdr\s+(agent\s+(start|spawn)|pane\s+split|tab\s+create)/);
+  assert.match(OFFLOAD, /dispatch-slice\.sh" "\$PWD" "<worktree>" "<branch>" "\$f\.md"/);
+  assert.match(OFFLOAD, /--corrective/);
+});
+
 // The ledger's provenance check reads dispatch.sh's signature off the live herdr
 // session: a tab labeled "builder" holding exactly one pane. If the two files
 // ever disagree about that label, every real dispatch starts looking hand-rolled

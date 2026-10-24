@@ -12,6 +12,16 @@
 # escaped through the frontend's quoting layers.
 # Usage: dispatch.sh <repo_dir> <block_file> <handoff_path> <session_id> [<profile-spec>]
 #   profile-spec (optional): harness[:model[:effort]] — bypasses config resolution.
+# Sidecars beside the handoff: "$HANDOFF.builder" (live builder pid),
+#   "$HANDOFF.activity" (paths whose writes prove the builder is alive) and
+#   "$HANDOFF.pane" (frontend=, pane=, tab=, harness= of the launched builder, so
+#   dispatch-slice.sh can send a corrective into the warm pane without parsing
+#   the human-facing launch line).
+# OFFLOAD_BUILDER_MCP (claude builders): "none" (default) launches with no MCP
+#   servers (--strict-mcp-config and an empty --mcp-config), so the builder does
+#   not boot the machine's MCP fleet or carry its tool schemas on every turn;
+#   "inherit" keeps the user's MCP configuration; a path loads exactly that
+#   --mcp-config file.
 set -euo pipefail
 
 usage() {
@@ -232,6 +242,31 @@ write_activity_sidecar() {
 }
 
 # The verified interactive launch command per harness (prompt = block contents).
+# MCP flags for a claude builder, escaped once for the generated launch script.
+claude_mcp_flags() {
+  case "${OFFLOAD_BUILDER_MCP:-none}" in
+    inherit) printf '' ;;
+    none) printf -- '--strict-mcp-config --mcp-config %s ' "$(printf %q '{"mcpServers":{}}')" ;;
+    *) printf -- '--strict-mcp-config --mcp-config %s ' "$(printf %q "$OFFLOAD_BUILDER_MCP")" ;;
+  esac
+}
+
+# Same flags as an argv array, for the headless path that execs claude directly.
+claude_mcp_argv() {
+  CLAUDE_MCP_ARGV=()
+  case "${OFFLOAD_BUILDER_MCP:-none}" in
+    inherit) ;;
+    none) CLAUDE_MCP_ARGV=(--strict-mcp-config --mcp-config '{"mcpServers":{}}') ;;
+    *) CLAUDE_MCP_ARGV=(--strict-mcp-config --mcp-config "$OFFLOAD_BUILDER_MCP") ;;
+  esac
+}
+
+# Where the builder lives, for dispatch-slice.sh's corrective path and the board.
+write_pane_sidecar() {
+  [ -n "$HANDOFF" ] || return 0
+  printf 'frontend=%s\npane=%s\ntab=%s\nharness=%s\n' "$1" "$2" "$3" "$4" > "$HANDOFF.pane"
+}
+
 # claude defaults to --permission-mode auto: routine work auto-approves, genuinely
 # risky commands still gate, and the builder tab is watchable so a rare prompt is
 # answerable (the wait bridge's timeout is the backstop). permissionMode in the
@@ -250,8 +285,9 @@ interactive_cmd() {
         "$(printf %q "$(codex_notify_toml)")" \
         "$(printf %q "$BLOCK")" ;;
     claude)
-      printf 'claude --permission-mode %s %s--settings %s %s"$(cat %s)"' \
+      printf 'claude --permission-mode %s %s%s--settings %s %s"$(cat %s)"' \
         "$(printf %q "$pm")" "${m:+--model $(printf %q "$m") }" \
+        "$(claude_mcp_flags)" \
         "$(printf %q "$(claude_hook_settings)")" \
         "${BUILDER_SID:+--session-id $BUILDER_SID }" "$(printf %q "$BLOCK")" ;;
     opencode)
@@ -291,8 +327,10 @@ run_headless() {
             --dangerously-bypass-approvals-and-sandbox -C "$REPO" \
             --output-last-message "$out" - < "$BLOCK" ) ;;
     claude)
+      claude_mcp_argv
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           claude -p --dangerously-skip-permissions ${m:+--model "$m"} \
+            ${CLAUDE_MCP_ARGV[@]+"${CLAUDE_MCP_ARGV[@]}"} \
             ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
@@ -301,7 +339,7 @@ run_headless() {
       [ "$custom" = "-" ] && return 1
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           bash -c "$(build_custom "$custom")" > "$out" ) ;;
-  esac && echo "dispatch: ran $h headless; builder's final message at $out"
+  esac && { write_pane_sidecar headless "" "" "$h"; echo "dispatch: ran $h headless; builder's final message at $out"; }
 }
 
 # Write a self-contained launch script (cd + env + harness command). Everything
@@ -386,6 +424,7 @@ launch_interactive() {
     if [ "$rc" -eq 0 ] && [ -n "$pane" ] && [ -n "$tab" ]; then
       if herdr pane run "$pane" "bash $(printf %q "$launch")" >/dev/null 2>>"${err:-/dev/null}"; then
         [ -n "$err" ] && rm -f "$err"
+        write_pane_sidecar herdr "$pane" "$tab" "$h"
         echo "dispatch: launched $h in new herdr tab $tab (workspace ${workspace:-?}, root pane $pane) — switch with your herdr tab navigation."
         return 0
       fi
@@ -415,13 +454,17 @@ launch_interactive() {
     echo "dispatch:   OFFLOAD_ALLOW_NON_HERDR set — falling back to tmux/Terminal/headless." >&2
   fi
   if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1; then
-    tmux new-window -c "$REPO" -n builder "bash $(printf %q "$launch")"
+    # -P -F prints the new window's target so a corrective can be sent into it.
+    local target
+    target=$(tmux new-window -c "$REPO" -n builder -P -F '#{session_name}:#{window_index}' "bash $(printf %q "$launch")") || return 1
+    write_pane_sidecar tmux "$target" "" "$h"
     echo "dispatch: launched $h in new tmux window 'builder' — switch with your tmux prefix + window number."
     return 0
   fi
   if [ "$(uname)" = "Darwin" ] && command -v osascript >/dev/null 2>&1; then
     # launch is an mktemp path (no spaces/quotes), safe to embed in the AppleScript string.
     osascript -e "tell application \"Terminal\" to do script \"bash ${launch}\""
+    write_pane_sidecar terminal "" "" "$h"
     echo "dispatch: launched $h in a new Terminal.app window."
     return 0
   fi
@@ -498,7 +541,7 @@ stop_existing_bridges
 
 # A turn-end marker left by the previous slice's builder is stale — the wake it
 # signaled was already delivered. Clear it so the new slice starts clean.
-[ -n "$HANDOFF" ] && rm -f "$HANDOFF.turn-ended"
+[ -n "$HANDOFF" ] && rm -f "$HANDOFF.turn-ended" "$HANDOFF.pane"
 
 LAUNCHED=""
 while IFS=$'\t' read -r h m e pm custom; do

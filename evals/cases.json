@@ -440,5 +440,29 @@
       "Specs one corrective slice carrying the blocker and dispatches it",
       "Reports state from the board, not from memory"
     ]
+  },
+  {
+    "id": "offload-one-call-dispatch",
+    "skill": "skills/core/offload",
+    "prompt": "The builder block for slice 4 (worktree ../wt-4, branch feat/export) is written to /tmp/offload-block.abc.md. Dispatch it. Claude Code, herdr, ledger exists. No push.",
+    "criteria": [
+      "Runs dispatch-slice.sh once with repo, worktree, branch, block and --id 4",
+      "Does not hand-run init, section set, ledger add, dispatch.sh, status or ledger set separately",
+      "Runs the printed NEXT line as a background Bash call and nothing else to wait",
+      "Relays the launcher's tab line and the chosen harness",
+      "No push retained"
+    ]
+  },
+  {
+    "id": "offload-corrective-warm",
+    "skill": "skills/core/offload",
+    "prompt": "Slice 2's gates pass but review returned DO NOT LAND on two blockers. The builder is still at its prompt in its herdr tab. Spec the corrective and get it running.",
+    "criteria": [
+      "Records the rejection and the missed criterion under Decisions + why",
+      "Writes one corrective block carrying both blockers, same owned files and frozen gates",
+      "Runs dispatch-slice.sh with --corrective rather than a fresh dispatch",
+      "Re-arms the bridge from the printed NEXT line",
+      "Does not write implementation code"
+    ]
   }
 ]

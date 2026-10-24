@@ -129,11 +129,14 @@ frontend the check cannot see, not for routing around a failed dispatch.
 
 On the first turn, spec every slice the plan separates (step 3 already reviewed
 them), then dispatch every slice whose files are disjoint in this same turn, up to
-3–4 lanes. Each gets its own worktree, handoff doc, `offload` dispatch, ledger row
-and bridge. Serialize only on a real file or dependency conflict; a slice that
-waits for a sibling waits in `specced`, and you dispatch it in the turn the
-sibling's row goes terminal. There is no turn-taking between slices and you never
-hold the fleet in your head.
+3–4 lanes. Each gets its own worktree, handoff doc, ledger row and bridge, from
+one `dispatch-slice.sh` call per slice (offload's *Dispatch*); the calls fit in a
+single Bash invocation, and their `NEXT` lines then run as background calls in the
+same response. Pre-warm the worktrees (install, baseline suite) while the spec
+reviewers run, so the builders' first gate runs are warm. Serialize only on a real
+file or dependency conflict; a slice that waits for a sibling waits in `specced`,
+and you dispatch it in the turn the sibling's row goes terminal. There is no
+turn-taking between slices and you never hold the fleet in your head.
 
 ### Each wake
 
@@ -154,13 +157,15 @@ hold the fleet in your head.
 3. Branch on the verdict:
    - gates or review fail → `ledger set … --state rejected --verdict "<why>"`;
      relay every confirmed defect in one batch; `offload` specs one corrective
-     slice onto the same branch; dispatch it.
+     slice onto the same branch and sends it with `dispatch-slice.sh … --corrective`,
+     which reuses the warm builder when it is still at its prompt.
    - gates pass and review clean → `ledger set … --state accepted --verdict "<raw numbers>"`.
    - scope left → dispatch the next ready slice(s).
    - goal met across all slices → step 7.
-4. After each valid dispatch, `ledger set … --state dispatched --pane <pane>` and arm
-   that slice's bridge (below). Then end the turn; the bridge wakes you. Do not read
-   the builder pane for progress and do not ScheduleWakeup for it.
+4. `dispatch-slice.sh` has already set the row to `dispatched` with the verified
+   pane; arm that slice's bridge by running its printed `NEXT` line in the
+   background (below). Then end the turn; the bridge wakes you. Do not read the
+   builder pane for progress and do not ScheduleWakeup for it.
 
 Write terminal states as you decide them, in the same turn, including reversals:
 an `accepted` row that CI or a later regression proved wrong goes back to
@@ -178,22 +183,21 @@ say you do not know.
 
 The builder ends its run with `handoff.mjs ready`, flipping the handoff to
 `results-ready`. The bridge turns that file write into a harness wake-up. After
-each dispatch, run:
+each dispatch, run the `NEXT` line `dispatch-slice.sh` printed, as a background
+Bash call:
 
 ```
 Bash(run_in_background: true):
-  H=$(node "<…>/offload/handoff.mjs" path "<the slice's worktree>" "$SID")
-  WFR_BOARD_CWD="$PWD" bash "<core>/complete/wait-for-ready.sh" "$H" builder
+  WFR_BOARD_CWD="<repo>" bash "<core>/complete/wait-for-ready.sh" "<the slice's handoff>" builder
 ```
 
-One bridge per dispatched slice, each on that slice's own handoff. Re-derive the
-path here; shell variables do not survive the harness wake between dispatch and
-this bridge. Use `path <worktree> "$SID"` for a slice in a worktree, or
-`resolve "$PWD"` for one in the repo root; both refuse when both native session
-variables are empty: surface that, don't guess a path. `<core>` is the parent of
-the offload dir from the SessionStart `[offload]` line. `WFR_BOARD_CWD` makes the
-bridge print the board under its `WAITER:` line, so the wake arrives with the
-fleet's state. The script blocks outside your context (zero tokens) until a
+One bridge per dispatched slice, each on that slice's own handoff. To re-arm a
+bridge on a later wake, re-derive the path with
+`node "<…>/offload/handoff.mjs" path "<the slice's worktree>" "$SID"` (or
+`resolve "$PWD"` for a slice in the repo root); shell variables do not survive the
+harness wake, and both commands refuse when the native session variables are
+empty: surface that, don't guess a path. `WFR_BOARD_CWD` makes the bridge print
+the board under its `WAITER:` line, so the wake arrives with the fleet's state. The script blocks outside your context (zero tokens) until a
 signal fires: the handoff flips to `results-ready` or `blocked`; the harness's own
 turn-end hook settles; the idle backstop; or the liveness/timeout backstops. The
 signals and what each one asks of you are in [wait-signals.md](wait-signals.md).

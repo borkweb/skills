@@ -472,3 +472,55 @@ test('builder launch never impersonates the architect native session', () => {
   assert.match(script, /^unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID$/m);
   assert.doesNotMatch(script, /^export CLAUDE_CODE_SESSION_ID=/m);
 });
+
+// --- pane sidecar + lean builder boot ---------------------------------------
+
+// dispatch-slice.sh and the corrective path need to know where the builder
+// lives without parsing the human-facing launch line; dispatch.sh records it.
+test('a herdr launch records the frontend, pane, tab and harness beside the handoff', () => {
+  writeConfig([{ harness: 'claude' }]);
+  rmSync(`${HANDOFF}.pane`, { force: true });
+  run({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3' });
+  const side = readFileSync(`${HANDOFF}.pane`, 'utf8');
+  assert.match(side, /^frontend=herdr$/m);
+  assert.match(side, /^pane=w9:p7$/m);
+  assert.match(side, /^tab=w9:t7$/m);
+  assert.match(side, /^harness=claude$/m);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('a failed herdr launch leaves no pane sidecar behind', () => {
+  rmSync(`${HANDOFF}.pane`, { force: true });
+  runFail({ HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', HERDR_STUB_MODE: 'fail-create' });
+  assert.ok(!existsSync(`${HANDOFF}.pane`));
+});
+
+// The builder session used to boot every MCP server on the machine and carry
+// their tool schemas on every turn. Builders need node and the skills, not the
+// MCP fleet, so claude launches with no MCP servers unless told otherwise.
+test('claude builders launch with no MCP servers by default', () => {
+  writeConfig([{ harness: 'claude' }]);
+  unameReports('Linux');
+  const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0' }).log);
+  assert.match(script, /--strict-mcp-config --mcp-config/);
+  assert.match(script, /mcpServers/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('OFFLOAD_BUILDER_MCP=inherit keeps the user’s MCP configuration', () => {
+  writeConfig([{ harness: 'claude' }]);
+  unameReports('Linux');
+  const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0', OFFLOAD_BUILDER_MCP: 'inherit' }).log);
+  assert.doesNotMatch(script, /strict-mcp-config/);
+  writeConfig([{ harness: 'codex' }]);
+});
+
+test('OFFLOAD_BUILDER_MCP=<path> loads exactly that MCP config', () => {
+  writeConfig([{ harness: 'claude' }]);
+  unameReports('Linux');
+  const mcp = join(BOX, 'builder-mcp.json');
+  writeFileSync(mcp, '{"mcpServers":{}}');
+  const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0', OFFLOAD_BUILDER_MCP: mcp }).log);
+  assert.match(script, new RegExp(`--strict-mcp-config --mcp-config ${mcp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  writeConfig([{ harness: 'codex' }]);
+});

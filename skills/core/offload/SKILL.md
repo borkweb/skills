@@ -73,8 +73,9 @@ A single-slice run needs no ledger: the handoff is the whole state.
   command?}` profiles), resolved deterministically by `harness.mjs` next to
   `handoff.mjs`: `node "<…>/harness.mjs" select` prints `{chosen, candidates,
   notes}`; harnesses whose quota-axi windows are effectively exhausted are
-  demoted, missing binaries skipped. Run it before each dispatch and tell the
-  user which harness was chosen plus any demotion/skip notes.
+  demoted, missing binaries skipped. `dispatch-slice.sh` runs it for you at
+  launch and prints the chosen harness and any demotion/skip notes; relay those
+  to the user. Run `select` yourself only to answer a question before launching.
 - **Exit 3 (`missing-config`) means the config doesn't exist yet.** Prompt the
   user (AskUserQuestion): primary harness and optional fallback order, from
   codex / claude / opencode / pi / grok (a custom harness needs a raw `command`
@@ -99,7 +100,8 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 1. **First turn of a project:** if there is no prior work, write every slice the
    plan already separates (step 4), then dispatch every slice whose files are
    disjoint in this same turn, up to 3–4 lanes. One slice is one handoff, one
-   worktree and one dispatch; `complete` keeps the ledger across them.
+   worktree and one `dispatch-slice.sh` call; several calls fit in one Bash
+   invocation, and `complete` keeps the ledger across them.
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
    each with a one-line reason, recorded under *Decisions + why*. Clear the
    resolved disagreements. Use `council` for substantive judgment calls when multiple perspectives add value; routine rulings use the scope and evidence already available.
@@ -132,17 +134,22 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    - for a non-trivial slice, the plan review(s) that fit the surface:
      `plan-eng-review` (architecture/data flow/concurrency), `plan-design-review`
      (UI), `plan-devex-review` (a developer-facing contract: API/CLI/SDK/library/docs);
-   - the slice's worktree and branch.
+   - the slice's worktree and branch, pre-warmed: `git worktree add` it now, then
+     run the dependency install and the baseline gate suite inside it as a
+     background task, so the builder's first gate run is warm. When the lockfile
+     is unchanged on the slice's base, link the main checkout's dependency
+     directory instead of installing. `dispatch-slice.sh` reuses an existing
+     worktree untouched.
 
    Join. Freeze the gates under *Frozen gates* with the spec reviewer's criteria
    folded in (never edit them after results exist). The builder brief carries the
    same criteria, so the builder and the acceptance reviewer hold one bar.
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
-6. **Emit the builder block** (below), write it into *Next slice*
-   (`… section set "$HANDOFF" "Next slice" --file <block>`), dispatch, then on confirmed success set
-   `status: dispatched` via `… status "$HANDOFF" dispatched`. If a
-   ledger exists, record the slice on it in the same turn: id, title, branch,
-   worktree, handoff path, pane, `--state dispatched`.
+6. **Emit the builder block** (below) to a file and run `dispatch-slice.sh`
+   (Dispatch, below). It writes *Next slice*, creates or reuses the worktree,
+   registers the ledger row when a ledger exists, launches through `dispatch.sh`,
+   sets `status: dispatched`, records the verified pane and prints the bridge
+   command. A failed launch leaves the slice `specced`; nothing is running.
 
 ## Builder brief
 
@@ -154,12 +161,22 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
-2. Run: `bash "<…>/skills/core/offload/dispatch.sh" "$PWD" "$f.md" "$HANDOFF" "$SID"`
-   (resolve dispatch.sh next to the handoff.mjs path from the `[offload]` line).
-   dispatch.sh resolves the harness chain itself via harness.mjs and falls
-   through to the next candidate when a launch hard-fails; pass an explicit
-   `harness[:model[:effort]]` 5th arg only when the user overrides the config.
-3. Relay the launcher's line (herdr tab / tmux window / Terminal / headless) so the
+2. Run, in one call per slice (several slices may share one Bash call):
+   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>]`.
+   It resolves your session key, creates the worktree from `--base` (default
+   HEAD) or reuses one you pre-warmed, inits the slice handoff, writes *Next
+   slice*, adds or updates the ledger row, launches the builder through
+   `dispatch.sh` (which resolves the harness chain via harness.mjs and falls
+   through on a hard failure; pass `--harness harness[:model[:effort]]` only when
+   the user overrides the config), flips the handoff to `dispatched`, records the
+   verified pane, and prints the launcher's line plus a final
+   `NEXT (background): …` line. Under the hood the launch is
+   `bash "<…>/skills/core/offload/dispatch.sh" "$PWD" "$f.md" "$HANDOFF" "$SID"`;
+   never call it by hand for a slice, and never launch a builder any other way.
+3. Run the `NEXT` line exactly as printed, as a background Bash call. It is the
+   wait bridge for that slice, with `WFR_BOARD_CWD` set so the wake carries the
+   board. Nothing else wakes you.
+4. Relay the launcher's line (herdr tab / tmux window / Terminal / headless) so the
    user knows where to watch. It names the tab, workspace and root pane, so quote
    the tab id, not just the pane. Inside a herdr TUI the builder lands in a new
    `builder` tab in **this session's workspace**, and that is the only frontend
@@ -167,11 +184,25 @@ Launch within existing authorization. Ask only if the actual permission relaxati
    error rather than falling through to tmux/Terminal (which would put the builder
    outside herdr's tabs). Surface that failure instead of re-dispatching blindly.
    Outside herdr the chain is tmux, then Terminal, then headless.
-4. Record the pane from that line, never one you created yourself. `ledger
-   add/set --pane` verifies it against dispatch.sh's signature (a herdr tab
-   labeled `builder` holding exactly one pane) and refuses anything else, because
-   a builder started by hand carries no builder marker, no activity sidecar and
-   no turn-end hook, so nothing can ever wake the architect for it.
+5. The pane in the ledger is the one `dispatch.sh` recorded, never one you created
+   yourself. `ledger add/set --pane` verifies it against dispatch.sh's signature (a
+   herdr tab labeled `builder` holding exactly one pane) and refuses anything else,
+   because a builder started by hand carries no builder marker, no activity sidecar
+   and no turn-end hook, so nothing can ever wake the architect for it.
+
+**Correctives reuse the warm builder.** After a rejection, write the corrective
+block (the confirmed blockers, the same owned files and gates) and run
+`dispatch-slice.sh … "<fix>.md" --id <n> --corrective`. When the builder that just
+reported is still at its prompt, the brief goes into its pane and it continues
+with the code already in context: no boot, no re-reading the plan. When the
+builder is gone, the script says so and re-dispatches cold. Either way, run the
+printed `NEXT` line again.
+
+**Lean builder boot.** A claude builder launches with no MCP servers
+(`OFFLOAD_BUILDER_MCP=none`, the default): it needs node and the skills, not the
+machine's MCP fleet or its tool schemas on every turn. Set
+`OFFLOAD_BUILDER_MCP=inherit` for the user's full MCP configuration, or a path to
+load exactly that `--mcp-config` file, when a slice genuinely needs an MCP tool.
 
 **Safety:** dispatch launches the builder with its permission gates relaxed:
 codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local

@@ -36,7 +36,8 @@ For a new goal that should end merge-ready.
    Join. Send each open question the reviews raise to council, log the rulings, and fold them into the spec.
 3. **Plan and freeze.** Write the plan with `writing-plans` in `writing-plan-documents` style, split into slices by the sizing rule in SKILL.md (one coherent feature each). Then run these concurrently:
    - a **spec reviewer** agent ([briefs.md](briefs.md)) over each slice's spec, returning the acceptance criteria the `review` checklist would reject on;
-   - the plan reviews from step 2 that the plan changed, if any.
+   - the plan reviews from step 2 that the plan changed, if any;
+   - each slice's worktree, pre-warmed: create it, then run the dependency install and the baseline gate suite in it as a background task, so the builder's first gate run is warm.
 
    Join. Freeze each slice's acceptance gates as exact commands with expected results, with the spec reviewer's criteria folded in, before any code exists. From here on, nobody edits the gates. The builder and the later reviewer now hold the same bar; a rejection after green gates means the spec review missed something, so record it in `decisions.md`.
 4. **Implement.** Pick the tier from Build work in SKILL.md: one slice goes to `offload`, two or more to `complete`, which dispatches every slice with disjoint files in the same turn. Hand over the frozen plan, gates and council rulings. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once (fleet tier only).
