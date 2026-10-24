@@ -25,7 +25,7 @@
 //     corruption surface on the one file the loop trusts. With no --text/--file,
 //     the body is read from stdin.
 //
-//   node handoff.mjs ledger   {init|path|show|add|set|goal} <cwd> ...  -> the architect's slice ledger
+//   node handoff.mjs ledger   {init|path|show|add|set|goal|report} <cwd> ...  -> the architect's slice ledger
 //   node handoff.mjs board    <cwd> [--json] [--no-git] [--no-pane]    -> reconciled roll-up of every slice
 //     See ledger.mjs. The ledger is the ONLY place a slice's terminal state
 //     lives; `board` reconciles it against each doc, builder pid, bridge and the
@@ -53,7 +53,7 @@ import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DIR, fileFor, listFiles, tokenOf, field, age, prune } from './dir.mjs';
 import {
-  SLICE_STATES, addSlice, initLedger, ledgerFor, pruneLedgers, readLedger,
+  SLICE_STATES, addSlice, allLedgers, initLedger, ledgerFor, pruneLedgers, readLedger, renderReport, reportLedger,
   renderBoard, setGoal, setSlice,
 } from './ledger.mjs';
 
@@ -378,6 +378,21 @@ function flagFields(rest) {
 function ledgerCmd(rest) {
   const [sub, ...args] = rest;
   const pos = positional(args);
+  if (sub === 'report') {
+    // Read-only survey: --all crosses sessions on purpose, so no session is required.
+    const json = hasFlag(args, '--json');
+    if (hasFlag(args, '--all')) {
+      process.stdout.write(renderReport(allLedgers().map(({ p, l }) => reportLedger(l, p)), { json }));
+      return;
+    }
+    const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
+    const cwd = pos[0] ?? process.cwd();
+    const p = ledgerFor(cwd, sid);
+    const l = readLedger(p);
+    if (!l) die(`no ledger for this session.\nStart one: handoff.mjs ledger init "${cwd}" "<goal>"\nOr survey every run: handoff.mjs ledger report --all`);
+    process.stdout.write(renderReport([reportLedger(l, p)], { json }));
+    return;
+  }
   const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
   const cwd = pos[0] ?? process.cwd();
   switch (sub) {
@@ -401,7 +416,7 @@ function ledgerCmd(rest) {
       break;
     }
     default:
-      process.stderr.write('usage: handoff.mjs ledger {init|path|show|add|set|goal} <cwd> ...\n');
+      process.stderr.write('usage: handoff.mjs ledger {init|path|show|add|set|goal|report} <cwd> ...\n');
       process.exit(2);
   }
 }
@@ -447,6 +462,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         json: hasFlag(rest, '--json'),
         withGit: !hasFlag(rest, '--no-git'),
         withPane: !hasFlag(rest, '--no-pane'),
+        record: true,
       }));
       break;
     }

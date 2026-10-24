@@ -34,8 +34,12 @@ For a new goal that should end merge-ready.
    - dependency installation, fixture setup and baseline suite runs, so later gates start warm.
 
    Join. Send each open question the reviews raise to council, log the rulings, and fold them into the spec.
-3. **Plan and freeze.** Write the plan with `writing-plans` in `writing-plan-documents` style. Freeze the acceptance gates as exact commands with expected results before any code exists. From here on, nobody edits the gates.
-4. **Implement.** Follow Build work in SKILL.md. Hand the frozen plan, gates and council rulings to `complete`, which runs the slices in its own worktrees and workers. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once. Implement in the host only for a single small task or when the user asked to keep it local.
+3. **Plan and freeze.** Write the plan with `writing-plans` in `writing-plan-documents` style, split into slices by the sizing rule in SKILL.md (one coherent feature each). Then run these concurrently:
+   - a **spec reviewer** agent ([briefs.md](briefs.md)) over each slice's spec, returning the acceptance criteria the `review` checklist would reject on;
+   - the plan reviews from step 2 that the plan changed, if any.
+
+   Join. Freeze each slice's acceptance gates as exact commands with expected results, with the spec reviewer's criteria folded in, before any code exists. From here on, nobody edits the gates. The builder and the later reviewer now hold the same bar; a rejection after green gates means the spec review missed something, so record it in `decisions.md`.
+4. **Implement.** Pick the tier from Build work in SKILL.md: one slice goes to `offload`, two or more to `complete`, which dispatches every slice with disjoint files in the same turn. Hand over the frozen plan, gates and council rulings. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once (fleet tier only).
 5. **Land.** Run **land** from step 2 on the result. Pass along the gates already frozen; don't re-derive them.
 
 ## Council during a pipeline

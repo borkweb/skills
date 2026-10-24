@@ -14,19 +14,28 @@ Pick the pipeline that matches the request, run independent work concurrently an
 | Question, diagnosis, review only, plan only, or a trivial local edit | No pipeline. Answer, or use the specialist skill (`investigate`, `review`, `writing-plans`) directly. |
 | Existing change: "fix until SAFE TO LAND", "keep working until it's ready" | **land** |
 | New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
-| A plan or spec to build, or "delegate/offload this" | Build through `complete` (see Build work), then run **land** on the result. Do not run a second ledger. |
+| A plan or spec to build, or "delegate/offload this" | Build work (below) at the tier the work needs, then run **land** on the result. Do not run a second ledger. |
 
 Read [pipelines.md](references/pipelines.md) for **land** or **ship**, and [briefs.md](references/briefs.md) before spawning any agent.
 
 ## Build work
 
-Before launching anything that writes code, decide where it runs:
+Before launching anything that writes code, size the work and pick the tier. Each tier pays only for the coordination it needs. Log the tier and the reason in `notes.md` and state it in the first status line.
 
-- **Through `complete`** (its external route, via `offload`) when the work comes from a written plan or spec, has two or more tasks, is more than a trivial local edit, or the user said "workers", "delegate", "offload", "herdr" or "tabs". This is the default for **ship**'s implement step. Hand over the frozen plan, gates and rulings; `complete` owns dispatch, worktrees, the ledger and worker tabs.
-- **In the host or a subagent** only for **land** fixes, a single small task, or when the user says to keep it local. Reviewers, council and investigations always use subagents.
-- Never launch builders yourself: no `Agent` builders, and no raw `herdr`, tmux or headless commands.
-- If the work qualifies but `complete` can't run (no session key, no herdr), say so and ask. Don't fall back quietly.
-- Log the choice and reason in `notes.md` and state it in the first status line.
+| Tier | When | Runs as |
+| --- | --- | --- |
+| **Local** | One file or one function, no new module, no contract change, gates run in under a minute | The host edits directly, or one subagent. **land**'s fixes are always local. |
+| **One slice** | One coherent feature that one builder can finish in one sitting, from a plan or spec, no files shared with other pending work | `offload` directly: one handoff, one builder, one independent review. No ledger and no final integration review; the slice review is the acceptance. |
+| **Fleet** | Two or more slices, or any slice whose files overlap another's, or the user said "workers", "delegate", "offload", "herdr" or "tabs" | `complete` (its external route, via `offload`): ledger, concurrent dispatch, per-slice review, final integration review. This is **ship**'s default when the plan has more than one slice. |
+
+A slice is one coherent feature, not one PR. Split only where files or contracts separate; a builder on a current model holds a multi-hour feature without losing the thread, and every extra slice costs a spec review, a dispatch, a review and a handoff.
+
+Rules that hold at every tier:
+
+- Reviewers, council and investigations always use subagents.
+- Never launch builders yourself: no `Agent` builders, and no raw `herdr`, tmux or headless commands. `offload`'s dispatcher is the only launcher.
+- If the tier needs `offload` or `complete` and it can't run (no session key, no herdr), say so and ask. Don't fall back quietly.
+- Hand over the frozen plan, gates and rulings; the receiving skill owns dispatch, worktrees, the ledger and worker tabs.
 
 ## Authority
 

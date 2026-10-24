@@ -21,6 +21,16 @@ Returns:
 
 For a delta re-review, send only: the diff since the last review, the finding IDs claimed fixed, and new gate results. Ask the reviewer to confirm each fix, check the delta for regressions, and keep the same numbering.
 
+## Spec reviewer
+
+Independent, read-only, runs before gates are frozen and concurrently with worktree setup. Reads the slice spec, the plan and the repo instructions with the `review` skill's checklist in hand, and answers one question: what would make me return DO NOT LAND on a correct implementation of this spec? Does not review code and does not propose designs.
+
+Returns:
+- a numbered list of acceptance criteria, each testable, each tied to a checklist item or repo rule, with the smallest check that proves it (a command, a test name, or a file:line condition);
+- gaps in the spec that no criterion can cover, one line each, or `None.`
+
+The architect folds the criteria into the frozen gates and the builder brief, so the builder works to the same bar the later reviewer applies.
+
 ## Builder (lane)
 
 1. Before any code, reply with a plan and every disagreement with the brief, citing real files. Silent compliance and silent scope additions both count as failures.

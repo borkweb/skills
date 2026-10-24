@@ -23,6 +23,7 @@
 //   node handoff.mjs ledger set   <cwd> <id> --state accepted [--verdict "..."] [--pr url]
 //                                       [--note n] [--pane w:p1] [--handoff p] [--branch b]
 //   node handoff.mjs ledger goal  <cwd> "<goal text>"
+//   node handoff.mjs ledger report [<cwd>] [--all] [--json]   -> build/judge minutes per slice, rejections, concurrency
 //   node handoff.mjs board        <cwd> [--json] [--no-git] [--no-pane]
 //
 // Ownership: the ledger filename is keyed on $CLAUDE_CODE_SESSION_ID, and every
@@ -141,11 +142,18 @@ function assertPane(pane) {
 
 // Apply only the keys actually supplied, so `set --state accepted` never blanks
 // the branch or the pane recorded three turns ago.
+// Every state change also lands in `history`, so a run can be timed afterwards:
+// dispatched → results_at is builder time, results_at → terminal is architect
+// time. One `updated` stamp could not tell those apart.
 function applyFields(slice, f) {
+  const before = slice.state;
   for (const k of ['title', 'branch', 'cwd', 'handoff', 'pane', 'state', 'verdict', 'pr', 'note']) {
     if (f[k] !== undefined) slice[k] = f[k];
   }
-  slice.updated = nowIso();
+  const t = nowIso();
+  slice.history = Array.isArray(slice.history) ? slice.history : [];
+  if (slice.state && (slice.state !== before || !slice.history.length)) slice.history.push({ state: slice.state, at: t });
+  slice.updated = t;
   return slice;
 }
 
@@ -158,7 +166,7 @@ export function addSlice(cwd, sessionId, fields) {
     die(`slice "${fields.id}" already exists in the ledger. Use: ledger set "${cwd}" ${fields.id} --state ...`);
   }
   const slice = applyFields(
-    { id: fields.id, title: '', branch: '', cwd: '', handoff: '', pane: '', state: 'specced', verdict: '', pr: '', note: '' },
+    { id: fields.id, title: '', branch: '', cwd: '', handoff: '', pane: '', state: 'specced', verdict: '', pr: '', note: '', history: [] },
     fields,
   );
   l.slices.push(slice);
@@ -307,7 +315,30 @@ const pad = (s, n) => {
   return v.length > n ? `${v.slice(0, n - 1)}…` : v.padEnd(n);
 };
 
-export function renderBoard(cwd, sessionId, { json = false, withGit = true, withPane = true } = {}) {
+// The moment a builder reported is the boundary between builder time and
+// architect time. The ledger only learns it when the board reads the doc, so the
+// board records it once, from the doc's own `updated` stamp — the architect
+// usually goes straight from `dispatched` to a terminal state and never sets
+// `results-ready` itself. Only the owning session writes; a mismatched session
+// just reads.
+function recordReportStamps(p, l, sessionId, rows) {
+  if (!l.session || l.session !== sessionId) return;
+  let changed = false;
+  for (const r of rows) {
+    if (r.terminal || !r.doc.exists) continue;
+    const key = r.doc.status === 'results-ready' ? 'results_at' : r.doc.status === 'blocked' ? 'blocked_at' : null;
+    if (!key) continue;
+    const slice = l.slices.find((s) => s.id === r.id);
+    if (!slice || slice[key]) continue;
+    const stamp = field(r.handoff, 'updated');
+    slice[key] = stamp && !Number.isNaN(Date.parse(stamp)) ? new Date(stamp).toISOString() : nowIso();
+    r[key] = slice[key];
+    changed = true;
+  }
+  if (changed) { l.updated = nowIso(); writeAtomic(p, l); }
+}
+
+export function renderBoard(cwd, sessionId, { json = false, withGit = true, withPane = true, record = false } = {}) {
   const p = ledgerFor(cwd, sessionId);
   const l = readLedger(p);
   if (!l) {
@@ -315,6 +346,7 @@ export function renderBoard(cwd, sessionId, { json = false, withGit = true, with
   }
   const bridges = armedBridges();
   const rows = l.slices.map((s) => reconcile(s, { bridges, withGit, withPane }));
+  if (record) recordReportStamps(p, l, sessionId, rows);
 
   if (json) return `${JSON.stringify({ ...l, ledger: p, slices: rows }, null, 2)}\n`;
 
@@ -351,6 +383,143 @@ export function renderBoard(cwd, sessionId, { json = false, withGit = true, with
   }
 
   if (!rows.length) out += '(no slices recorded yet — add one with: handoff.mjs ledger add …)\n';
+  return out;
+}
+
+
+// ---------------------------------------------------------------------------
+// Report — where the wall-clock went.
+// ---------------------------------------------------------------------------
+
+const MIN = 60 * 1000;
+const parseAt = (v) => { const t = Date.parse(v || ''); return Number.isNaN(t) ? null : t; };
+const minutes = (a, b) => (a == null || b == null || b < a) ? null : Math.round((b - a) / MIN);
+const fmtMin = (m) => (m == null ? '—' : `${m}m`);
+const median = (xs) => {
+  const v = xs.filter((x) => x != null).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = v.length >> 1;
+  return v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2);
+};
+
+const CORRECTIVE = /\b(correct(ive|ion)?|fix(es|ing)?|redo|retry|follow-?up)\b/i;
+// A rejection whose verdict names the independent review and no failed gate:
+// the frozen gates said done and the reviewer disagreed. The ratio of these to
+// all rejections is the single number the spec-review step exists to lower.
+const REVIEW_ONLY = (v) => /do not land|review/i.test(v) && !/\b(fail|failed|failing|red|inconclusive|429)\b/i.test(v);
+
+function lastAt(history, state) {
+  let at = null;
+  for (const h of history || []) if (h.state === state) at = parseAt(h.at) ?? at;
+  return at;
+}
+
+export function sliceTiming(s) {
+  const history = Array.isArray(s.history) ? s.history : [];
+  const dispatched = lastAt(history, 'dispatched');
+  const terminalEntry = [...history].reverse().find((h) => TERMINAL_STATES.has(h.state));
+  const terminal = terminalEntry ? parseAt(terminalEntry.at) : (TERMINAL_STATES.has(s.state) ? parseAt(s.updated) : null);
+  const results = parseAt(s.results_at) ?? lastAt(history, 'results-ready');
+  // A dispatched slice is "live" until it leaves that state; that interval is
+  // what the concurrency count below overlaps.
+  let live_until = null;
+  if (dispatched != null) {
+    const after = history.map((h) => ({ ...h, t: parseAt(h.at) })).filter((h) => h.t != null && h.t > dispatched && h.state !== 'dispatched');
+    live_until = after.length ? Math.min(...after.map((h) => h.t)) : (results ?? terminal);
+  }
+  return {
+    id: s.id, title: s.title || '', state: s.state, verdict: s.verdict || '',
+    corrective: CORRECTIVE.test(s.title || ''),
+    dispatched_at: dispatched, results_at: results, terminal_at: terminal, live_until,
+    build_min: minutes(dispatched, results ?? terminal),
+    judge_min: minutes(results, terminal),
+  };
+}
+
+function maxConcurrent(timings) {
+  const events = [];
+  for (const t of timings) {
+    if (t.dispatched_at == null) continue;
+    events.push([t.dispatched_at, 1]);
+    if (t.live_until != null) events.push([t.live_until, -1]);
+  }
+  events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let cur = 0; let max = 0;
+  for (const [, d] of events) { cur += d; if (cur > max) max = cur; }
+  return max;
+}
+
+export function reportLedger(l, p) {
+  const slices = (l.slices || []).map(sliceTiming);
+  const counts = {};
+  for (const s of slices) counts[s.state] = (counts[s.state] || 0) + 1;
+  const rejected = slices.filter((s) => s.state === 'rejected');
+  const created = parseAt(l.created);
+  const last = Math.max(...slices.map((s) => s.terminal_at ?? s.results_at ?? s.dispatched_at ?? 0), parseAt(l.updated) ?? 0);
+  return {
+    ledger: p, session: l.session, cwd: l.cwd, goal: l.goal || '', created: l.created,
+    span_min: minutes(created, last || null),
+    slices,
+    counts,
+    correctives: slices.filter((s) => s.corrective).length,
+    review_only_rejections: rejected.filter((s) => REVIEW_ONLY(s.verdict)).length,
+    median_build_min: median(slices.map((s) => s.build_min)),
+    median_judge_min: median(slices.map((s) => s.judge_min)),
+    max_concurrent: maxConcurrent(slices),
+  };
+}
+
+export function renderReport(runs, { json = false } = {}) {
+  const totals = { runs: runs.length, slices: 0, accepted: 0, rejected: 0, merged: 0, abandoned: 0, correctives: 0, review_only_rejections: 0 };
+  const builds = []; const judges = [];
+  for (const r of runs) {
+    totals.slices += r.slices.length;
+    for (const k of ['accepted', 'rejected', 'merged', 'abandoned']) totals[k] += r.counts[k] || 0;
+    totals.correctives += r.correctives;
+    totals.review_only_rejections += r.review_only_rejections;
+    for (const s of r.slices) { builds.push(s.build_min); judges.push(s.judge_min); }
+  }
+  totals.median_build_min = median(builds);
+  totals.median_judge_min = median(judges);
+  if (json) return `${JSON.stringify({ runs, totals }, null, 2)}\n`;
+
+  let out = '';
+  for (const r of runs) {
+    out += `RUN    ${r.goal || '(no goal recorded)'}\n`;
+    out += `       ${(r.created || '').slice(0, 10)} · session ${r.session} · ${r.cwd}\n`;
+    out += `       ${r.slices.length} slice${r.slices.length === 1 ? '' : 's'} · `;
+    out += Object.entries(r.counts).map(([k, v]) => `${v} ${k}`).join(' · ') || 'none';
+    out += ` · ${r.correctives} corrective${r.correctives === 1 ? '' : 's'}\n`;
+    out += `       review-only rejections: ${r.review_only_rejections} of ${r.counts.rejected || 0}`;
+    out += ` · median build ${fmtMin(r.median_build_min)} · median judge ${fmtMin(r.median_judge_min)}`;
+    out += ` · max concurrent builders: ${r.max_concurrent} · span ${fmtMin(r.span_min)}\n\n`;
+    out += `${pad('ID', 5)}${pad('STATE', 11)}${pad('SLICE', 32)}${pad('BUILD', 7)}${pad('JUDGE', 7)}VERDICT\n`;
+    out += `${'-'.repeat(100)}\n`;
+    for (const s of r.slices) {
+      out += `${pad(s.id, 5)}${pad(s.state, 11)}${pad(s.title, 32)}${pad(fmtMin(s.build_min), 7)}${pad(fmtMin(s.judge_min), 7)}${pad(s.verdict, 38)}\n`;
+    }
+    out += '\n';
+  }
+  if (runs.length !== 1) {
+    out += `TOTALS ${totals.runs} runs · ${totals.slices} slices · ${totals.accepted} accepted · ${totals.rejected} rejected`;
+    out += ` · ${totals.merged} merged · ${totals.abandoned} abandoned · ${totals.correctives} correctives\n`;
+    out += `       review-only rejections: ${totals.review_only_rejections} of ${totals.rejected}`;
+    out += ` · median build ${fmtMin(totals.median_build_min)} · median judge ${fmtMin(totals.median_judge_min)}\n`;
+  }
+  return out;
+}
+
+// Every ledger on disk, any session, read-only. Corrupt files are skipped, not
+// fatal: a report is a survey, not a write.
+export function allLedgers() {
+  if (!existsSync(DIR)) return [];
+  const out = [];
+  for (const f of (() => { try { return readdirSync(DIR); } catch { return []; } })()) {
+    if (!f.endsWith('.ledger.json')) continue;
+    const p = join(DIR, f);
+    try { out.push({ p, l: JSON.parse(readFileSync(p, 'utf8')) }); } catch { /* skip */ }
+  }
+  out.sort((a, b) => String(a.l.created || '').localeCompare(String(b.l.created || '')));
   return out;
 }
 

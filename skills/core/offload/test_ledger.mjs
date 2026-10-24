@@ -351,3 +351,107 @@ test('board --no-pane opts out of the provenance probe', () => {
   const out = run(['board', REPO, '--no-git', '--no-pane'], inHerdr({ 'w1:p38': 'w1:t24' }, { 'w1:t24': 'multicol:2' }));
   assert.doesNotMatch(out, /UNMANAGED PANE/);
 });
+
+// --- timing instrumentation ------------------------------------------------
+//
+// Across 24 runs the ledger could say how many slices were rejected but not
+// where the wall-clock went: a slice carried one `updated` stamp, so builder
+// time and architect time were indistinguishable. Every state change now lands
+// in `history`, the board records when a doc first reported, and `ledger report`
+// turns that into per-slice build/judge minutes.
+
+test('ledger records every state change in history with a timestamp', () => {
+  const REPO = repo('history');
+  run(['ledger', 'init', REPO, 'g']);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--state', 'specced']);
+  run(['ledger', 'set', REPO, '1', '--state', 'dispatched', '--pane', 'tmux:b']);
+  run(['ledger', 'set', REPO, '1', '--verdict', 'noted']); // not a state change
+  run(['ledger', 'set', REPO, '1', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
+  const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'accepted']);
+  for (const h of s.history) assert.ok(!Number.isNaN(Date.parse(h.at)), `history stamp ${h.at} parses`);
+});
+
+test('board records when a doc first reported results-ready, from the doc’s own stamp', () => {
+  const REPO = repo('results-at');
+  run(['ledger', 'init', REPO, 'g']);
+  const doc = slice(REPO, '1', { state: 'dispatched', docStatus: 'results-ready', pid: process.pid });
+  writeFileSync(doc, readFileSync(doc, 'utf8').replace(/^updated:.*$/m, 'updated: 2026-10-20T10:30:00.000Z'));
+  board(REPO);
+  const s1 = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  assert.equal(s1.results_at, '2026-10-20T10:30:00.000Z');
+  // A later board must not move the first-seen stamp.
+  writeFileSync(doc, readFileSync(doc, 'utf8').replace(/^updated:.*$/m, 'updated: 2026-10-20T11:00:00.000Z'));
+  board(REPO);
+  assert.equal(JSON.parse(run(['ledger', 'show', REPO])).slices[0].results_at, '2026-10-20T10:30:00.000Z');
+});
+
+test('board records blocked_at the same way', () => {
+  const REPO = repo('blocked-at');
+  run(['ledger', 'init', REPO, 'g']);
+  slice(REPO, '1', { state: 'dispatched', docStatus: 'blocked', pid: process.pid });
+  board(REPO);
+  const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  assert.ok(s.blocked_at && !Number.isNaN(Date.parse(s.blocked_at)));
+});
+
+// A ledger written by hand with known stamps, so durations are exact.
+function fixtureLedger(REPO, session, slices, { created = '2026-10-20T09:00:00.000Z' } = {}) {
+  const p = run(['ledger', 'init', REPO, 'bench goal'], { session });
+  const l = JSON.parse(readFileSync(p, 'utf8'));
+  l.created = created;
+  l.slices = slices;
+  writeFileSync(p, JSON.stringify(l));
+  return p;
+}
+const T = (hhmm) => `2026-10-20T${hhmm}:00.000Z`;
+const hist = (...pairs) => pairs.map(([state, at]) => ({ state, at: T(at) }));
+
+test('ledger report derives build and judge minutes per slice and a run summary', () => {
+  const REPO = repo('report');
+  fixtureLedger(REPO, 'arch', [
+    { id: '1', title: 'nav', state: 'accepted', verdict: 'SAFE TO LAND · 10/0',
+      history: hist(['specced', '09:00'], ['dispatched', '09:10'], ['accepted', '10:00']), results_at: T('09:50') },
+    { id: '2', title: 'auth', state: 'rejected', verdict: 'gates pass (10/0) but review = do not land: leaks token',
+      history: hist(['specced', '09:00'], ['dispatched', '09:12'], ['rejected', '10:30']), results_at: T('10:10') },
+    { id: '2b', title: 'corrective: auth leak', state: 'accepted', verdict: 'SAFE TO LAND',
+      history: hist(['specced', '10:30'], ['dispatched', '10:35'], ['accepted', '11:00']), results_at: T('10:55') },
+  ]);
+  const out = run(['ledger', 'report', REPO]);
+  assert.match(out, /bench goal/);
+  assert.match(out, /3 slices/);
+  assert.match(out, /2 accepted/);
+  assert.match(out, /1 rejected/);
+  assert.match(out, /1 corrective/);
+  assert.match(out, /review-only rejections: 1/);
+  assert.match(out, /max concurrent builders: 2/);
+  // slice 1: build 40m (09:10 → 09:50), judge 10m (09:50 → 10:00)
+  assert.match(out, /^\s*1\s+accepted\s+nav\s+40m\s+10m/m);
+  // slice 2: build 58m, judge 20m
+  assert.match(out, /^\s*2\s+rejected\s+auth\s+58m\s+20m/m);
+  const j = JSON.parse(run(['ledger', 'report', REPO, '--json']));
+  assert.equal(j.runs.length, 1);
+  assert.equal(j.runs[0].slices[0].build_min, 40);
+  assert.equal(j.runs[0].slices[0].judge_min, 10);
+  assert.equal(j.runs[0].review_only_rejections, 1);
+  assert.equal(j.runs[0].max_concurrent, 2);
+});
+
+test('ledger report --all aggregates every ledger on disk, read-only, across sessions', () => {
+  const A = repo('report-all-a');
+  const B = repo('report-all-b');
+  fixtureLedger(A, 'arch-A', [
+    { id: '1', title: 'x', state: 'accepted', verdict: 'ok', history: hist(['dispatched', '09:00'], ['accepted', '09:30']) },
+  ]);
+  fixtureLedger(B, 'arch-B', [
+    { id: '1', title: 'y', state: 'rejected', verdict: 'review = do not land', history: hist(['dispatched', '09:00'], ['rejected', '09:40']) },
+    { id: '2', title: 'fix y', state: 'accepted', verdict: 'ok', history: hist(['dispatched', '09:40'], ['accepted', '10:00']) },
+  ]);
+  const j = JSON.parse(run(['ledger', 'report', '--all', '--json'], { session: 'someone-else' }));
+  assert.ok(j.runs.length >= 2);
+  assert.ok(j.totals.slices >= 3);
+  assert.ok(j.totals.rejected >= 1);
+  const text = run(['ledger', 'report', '--all'], { session: 'someone-else' });
+  assert.match(text, /TOTALS/);
+  assert.match(text, /slices/);
+});

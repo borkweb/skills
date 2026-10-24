@@ -679,6 +679,37 @@ case_codex_rollout_builder_not_idle() {
     fail_case "missing WAITER: ready"
 }
 
+# WFR_BOARD_CWD: the wake arrives carrying the board, so the architect never has
+# to remember to run it first. Needs a ledger for this session at that cwd.
+case_ready_with_board() {
+  local handoff output updater rc box repo doc
+  handoff=$(new_handoff ready-board)
+  output="$TEST_ROOT/ready-board.out"
+  box="$TEST_ROOT/board-box"; repo="$TEST_ROOT/board-repo"; mkdir -p "$box" "$repo"
+  AGENT_HANDOFFS_DIR="$box" CLAUDE_CODE_SESSION_ID=wfr-arch \
+    node "$SCRIPT_DIR/../offload/handoff.mjs" ledger init "$repo" "board goal" >/dev/null || { fail_case "ledger init failed"; return 1; }
+  AGENT_HANDOFFS_DIR="$box" CLAUDE_CODE_SESSION_ID=wfr-arch \
+    node "$SCRIPT_DIR/../offload/handoff.mjs" ledger add "$repo" --id 1 --title "the slice" --handoff "$handoff" --state dispatched >/dev/null
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 2
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 15 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_BOARD_CWD="$repo" AGENT_HANDOFFS_DIR="$box" CLAUDE_CODE_SESSION_ID=wfr-arch \
+    "$WAITER" "$handoff" builder 20 15
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
+  grep -q '^WAITER: ready$' "$output" || { fail_case "missing WAITER: ready"; return 1; }
+  grep -q '^BOARD  board goal' "$output" || { fail_case "board not appended"; return 1; }
+  grep -q 'the slice' "$output" || fail_case "board row missing"
+}
+
 run_case() {
   local name="$1" function_name="$2"
   CASE_ERROR=""
@@ -692,6 +723,7 @@ run_case() {
 }
 
 run_case ready case_ready
+run_case ready-with-board case_ready_with_board
 run_case dead-pid case_dead_pid
 run_case never-started case_never_started
 run_case idle case_idle

@@ -34,15 +34,20 @@ worker state: that helper observes external processes and bridges.
 
 ## Scope and dispatch
 
-1. Split the goal into bounded slices. Use relevant plan reviews before freezing
+1. Split the goal into slices of one coherent feature each, cut only where files
+   or contracts separate. Use relevant plan reviews before freezing
    the first gates: `plan-eng-review` for architecture/data flow/concurrency,
    `plan-design-review` for UI, and `plan-devex-review` for consumed interfaces.
    Skip unnecessary reviews for trivial work. If delegated, these reviews also
    use the resolved reviewer model.
-2. Write each slice's handoff before dispatch: exact goal, owned files, protected
-   paths, dependencies, acceptance criteria, reproducible gate commands, worktree
-   and branch, result path, and authorized commit/push behavior. Preserve any
-   required RED-before-GREEN chronology. Freeze gates before results exist.
+2. Before freezing a slice's gates, run a read-only spec reviewer (the resolved
+   reviewer model, `review` checklist in hand) over the slice spec and fold the
+   acceptance criteria it returns into the gates, so the worker and the later
+   reviewer hold the same bar. Then write each slice's handoff before dispatch:
+   exact goal, owned files, protected paths, dependencies, acceptance criteria,
+   reproducible gate commands, worktree and branch, result path, and authorized
+   commit/push behavior. Preserve any required RED-before-GREEN chronology.
+   Freeze gates before results exist.
 3. Use the available native spawn tool with **`model: <resolved worker or reviewer model>`**. With
    `collaboration.spawn_agent`, use `fork_turns: "none"` so the model override is
    accepted; provide the handoff path and enough context to work independently.
@@ -52,8 +57,9 @@ worker state: that helper observes external processes and bridges.
    assume that a spawn succeeded or that a requested worktree was created.
    Agents may share the filesystem: create and verify separate worktrees when
    concurrent branches are needed, and tell workers their exact working path.
-   Dispatch only slices whose files and dependencies permit concurrent work,
-   within the runtime's available slots.
+   Spec and dispatch every slice whose files and dependencies permit concurrent
+   work in the same turn, within the runtime's available slots (3–4 lanes);
+   serialize only on a real file or dependency conflict.
 
 Each worker must report changed files, commit/branch state, raw gate output and
 exit codes, unresolved disagreements, and remaining work to its result file and

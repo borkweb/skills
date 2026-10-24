@@ -9,6 +9,8 @@ Drive the stated goal to merge-ready with delegated implementation and independe
 
 ## Route before loading
 
+A goal that is one coherent slice does not need this loop: run `offload` directly for one handoff, one builder and one independent review. Load `complete` when the work has two or more slices or the user asked for a fleet.
+
 - **Codex native delegation:** read [codex-orchestration.md](codex-orchestration.md) and [roles.json](roles.json). Resolve worker/reviewer models from that file, overridden by explicit user instructions. Record the resolved values in the run ledger. If a requested model or native tool is unavailable, report it; do not silently switch routes.
 - **External sessions requested, or Claude Code:** read [external-orchestration.md](external-orchestration.md), then the `offload` entrypoint. The configured external harness selects its model. Resolve the native architect identity through `handoff.mjs key`. Claude and Codex identities remain distinct; never invent or borrow a native session id.
 

@@ -28,5 +28,5 @@ updated:
      Caveman-terse prose. -->
 
 ## Next slice
-<!-- Architect → builder: one-PR-sized spec, hard acceptance criteria, explicit
+<!-- Architect → builder: one-coherent-feature spec, hard acceptance criteria, explicit
      out-of-scope, and the builder block. -->

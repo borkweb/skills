@@ -7,7 +7,7 @@ Execute <slice goal> in <absolute worktree> on <branch>.
 Owned files: <paths>. Protected paths: <paths>.
 Authorization: <exact commit/push/merge permissions and prohibitions>.
 Contracts: <existing frozen contracts; freeze new ones only if this slice requires it>.
-Acceptance: <criteria frozen before results exist>.
+Acceptance: <criteria frozen before results exist, including every criterion the spec reviewer returned; the independent reviewer will apply the same list>.
 Gates: <commands, expected results, evidence paths, required RED chronology>.
 Result file: <path>. Handoff: $OFFLOAD_HANDOFF.
 

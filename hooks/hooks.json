@@ -1,5 +1,5 @@
 {
-  "description": "SessionStart is silent without saved work. session-budget auto-loads one pending handoff or lists several; offload lists persistent handoffs without taking ownership. Helper paths are resolved by the active skill. UserPromptSubmit fires throttled session-budget nudges.",
+  "description": "SessionStart is silent without saved work. session-budget auto-loads one pending handoff or lists several; offload lists persistent handoffs without taking ownership and hands a session that owns a ledger its board. Stop refuses once when that ledger still owes the architect a judgment, ruling or owner. Helper paths are resolved by the active skill. UserPromptSubmit fires throttled session-budget nudges.",
   "hooks": {
     "SessionStart": [
       {
@@ -18,6 +18,18 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/offload/reinit-hook.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/offload/stop-hook.mjs\"",
             "timeout": 15
           }
         ]

@@ -15,6 +15,11 @@
 #   WFR_IDLE_CPU_CENTIS=200, WFR_TURN_SETTLE=45s. Marker path is always
 #   "$HANDOFF.builder". WFR_CPU_EXCLUDE defaults to
 #   SkyComputerUseClient|node_repl|mcp-context-a8c.
+#   WFR_BOARD_CWD=<repo root>: after the WAITER line, print this session's
+#   `handoff.mjs board` for that root, so the wake arrives carrying the state of
+#   every slice and the architect never has to remember to run it first. Needs
+#   the session id in the environment (the same one the ledger was created
+#   under); silently skipped when the board cannot be produced.
 #
 # Exit codes: 0 ready/reap · 2 usage · 3 builder unavailable/handoff deleted ·
 #   4 timeout · 5 builder idle · 6 builder needs the architect (blocked or
@@ -125,6 +130,20 @@ IDLE_CPU_CENTIS="${WFR_IDLE_CPU_CENTIS:-200}"
 TURN_SETTLE="${WFR_TURN_SETTLE:-45}"
 MARKER="$HANDOFF.builder"
 TURN_MARKER="$HANDOFF.turn-ended"
+BOARD_CWD="${WFR_BOARD_CWD:-}"
+HANDOFF_MJS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../offload/handoff.mjs"
+
+# Every exit goes through here: the WAITER line first (the contract callers
+# parse), then the board when asked for. The board is best-effort — a failure
+# to render it must never change the WAITER line or the exit code.
+finish() {
+  local line="$1" code="$2"
+  echo "$line"
+  if [ -n "$BOARD_CWD" ] && [ -f "$HANDOFF_MJS" ] && command -v node >/dev/null 2>&1; then
+    node "$HANDOFF_MJS" board "$BOARD_CWD" --no-git 2>/dev/null || true
+  fi
+  exit "$code"
+}
 
 # Epoch mtime, portable across BSD (macOS) and GNU stat. Fails when absent.
 mtime() {
@@ -289,31 +308,26 @@ check() {
   now=$(date +%s)
 
   if [ ! -f "$HANDOFF" ]; then
-    echo "WAITER: handoff-deleted (status=none)"
-    exit 3
+    finish "WAITER: handoff-deleted (status=none)" 3
   fi
 
   # A real report always wins, whatever the markers say.
   current_status=$(status)
   if [ "$current_status" = "results-ready" ]; then
-    echo "WAITER: ready"
-    exit 0
+    finish "WAITER: ready" 0
   fi
 
   if [ "$current_status" = "blocked" ]; then
-    echo "WAITER: builder-blocked (status=blocked)"
-    exit 6
+    finish "WAITER: builder-blocked (status=blocked)" 6
   fi
 
   [ -f "$MARKER" ] && saw_marker=true
   if ! $saw_marker; then
     if [ $(( now - started_at )) -ge "$GRACE" ]; then
-      echo "WAITER: never-started after $(( now - started_at ))s (status=${current_status:-none})"
-      exit 3
+      finish "WAITER: never-started after $(( now - started_at ))s (status=${current_status:-none})" 3
     fi
     if [ "$now" -ge "$deadline" ]; then
-      echo "WAITER: timeout after ${TIMEOUT}s (status=$(status_label))"
-      exit 4
+      finish "WAITER: timeout after ${TIMEOUT}s (status=$(status_label))" 4
     fi
     return
   fi
@@ -324,11 +338,9 @@ check() {
   if ! pid=$(builder_alive); then
     current_status=$(status)
     if [ "$current_status" = "results-ready" ]; then
-      echo "WAITER: ready"
-      exit 0
+      finish "WAITER: ready" 0
     fi
-    echo "WAITER: builder-exited-without-ready (status=${current_status:-none})"
-    exit 3
+    finish "WAITER: builder-exited-without-ready (status=${current_status:-none})" 3
   fi
 
   cpu=$(cpu_centis "$pid")
@@ -347,8 +359,7 @@ check() {
     elif [ $(( cpu - turn_candidate_cpu )) -gt "$IDLE_CPU_CENTIS" ]; then
       turn_baseline="$tm"; turn_candidate=""
     elif [ $(( now - turn_candidate_at )) -ge "$TURN_SETTLE" ]; then
-      echo "WAITER: builder-awaiting-input (status=${current_status:-none})"
-      exit 6
+      finish "WAITER: builder-awaiting-input (status=${current_status:-none})" 6
     fi
   fi
 
@@ -366,14 +377,12 @@ check() {
       idle_started="$now"
       idle_cpu_base="$cpu"
     elif [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
-      echo "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})"
-      exit 5
+      finish "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})" 5
     fi
   fi
 
   if [ "$now" -ge "$deadline" ]; then
-    echo "WAITER: timeout after ${TIMEOUT}s (status=$(status_label))"
-    exit 4
+    finish "WAITER: timeout after ${TIMEOUT}s (status=$(status_label))" 4
   fi
 }
 

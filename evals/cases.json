@@ -371,5 +371,74 @@
       "No STE rewrite rules are applied or mentioned",
       "Keeps Friday and noon"
     ]
+  },
+  {
+    "id": "do-tier-local",
+    "skill": "skills/core/do",
+    "prompt": "/do fix the off-by-one in src/paginate.js line 42 until it is safe to land. Tests run in 20 seconds. No commit.",
+    "criteria": [
+      "Names the Local tier and the reason",
+      "Edits in the host or one subagent; no offload, complete, ledger or dispatcher",
+      "Runs land: reviewer, suite and own pass concurrently, then fixes",
+      "No commit"
+    ]
+  },
+  {
+    "id": "do-tier-one-slice",
+    "skill": "skills/core/do",
+    "prompt": "/do implement docs/plans/2026-10-24-export-csv.md. The plan is one feature: a CSV export endpoint plus its tests. No push.",
+    "criteria": [
+      "Names the One slice tier and the reason",
+      "Routes to offload directly; no ledger and no final integration review",
+      "Runs a spec reviewer over the slice spec before freezing gates and folds its criteria into the gates",
+      "Does not launch a builder itself",
+      "No push retained"
+    ]
+  },
+  {
+    "id": "do-tier-fleet-fanout",
+    "skill": "skills/core/do",
+    "prompt": "/do implement docs/plans/2026-10-24-billing.md. The plan separates three slices: invoice model (src/invoice/*), payment webhook (src/webhooks/*), and admin report page (src/admin/report/*). No files overlap. No push.",
+    "criteria": [
+      "Names the Fleet tier and routes to complete",
+      "Specs all three slices and dispatches all three in the same turn through offload's dispatcher, one worktree and handoff each",
+      "Spec reviewer criteria folded into each slice's frozen gates before dispatch",
+      "Does not serialize slices that share no files",
+      "No raw herdr, tmux or Agent builders",
+      "No push retained"
+    ]
+  },
+  {
+    "id": "do-slice-sizing",
+    "skill": "skills/core/do",
+    "prompt": "/do implement docs/plans/2026-10-24-search.md. The plan lists 9 tasks that all edit src/search/* and build one search feature end to end.",
+    "criteria": [
+      "Treats the nine tasks as one coherent feature, not nine slices",
+      "Explains the sizing rule: split only where files or contracts separate",
+      "Does not run a ledger for one slice"
+    ]
+  },
+  {
+    "id": "complete-fanout-same-turn",
+    "skill": "skills/core/complete",
+    "prompt": "/complete implement the four independent slices in docs/plans/widgets.md. Disjoint files. Claude Code, external builders. No merge.",
+    "criteria": [
+      "Opens the ledger first",
+      "Runs spec reviewers over all four slices concurrently before freezing gates",
+      "Dispatches every disjoint slice in the first turn (max 3–4 lanes) with one bridge each, WFR_BOARD_CWD set",
+      "Does not wait for one slice to finish before dispatching the next",
+      "Stops at merge-ready; no merge"
+    ]
+  },
+  {
+    "id": "complete-review-after-green-gates",
+    "skill": "skills/core/complete",
+    "prompt": "Resume the run. The bridge returned WAITER: ready for slice 2; raw gates all pass; the independent review returned DO NOT LAND on an unvalidated webhook payload.",
+    "criteria": [
+      "Sets slice 2 to rejected with a verdict naming the review finding",
+      "Records that the spec review missed the criterion under Decisions + why",
+      "Specs one corrective slice carrying the blocker and dispatches it",
+      "Reports state from the board, not from memory"
+    ]
   }
 ]

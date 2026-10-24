@@ -51,3 +51,30 @@ test('Codex handoff notice shows the actual architect owner without impersonatio
   assert.ok(ctx.includes(`owner "${id}"`));
   assert.doesNotMatch(ctx, /owner "unknown"/);
 });
+
+// The wake after a compaction is the one most likely to narrate slice state from
+// memory. When this session owns a ledger, SessionStart hands it the board and
+// its own handoff path instead of leaving it to re-derive both.
+test('a session that owns a ledger gets its board and handoff path at start', () => {
+  const cwd = join(BOX, 'ledger-repo');
+  const own = { ...env, CLAUDE_CODE_SESSION_ID: 'arch-9' };
+  const h = (args) => execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env: own }).trim();
+  const doc = h(['resolve', cwd, 'Ledger project']);
+  h(['ledger', 'init', cwd, 'ship it']);
+  h(['ledger', 'add', cwd, '--id', '1', '--title', 'first slice', '--state', 'specced']);
+  const ctx = JSON.parse(execFileSync(NODE, [HOOK], {
+    encoding: 'utf8', env: own, input: JSON.stringify({ cwd, session_id: 'arch-9' }),
+  })).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /BOARD\s+ship it/);
+  assert.match(ctx, /first slice/);
+  assert.ok(ctx.includes(doc), 'names the handoff this session owns');
+});
+
+test('another session’s ledger is listed as a notice only — no board, no path', () => {
+  const cwd = join(BOX, 'ledger-repo');
+  const ctx = JSON.parse(execFileSync(NODE, [HOOK], {
+    encoding: 'utf8', env, input: JSON.stringify({ cwd, session_id: 'stranger' }),
+  })).hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(ctx, /BOARD/);
+  assert.match(ctx, /owner "arch-9"/);
+});
