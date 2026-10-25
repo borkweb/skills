@@ -122,8 +122,8 @@ id is a failed dispatch: Do not set the slice to `dispatched`, record its pane i
 the ledger, or arm its wait bridge; surface the launch failure and correct it
 through `offload`. The ledger enforces this: `ledger add/set --pane` refuses a
 pane that lacks dispatch.sh's signature (a herdr tab holding one pane that the
-slice's `<handoff>.pane` sidecar names, or, as the fallback, a tab still labeled
-`builder`), and `board` flags one that slipped in as `UNMANAGED PANE`. On a refusal,
+slice's `<handoff>.pane` sidecar names, or, as the fallback, a one-pane tab still
+labeled `builder`), and `board` flags one that slipped in as `UNMANAGED PANE`. On a refusal,
 re-dispatch through `offload`; `OFFLOAD_ALLOW_UNVERIFIED_PANE=1` exists for a
 frontend the check cannot see, not for routing around a failed dispatch.
 
