@@ -1,8 +1,6 @@
 ---
 name: plan-deep-review
-description: "Review a plan’s strategy and execution risks in expansion, selective expansion, hold-scope or reduction mode. Preserve settled scope and load only relevant domain checks."
-
-disable-model-invocation: true
+description: "Review a plan’s strategy and execution risks in expansion, selective expansion, hold-scope or reduction mode. Preserve settled scope and load only relevant domain checks. Use only when the user asks for it, directly or through bork:do."
 allowed-tools:
   - Read
   - Grep

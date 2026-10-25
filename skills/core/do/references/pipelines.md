@@ -43,6 +43,23 @@ For a new goal that should end merge-ready.
 4. **Implement.** Pick the tier from Build work in SKILL.md: one slice goes to `offload`, two or more to `complete`, which dispatches every slice with disjoint files in the same turn. Hand over the frozen plan, gates and council rulings. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once (fleet tier only).
 5. **Land.** Run **land** from step 2 on the result. Pass along the gates already frozen; don't re-derive them.
 
+## review batch
+
+For a review request that names two or more PRs. Each PR runs `pr-review` in its own lane, which prepares the review and stops. You show every planned review together, and post only what the user confirms. Neither the request nor a lane authorizes a post. Only the step 5 answer does.
+
+1. **Pin.** Fetch every PR at the same time with `pr-review`'s Step 0 `gh pr view` call, scoped to each URL's host and repo. Note fork PRs, and find a local checkout for each repo. For a repo that isn't the current checkout, follow `pr-review`'s [edge-cases.md](../../pr-review/references/edge-cases.md) now, so that every lane starts with a matching checkout. Then run one `git fetch` per repo for every PR's base and head (`pull/<number>/head` for a fork). Lanes skip their own fetch, so they don't race on the same refs.
+2. **Ask once.** One `AskUserQuestion` call: fix mode (comment only, recommended, or auto-fix the mechanical ones), plus the fork question when any PR is a fork, plus any checkout question from step 1. Skip what the user's words already answer. With several PRs every lane runs in a worktree, so auto-fix returns one patch per PR. Say so in the question.
+3. **Dispatch.** One subagent per PR, at most 4 at a time. Start the next PR as each lane returns. Brief each lane to invoke `pr-review` through the `Skill` tool with `<PR URL> --prepare-only <run>/pr-<number> --worktree`, the fix-mode flag and `--run-fork` when allowed. The brief also names the host (this harness) and the peer (the other one), and the checkout path. Lanes are reviewers: they own only their `<run>/pr-<number>` directory.
+4. **Deferred checks.** Lanes start no local checks. As each lane returns, run its **Checks pending** one suite at a time, following `pr-review`'s [checks.md](../../pr-review/references/checks.md). Run `pre-fix` checks on the PR head: the lane's worktree in COMMENT-ONLY mode, or a clean detached worktree at `<headRefOid>` for an AUTO-FIX lane, because the verdict describes the PR as it stands. Run `post-fix` checks in the AUTO-FIX lane's worktree. Triage each regression with `pr-review`'s Step 5a into that PR's `payload.json` and `preview.md`, and update its verdict. If a fork PR has no `--run-fork`, record its pending checks as `NOT RUN (fork)`.
+5. **Show and confirm.** Print each PR's `preview.md` in full. Then ask one `AskUserQuestion` question per PR, 4 per call. List PRs with nothing to post, but don't ask about them.
+   - Critical and informational: *Post criticals + recommended (#1, #4)*, *Criticals only*, *Cancel*.
+   - Critical only: *Post*, *Cancel*.
+   - Informational only: *Post recommended (#1, #4)*, *All <n>*, *None*.
+
+   Free text edits a comment or picks other informational numbers. Don't re-litigate an answer.
+6. **Post.** For each confirmed PR, add the chosen findings from `informational.json` to `payload.json` and post it as `pr-review`'s Step 5c says, including its 422 handling. Post the PRs concurrently and print each review URL.
+7. **Clean up and report.** Remove each comment-only worktree as `pr-review`'s Step 7 cleanup says, and never with `--force`. Keep AUTO-FIX worktrees. Report one table with a row per PR: verdict, critical and informational counts, review URL or `not posted`, patch path, leads. For each DO NOT LAND, name **land** as the next step. Don't start it.
+
 ## Council during a pipeline
 
 Give council one narrow question, the live evidence (file:line, gate output), the constraints and the options. Log the ruling in `decisions.md` and apply it. If the ruling changes a frozen gate or the scope, it's a user question, not a council question.

@@ -11,12 +11,13 @@ Pick the pipeline that matches the request, run independent work concurrently an
 
 | Request | Pipeline |
 | --- | --- |
-| Question, diagnosis, review only, plan only, or a trivial local edit | No pipeline. Answer, or use the specialist skill (`investigate`, `review`, `writing-plans`) directly. |
+| Question, diagnosis, review of one change, plan only, or a trivial local edit | No pipeline. Answer, or use the specialist skill (`investigate`, `review`, `writing-plans`) directly. A single PR goes to `pr-review` only when the user names it. |
+| Review two or more PRs | **review batch**: `pr-review` once per PR, every post confirmed together |
 | Existing change: "fix until SAFE TO LAND", "keep working until it's ready" | **land** |
 | New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
 | A plan or spec to build, or "delegate/offload this" | Build work (below) at the tier the work needs, then run **land** on the result. Do not run a second ledger. |
 
-Read [pipelines.md](references/pipelines.md) for **land** or **ship**, and [briefs.md](references/briefs.md) before spawning any agent.
+Read [pipelines.md](references/pipelines.md) for **land**, **ship** or **review batch**, and [briefs.md](references/briefs.md) before spawning any agent.
 
 ## Build work
 
@@ -50,7 +51,7 @@ Always ask the user about scope expansion, changes to frozen gates, missing auth
 
 ## Run notes
 
-For **land** and **ship**, create a private temp directory and keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
+For **land**, **ship** and **review batch**, create a private temp directory (the run directory) and keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
 
 ## Concurrency
 

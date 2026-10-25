@@ -12,9 +12,8 @@ description: >
   ASD-STE100 plain English. Asks once at the start whether to apply mechanical
   fixes locally or leave everything as comments, and whether to run in a
   throwaway git worktree. Never commits, pushes, approves, or requests changes.
-  Invoke only when the user explicitly asks for /pr-review — do not trigger
-  this skill on your own.
-disable-model-invocation: true
+  Invoke only when the user explicitly asks for /pr-review, or when bork:do
+  runs it once per PR for a batch review — do not trigger it on your own.
 allowed-tools:
   - Bash
   - Read
@@ -54,6 +53,7 @@ This file covers the common path. Some cases have their own file in
 | [peer.md](references/peer.md) | Step 2b records the peer as REQUIRED |
 | [checks.md](references/checks.md) | A CI check failed, or a check has to run on this machine |
 | [edge-cases.md](references/edge-cases.md) | No PR, wrong repo, fork PR, peer failure, a 422 |
+| [batch.md](references/batch.md) | Step 0 finds `--prepare-only` (a `bork:do` batch lane) |
 
 ---
 
@@ -125,6 +125,7 @@ anything else.
 | `--full` | Review the whole PR, even when an earlier `/pr-review` review exists |
 | `--peer` | Run the peer pass even on a small, low-risk diff |
 | `--solo` | Skip the peer pass |
+| `--prepare-only <dir>` | Run as one lane of a `bork:do` batch: prepare the review in `<dir>` and stop before Step 5b. **Read [batch.md](references/batch.md) now.** It overrides Steps 0–7 where they differ. |
 
 Then run these and keep the results — the Step 1 questions and later steps branch
 on them.
@@ -138,7 +139,8 @@ git remote get-url origin
 
 Then work out six things:
 
-1. **Harness — you are the host, the other one is the peer.** If you have the
+1. **Harness — you are the host, the other one is the peer.** In a batch lane,
+   the brief names both; skip the detection below. Otherwise, if you have the
    `Agent` tool and `AskUserQuestion`, you're in Claude Code: use subagent
    dispatch in Step 3b and `AskUserQuestion` for the checkpoints. The peer is
    Codex. **If you have neither, read
