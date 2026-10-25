@@ -125,10 +125,12 @@ function assertState(state) {
 // a ledger row that reads `dispatched` forever while nothing can ever report back.
 // `verifyPane` returning `skipped` means unverifiable (outside herdr, no CLI, no
 // pane) — accept those, they are not evidence of anything.
-function assertPane(pane) {
+// The slice's handoff lets the check use dispatch.sh's `<handoff>.pane` sidecar,
+// which survives a renamed tab; with no handoff only the "builder" label counts.
+function assertPane(pane, handoff) {
   if (pane === undefined || pane === '') return;
   if (process.env.OFFLOAD_ALLOW_UNVERIFIED_PANE === '1') return;
-  const v = verifyPane(pane);
+  const v = verifyPane(pane, handoff);
   if (v.skipped || v.verified) return;
   die(
     `refusing to record pane "${pane}" — it did not come from offload's dispatch.sh\n` +
@@ -166,7 +168,7 @@ export function addSlice(cwd, sessionId, fields) {
   const { p, l } = loadOwned(cwd, sessionId);
   if (!fields.id) die('ledger add needs --id');
   assertState(fields.state);
-  assertPane(fields.pane);
+  assertPane(fields.pane, fields.handoff);
   if (l.slices.some((s) => s.id === fields.id)) {
     die(`slice "${fields.id}" already exists in the ledger. Use: ledger set "${cwd}" ${fields.id} --state ...`);
   }
@@ -183,8 +185,9 @@ export function addSlice(cwd, sessionId, fields) {
 export function setSlice(cwd, sessionId, id, fields) {
   const { p, l } = loadOwned(cwd, sessionId);
   assertState(fields.state);
-  assertPane(fields.pane);
+  // The flag wins over the stored handoff, as it does when the fields are applied.
   const slice = l.slices.find((s) => s.id === id);
+  assertPane(fields.pane, fields.handoff ?? slice?.handoff);
   if (!slice) {
     die(`no slice "${id}" in the ledger. Known: ${l.slices.map((s) => s.id).join(', ') || '(none)'}`);
   }
@@ -298,7 +301,7 @@ export function reconcile(slice, { bridges, withGit = true, withPane = true } = 
   // OFFLOAD_ALLOW_UNVERIFIED_PANE — still has to surface every wake. This is the
   // row where the architect believes a builder is working and no signal can ever
   // arrive, which is precisely what memory cannot see.
-  const pane = !terminal && withPane ? verifyPane(slice.pane) : null;
+  const pane = !terminal && withPane ? verifyPane(slice.pane, slice.handoff) : null;
   if (pane && !pane.skipped && !pane.verified) {
     flags.push(`UNMANAGED PANE — ${pane.reason}; ${UNMANAGED_PANE_CONSEQUENCE}`);
   }

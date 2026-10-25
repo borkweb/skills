@@ -194,8 +194,9 @@ Launch within existing authorization. Ask only if the actual permission relaxati
    Outside herdr the chain is tmux, then Terminal, then headless.
 5. The pane in the ledger is the one `dispatch.sh` recorded, never one you created
    yourself. `ledger add/set --pane` verifies it against dispatch.sh's signature (a
-   herdr tab labeled `builder` holding exactly one pane) and refuses anything else,
-   because a builder started by hand carries no builder marker, no activity sidecar
+   herdr tab holding exactly one pane that the slice's `<handoff>.pane` sidecar
+   names, or, as the fallback, a tab still labeled `builder`) and refuses anything
+   else, because a builder started by hand carries no builder marker, no activity sidecar
    and no turn-end hook, so nothing can ever wake the architect for it.
 
 **Correctives reuse the warm builder.** After a rejection, write the corrective
