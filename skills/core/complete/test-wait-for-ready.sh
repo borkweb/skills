@@ -301,6 +301,32 @@ case_production_ratio() {
     fail_case "working sub-case missing WAITER: ready"
 }
 
+case_idle_with_background_trickle() {
+  # An idle Claude builder's process tree still burns about 0.5% CPU (TUI
+  # redraws, MCP servers). Summed over a 40-minute idle window that passed the
+  # 2-second threshold, so the idle check never fired. Busy now means a CPU
+  # rate: more than WFR_IDLE_CPU_CENTIS within one WFR_IDLE_CPU_WINDOW.
+  local handoff output rc
+  handoff=$(new_handoff idle-trickle)
+  output="$TEST_ROOT/idle-trickle.out"
+  (
+    trap 'exit 0' TERM INT
+    exec perl -MTime::HiRes=time,sleep -e 'while (1) { my $t = time + 0.05; 1 while time < $t; sleep 0.95 }'
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+
+  run_waiter_capped "$output" 18 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=25 WFR_IDLE_CPU_WINDOW=2 \
+    "$WAITER" "$handoff" builder 30 8
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 5 ] || { fail_case "exit=$rc expected=5"; return 1; }
+  grep -q 'WAITER: builder-idle' "$output" ||
+    fail_case "missing builder-idle"
+}
+
 case_blocked() {
   local handoff output updater rc
   handoff=$(new_handoff blocked)
@@ -390,6 +416,85 @@ case_turn_ended_subturn_churn() {
   [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
   ! grep -q 'WAITER: builder-awaiting-input' "$output" ||
     { fail_case "sub-turn churn reported as awaiting-input"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "missing WAITER: ready"
+}
+
+case_turn_ended_with_epilogue() {
+  # THE MISSED WAKE: Claude's Stop hook touches the marker, then the harness
+  # appends its own end-of-turn records (stop_hook_summary, turn_duration) to
+  # the session log a moment later. Those writes are the turn ending, not more
+  # work; they must not retire the candidate. Before this case, three builders
+  # sat finished for 80-120 minutes until the backstop timeout fired.
+  local handoff output logdir writer toucher rc
+  handoff=$(new_handoff turn-epilogue)
+  output="$TEST_ROOT/turn-epilogue.out"
+  logdir="$TEST_ROOT/turn-epilogue-logs"
+  mkdir -p "$logdir"
+  printf '%s\n' "$logdir/session.jsonl" > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    trap 'exit 0' TERM INT
+    i=0
+    while [ "$i" -lt 4 ]; do echo work >> "$logdir/session.jsonl"; sleep 1; i=$(( i + 1 )); done
+    touch "$handoff.turn-ended"
+    echo stop_hook_summary >> "$logdir/session.jsonl"
+    echo turn_duration >> "$logdir/session.jsonl"
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+
+  run_waiter_capped "$output" 15 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=3 \
+    "$WAITER" "$handoff" builder 30 25
+  rc=$?
+  stop_pid "$toucher"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 6 ] || { fail_case "exit=$rc expected=6"; return 1; }
+  grep -q 'WAITER: builder-awaiting-input' "$output" ||
+    fail_case "missing builder-awaiting-input"
+}
+
+case_turn_churn_streaming_not_idle() {
+  # Absorbing a candidate's epilogue writes must not hide them from the idle
+  # check: a builder streaming output while its sub-turn markers land every
+  # couple of seconds is working, however little CPU it burns.
+  local handoff output logdir writer toucher updater rc
+  handoff=$(new_handoff churn-streaming)
+  output="$TEST_ROOT/churn-streaming.out"
+  logdir="$TEST_ROOT/churn-streaming-logs"
+  mkdir -p "$logdir"
+  printf '%s\n' "$logdir" > "$handoff.activity"
+  start_sleep_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    trap 'exit 0' TERM INT
+    while :; do echo tick >> "$logdir/rollout.jsonl"; sleep 1; done
+  ) &
+  writer=$!
+  track_pid "$writer"
+  (
+    trap 'exit 0' TERM INT
+    while :; do sleep 2; touch "$handoff.turn-ended"; done
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+  (
+    sleep 12
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 20 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=4 \
+    "$WAITER" "$handoff" builder 30 6
+  rc=$?
+  stop_pid "$toucher"
+  stop_pid "$writer"
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0 ($(tail -1 "$output"))"; return 1; }
   grep -q '^WAITER: ready$' "$output" ||
     fail_case "missing WAITER: ready"
 }
@@ -731,9 +836,12 @@ run_case busy-not-idle case_busy_not_idle
 run_case handoff-deleted case_handoff_deleted
 run_case idle-with-noisy-sidecar case_idle_with_noisy_sidecar
 run_case production-ratio case_production_ratio
+run_case idle-with-background-trickle case_idle_with_background_trickle
 run_case blocked case_blocked
 run_case turn-ended case_turn_ended
+run_case turn-ended-with-epilogue case_turn_ended_with_epilogue
 run_case turn-ended-subturn-churn case_turn_ended_subturn_churn
+run_case turn-churn-streaming-not-idle case_turn_churn_streaming_not_idle
 run_case turn-marker-survives-bridge-start case_turn_marker_survives_bridge_start
 run_case stale-turn-marker-consumed case_stale_turn_marker_consumed
 run_case turn-ended-ready-wins case_turn_ended_ready_wins

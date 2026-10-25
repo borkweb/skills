@@ -118,7 +118,11 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    the corrective's own range (previously reviewed commit..new HEAD), confirm each
    blocker is resolved, and check for regressions against the slice's original range
    where the corrective touched shared code. **LAND WITH CAUTION** → record the
-   caveats and rule (proceed or correct). This is your own gate, separate from the
+   caveats and rule (proceed or correct). Spend a corrective round only on a
+   confirmed defect: every round re-runs the full frozen gates. Accept a slice whose
+   review leaves only informational findings, and carry the fixes you want into the
+   next slice that owns those files or into one polish slice at the end of the run.
+   This is your own gate, separate from the
    builder's internal reviewer agent. Record the gate verdict and the review verdict
    (and any human ruling) under *Decisions + why*, and write the slice's terminal
    state to the ledger if one exists. Never let the builder's prose set the verdict:
@@ -196,7 +200,9 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 
 **Correctives reuse the warm builder.** After a rejection, write the corrective
 block (the confirmed blockers, the same owned files and gates) and run
-`dispatch-slice.sh … "<fix>.md" --id <n> --corrective`. When the builder that just
+`dispatch-slice.sh … "<fix>.md" --id <n> --corrective --verdict "<why>"`. The
+verdict lands on the ledger's rejected entry, so `ledger report` can count it as
+review-only or gate-failed. When the builder that just
 reported is still at its prompt, the brief goes into its pane and it continues
 with the code already in context: no boot, no re-reading the plan. When the
 builder is gone, the script says so and re-dispatches cold. Either way, run the

@@ -437,6 +437,74 @@ test('ledger report derives build and judge minutes per slice and a run summary'
   assert.equal(j.runs[0].max_concurrent, 2);
 });
 
+test('ledger report counts warm correctives, mid-run rejections and every round from history', () => {
+  // Since correctives go back into the warm builder on the SAME slice, the
+  // final state and last dispatch hide the rework: a fleebase run with a dozen
+  // corrective rounds reported "0 rejected, 0 correctives" and 2 concurrent
+  // builders when 3 ran at once.
+  const REPO = repo('report-rounds');
+  const withVerdict = (h, i, verdict) => { h[i].verdict = verdict; return h; };
+  fixtureLedger(REPO, 'arch', [
+    { id: 'A', title: 'lane a', state: 'accepted', verdict: 'LAND WITH CAUTION',
+      history: withVerdict(hist(['dispatched', '09:00'], ['results-ready', '10:00'], ['rejected', '10:10'],
+        ['dispatched', '10:10'], ['accepted', '10:40'], ['dispatched', '10:50'], ['accepted', '11:10']),
+      2, 'gates green; review = do not land: drag bug') },
+    { id: 'B', title: 'lane b', state: 'accepted', verdict: 'SAFE TO LAND',
+      history: hist(['dispatched', '09:05'], ['results-ready', '09:50'], ['accepted', '10:00']) },
+    { id: 'D', title: 'lane d', state: 'accepted', verdict: 'SAFE TO LAND',
+      history: hist(['dispatched', '09:10'], ['results-ready', '09:40'], ['accepted', '09:45']) },
+    { id: 'C', title: 'lane c', state: 'dispatched', verdict: '', history: hist(['dispatched', '10:20']) },
+  ]);
+  const j = JSON.parse(run(['ledger', 'report', REPO, '--json']));
+  const r = j.runs[0];
+  const a = r.slices.find((s) => s.id === 'A');
+  assert.equal(a.rounds, 3);
+  assert.equal(a.redispatches, 2);
+  assert.equal(a.rejections, 1);
+  assert.equal(a.first_pass, false);
+  assert.equal(a.build_min, 60 + 30 + 20);
+  assert.equal(a.judge_min, 10);
+  assert.equal(r.redispatches, 2);
+  assert.equal(r.rejections, 1);
+  assert.equal(r.review_only_rejections, 1);
+  assert.deepEqual([r.first_pass, r.judged], [2, 3]);
+  assert.equal(r.max_concurrent, 3);
+  const out = run(['ledger', 'report', REPO]);
+  assert.match(out, /rework: 2 re-dispatches · 1 rejection · first pass 2 of 3/);
+  assert.match(out, /review-only rejections: 1 of 1/);
+  assert.match(out, /max concurrent builders: 3/);
+  assert.match(out, /^\s*A\s+accepted\s+lane a\s+110m\s+10m\s+3\s/m);
+});
+
+test('a corrective sent straight from results-ready counts as a rejection', () => {
+  // Older runs skipped the rejected state: results-ready → dispatched. That
+  // transition is the architect sending the results back, so it counts; a
+  // re-dispatch after acceptance is a follow-up and does not.
+  const REPO = repo('report-implicit-reject');
+  fixtureLedger(REPO, 'arch', [
+    { id: 'S', title: 's', state: 'accepted', verdict: 'LAND WITH CAUTION',
+      history: hist(['dispatched', '09:00'], ['results-ready', '10:00'], ['dispatched', '10:10'], ['accepted', '10:40'],
+        ['dispatched', '10:50'], ['accepted', '11:00']) },
+  ]);
+  const s = JSON.parse(run(['ledger', 'report', REPO, '--json'])).runs[0].slices[0];
+  assert.equal(s.rejections, 1);
+  assert.equal(s.redispatches, 2);
+  assert.equal(s.review_only_rejections, 0, 'no verdict was recorded, so it cannot be classed');
+});
+
+test('a state change stores the verdict it was judged with in history', () => {
+  const REPO = repo('history-verdict');
+  run(['ledger', 'init', REPO, 'g']);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't']);
+  run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
+  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = do not land']);
+  run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
+  const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  const rejected = s.history.find((h) => h.state === 'rejected');
+  assert.equal(rejected.verdict, 'review = do not land');
+  assert.equal(s.history.filter((h) => h.state === 'dispatched').every((h) => !('verdict' in h)), true);
+});
+
 test('ledger report --all aggregates every ledger on disk, read-only, across sessions', () => {
   const A = repo('report-all-a');
   const B = repo('report-all-b');

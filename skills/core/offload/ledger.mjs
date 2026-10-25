@@ -144,7 +144,10 @@ function assertPane(pane) {
 // the branch or the pane recorded three turns ago.
 // Every state change also lands in `history`, so a run can be timed afterwards:
 // dispatched → results_at is builder time, results_at → terminal is architect
-// time. One `updated` stamp could not tell those apart.
+// time. One `updated` stamp could not tell those apart. A verdict supplied with
+// the change is kept on that entry, because the slice's own verdict is
+// overwritten by the next round and a report must still classify the earlier
+// rejection.
 function applyFields(slice, f) {
   const before = slice.state;
   for (const k of ['title', 'branch', 'cwd', 'handoff', 'pane', 'state', 'verdict', 'pr', 'note']) {
@@ -152,7 +155,9 @@ function applyFields(slice, f) {
   }
   const t = nowIso();
   slice.history = Array.isArray(slice.history) ? slice.history : [];
-  if (slice.state && (slice.state !== before || !slice.history.length)) slice.history.push({ state: slice.state, at: t });
+  if (slice.state && (slice.state !== before || !slice.history.length)) {
+    slice.history.push(f.verdict ? { state: slice.state, at: t, verdict: f.verdict } : { state: slice.state, at: t });
+  }
   slice.updated = t;
   return slice;
 }
@@ -408,40 +413,80 @@ const CORRECTIVE = /\b(correct(ive|ion)?|fix(es|ing)?|redo|retry|follow-?up)\b/i
 // all rejections is the single number the spec-review step exists to lower.
 const REVIEW_ONLY = (v) => /do not land|review/i.test(v) && !/\b(fail|failed|failing|red|inconclusive|429)\b/i.test(v);
 
-function lastAt(history, state) {
-  let at = null;
-  for (const h of history || []) if (h.state === state) at = parseAt(h.at) ?? at;
-  return at;
-}
+const sum = (xs) => (xs.some((x) => x != null) ? xs.reduce((a, x) => a + (x ?? 0), 0) : null);
 
+// Every dispatch opens a round. Correctives go back into the warm builder on
+// the same slice, so the final state and the last dispatch hide the rework:
+// each round is read from `history`. A round is live from its dispatch until
+// the next state change (or the results stamp, when that lands first); judging
+// runs from a results report to the next state change.
 export function sliceTiming(s) {
-  const history = Array.isArray(s.history) ? s.history : [];
-  const dispatched = lastAt(history, 'dispatched');
+  const history = (Array.isArray(s.history) ? s.history : [])
+    .map((h) => ({ ...h, t: parseAt(h.at) })).filter((h) => h.t != null);
+  const resultsStamp = parseAt(s.results_at);
+  const rounds = [];
+  history.forEach((h, i) => {
+    if (h.state !== 'dispatched') return;
+    const next = history.slice(i + 1).find((x) => x.state !== 'dispatched');
+    const nextDispatch = history.slice(i + 1).find((x) => x.state === 'dispatched');
+    const end = next && (!nextDispatch || next.t <= nextDispatch.t) ? next : null;
+    let resultsAt = end?.state === 'results-ready' ? end.t : null;
+    if (resultsStamp != null && resultsStamp >= h.t && (!nextDispatch || resultsStamp <= nextDispatch.t)
+      && (end == null || resultsStamp < end.t)) {
+      resultsAt = resultsStamp;
+    }
+    const liveUntil = resultsAt ?? end?.t ?? null;
+    const afterResults = resultsAt == null ? null
+      : history.slice(i + 1).find((x) => x.t >= resultsAt && x.state !== 'results-ready');
+    rounds.push({ start: h.t, live_until: liveUntil, build: minutes(h.t, liveUntil), judge: afterResults ? minutes(resultsAt, afterResults.t) : null });
+  });
+  // Results sent straight back (results-ready → dispatched, no rejected entry)
+  // are a rejection too; older runs recorded most correctives that way.
+  const rejectedEntries = history.filter((h, i) => h.state === 'rejected'
+    || (h.state === 'results-ready' && history[i + 1]?.state === 'dispatched'))
+    .map((h) => (h.state === 'rejected' ? h : { ...h, verdict: h.verdict ?? '' }));
+  // Old ledgers lack history: fall back to the final state.
+  const rejections = rejectedEntries.length || (s.state === 'rejected' ? 1 : 0);
+  // An entry without its own verdict predates verdicts in history; only the
+  // last one can borrow the slice's verdict, and only while still rejected.
+  const verdicts = rejectedEntries.length
+    ? rejectedEntries.map((h, i) => h.verdict
+      ?? (i === rejectedEntries.length - 1 && s.state === 'rejected' ? s.verdict || '' : ''))
+    : (s.state === 'rejected' ? [s.verdict || ''] : []);
+  const reviewOnlyVerdicts = verdicts.filter((v) => REVIEW_ONLY(v));
   const terminalEntry = [...history].reverse().find((h) => TERMINAL_STATES.has(h.state));
-  const terminal = terminalEntry ? parseAt(terminalEntry.at) : (TERMINAL_STATES.has(s.state) ? parseAt(s.updated) : null);
-  const results = parseAt(s.results_at) ?? lastAt(history, 'results-ready');
-  // A dispatched slice is "live" until it leaves that state; that interval is
-  // what the concurrency count below overlaps.
-  let live_until = null;
-  if (dispatched != null) {
-    const after = history.map((h) => ({ ...h, t: parseAt(h.at) })).filter((h) => h.t != null && h.t > dispatched && h.state !== 'dispatched');
-    live_until = after.length ? Math.min(...after.map((h) => h.t)) : (results ?? terminal);
-  }
+  const terminal = terminalEntry ? terminalEntry.t : (TERMINAL_STATES.has(s.state) ? parseAt(s.updated) : null);
+  // A slice reopened after acceptance (a follow-up sent to the warm builder)
+  // was still judged; a corrective-titled slice is rework, never a first pass.
+  const LANDED = new Set(['accepted', 'merged']);
+  const landed = LANDED.has(s.state) || history.some((h) => LANDED.has(h.state));
+  const corrective = CORRECTIVE.test(s.title || '');
   return {
     id: s.id, title: s.title || '', state: s.state, verdict: s.verdict || '',
-    corrective: CORRECTIVE.test(s.title || ''),
-    dispatched_at: dispatched, results_at: results, terminal_at: terminal, live_until,
-    build_min: minutes(dispatched, results ?? terminal),
-    judge_min: minutes(results, terminal),
+    corrective,
+    rounds: rounds.length,
+    redispatches: Math.max(0, rounds.length - 1),
+    rejections,
+    review_only_rejections: reviewOnlyVerdicts.length,
+    review_only_verdicts: reviewOnlyVerdicts,
+    judged: landed || rejections > 0,
+    first_pass: landed && !corrective && rounds.length <= 1 && rejections === 0,
+    dispatched_at: rounds.length ? rounds[rounds.length - 1].start : null,
+    results_at: resultsStamp ?? [...history].reverse().find((h) => h.state === 'results-ready')?.t ?? null,
+    terminal_at: terminal,
+    live: rounds.map((r) => [r.start, r.live_until]),
+    build_min: sum(rounds.map((r) => r.build)),
+    judge_min: sum(rounds.map((r) => r.judge)),
   };
 }
 
 function maxConcurrent(timings) {
   const events = [];
   for (const t of timings) {
-    if (t.dispatched_at == null) continue;
-    events.push([t.dispatched_at, 1]);
-    if (t.live_until != null) events.push([t.live_until, -1]);
+    for (const [start, until] of t.live) {
+      events.push([start, 1]);
+      if (until != null) events.push([until, -1]);
+    }
   }
   events.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   let cur = 0; let max = 0;
@@ -453,16 +498,20 @@ export function reportLedger(l, p) {
   const slices = (l.slices || []).map(sliceTiming);
   const counts = {};
   for (const s of slices) counts[s.state] = (counts[s.state] || 0) + 1;
-  const rejected = slices.filter((s) => s.state === 'rejected');
   const created = parseAt(l.created);
   const last = Math.max(...slices.map((s) => s.terminal_at ?? s.results_at ?? s.dispatched_at ?? 0), parseAt(l.updated) ?? 0);
+  const total = (k) => slices.reduce((a, s) => a + s[k], 0);
   return {
     ledger: p, session: l.session, cwd: l.cwd, goal: l.goal || '', created: l.created,
     span_min: minutes(created, last || null),
     slices,
     counts,
     correctives: slices.filter((s) => s.corrective).length,
-    review_only_rejections: rejected.filter((s) => REVIEW_ONLY(s.verdict)).length,
+    redispatches: total('redispatches'),
+    rejections: total('rejections'),
+    review_only_rejections: total('review_only_rejections'),
+    judged: slices.filter((s) => s.judged).length,
+    first_pass: slices.filter((s) => s.first_pass).length,
     median_build_min: median(slices.map((s) => s.build_min)),
     median_judge_min: median(slices.map((s) => s.judge_min)),
     max_concurrent: maxConcurrent(slices),
@@ -475,23 +524,27 @@ export function renderVerdicts(runs) {
   let out = '';
   for (const r of runs) {
     for (const s of r.slices) {
-      if (s.state !== 'rejected' || !REVIEW_ONLY(s.verdict)) continue;
-      out += `${(r.created || '').slice(0, 10)} ${pad(s.id, 4)} ${s.verdict.replace(/\s+/g, ' ')}\n`;
+      for (const v of s.review_only_verdicts) {
+        out += `${(r.created || '').slice(0, 10)} ${pad(s.id, 4)} ${v.replace(/\s+/g, ' ')}\n`;
+      }
     }
   }
   return out || '(no review-only rejections recorded)\n';
 }
 
 export function renderReport(runs, { json = false } = {}) {
-  const totals = { runs: runs.length, slices: 0, accepted: 0, rejected: 0, merged: 0, abandoned: 0, correctives: 0, review_only_rejections: 0 };
+  const totals = { runs: runs.length, slices: 0, accepted: 0, rejected: 0, merged: 0, abandoned: 0 };
+  const SUMMED = ['correctives', 'redispatches', 'rejections', 'review_only_rejections', 'judged', 'first_pass'];
+  for (const k of SUMMED) totals[k] = 0;
   const builds = []; const judges = [];
   for (const r of runs) {
     totals.slices += r.slices.length;
     for (const k of ['accepted', 'rejected', 'merged', 'abandoned']) totals[k] += r.counts[k] || 0;
-    totals.correctives += r.correctives;
-    totals.review_only_rejections += r.review_only_rejections;
+    for (const k of SUMMED) totals[k] += r[k];
     for (const s of r.slices) { builds.push(s.build_min); judges.push(s.judge_min); }
   }
+  const rework = (x) => `rework: ${x.redispatches} re-dispatch${x.redispatches === 1 ? '' : 'es'}`
+    + ` · ${x.rejections} rejection${x.rejections === 1 ? '' : 's'} · first pass ${x.first_pass} of ${x.judged}`;
   totals.median_build_min = median(builds);
   totals.median_judge_min = median(judges);
   if (json) return `${JSON.stringify({ runs, totals }, null, 2)}\n`;
@@ -503,20 +556,22 @@ export function renderReport(runs, { json = false } = {}) {
     out += `       ${r.slices.length} slice${r.slices.length === 1 ? '' : 's'} · `;
     out += Object.entries(r.counts).map(([k, v]) => `${v} ${k}`).join(' · ') || 'none';
     out += ` · ${r.correctives} corrective${r.correctives === 1 ? '' : 's'}\n`;
-    out += `       review-only rejections: ${r.review_only_rejections} of ${r.counts.rejected || 0}`;
+    out += `       ${rework(r)}\n`;
+    out += `       review-only rejections: ${r.review_only_rejections} of ${r.rejections}`;
     out += ` · median build ${fmtMin(r.median_build_min)} · median judge ${fmtMin(r.median_judge_min)}`;
     out += ` · max concurrent builders: ${r.max_concurrent} · span ${fmtMin(r.span_min)}\n\n`;
-    out += `${pad('ID', 5)}${pad('STATE', 11)}${pad('SLICE', 32)}${pad('BUILD', 7)}${pad('JUDGE', 7)}VERDICT\n`;
-    out += `${'-'.repeat(100)}\n`;
+    out += `${pad('ID', 5)}${pad('STATE', 11)}${pad('SLICE', 32)}${pad('BUILD', 7)}${pad('JUDGE', 7)}${pad('RNDS', 5)}VERDICT\n`;
+    out += `${'-'.repeat(105)}\n`;
     for (const s of r.slices) {
-      out += `${pad(s.id, 5)}${pad(s.state, 11)}${pad(s.title, 32)}${pad(fmtMin(s.build_min), 7)}${pad(fmtMin(s.judge_min), 7)}${pad(s.verdict, 38)}\n`;
+      out += `${pad(s.id, 5)}${pad(s.state, 11)}${pad(s.title, 32)}${pad(fmtMin(s.build_min), 7)}${pad(fmtMin(s.judge_min), 7)}${pad(s.rounds, 5)}${pad(s.verdict, 38)}\n`;
     }
     out += '\n';
   }
   if (runs.length !== 1) {
     out += `TOTALS ${totals.runs} runs · ${totals.slices} slices · ${totals.accepted} accepted · ${totals.rejected} rejected`;
     out += ` · ${totals.merged} merged · ${totals.abandoned} abandoned · ${totals.correctives} correctives\n`;
-    out += `       review-only rejections: ${totals.review_only_rejections} of ${totals.rejected}`;
+    out += `       ${rework(totals)}\n`;
+    out += `       review-only rejections: ${totals.review_only_rejections} of ${totals.rejections}`;
     out += ` · median build ${fmtMin(totals.median_build_min)} · median judge ${fmtMin(totals.median_judge_min)}\n`;
   }
   return out;

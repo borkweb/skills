@@ -44,8 +44,12 @@ than once without new evidence.
 
 - The turn-end hook fires on every sub-turn, so a fresh marker is a candidate stop
   confirmed only after `WFR_TURN_SETTLE` seconds (default 45) with no CPU growth and
-  no session-log writes. If a bridge wakes you too often, raise `WFR_TURN_SETTLE`;
-  do not disable the signal.
+  no session-log writes. Writes in the first `WFR_TURN_EPILOGUE` seconds (default 5)
+  are the harness's own end-of-turn records and do not count. If a bridge wakes you
+  too often, raise `WFR_TURN_SETTLE`; do not disable the signal.
+- Idle means less than `WFR_IDLE_CPU_CENTIS` (default 200) of CPU in every
+  `WFR_IDLE_CPU_WINDOW` (default 60s) for the whole idle period, with no session-log
+  writes. A long idle period no longer hides a stopped builder.
 - Never `rm` the `.turn-ended` marker by hand. The bridge baselines it at start;
   deleting it races with `dispatch.sh` and a running bridge and eats real wakes.
 - Defaults: timeout 7200s, idle 600s. Both are backstops, not the primary signal.

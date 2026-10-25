@@ -207,6 +207,29 @@ test('corrective into a warm builder: no new tab, the brief goes into the pane, 
   assert.equal(s.pane, 'w9:p7');
 });
 
+test('corrective after results records the rejection with its verdict; a follow-up after acceptance does not', () => {
+  // Architects sent most correctives straight from results-ready, so the
+  // ledger never held a rejection: a DO NOT LAND with two criticals read as
+  // zero rejections in the run report.
+  const R = repo();
+  const WT = join(BOX, 'wt-verdict');
+  hoff(['ledger', 'init', R, 'g']);
+  run([R, WT, 'feat/verdict', BLOCK, '--id', '4', '--title', 'sort']);
+  const doc = hoff(['path', WT, 'arch']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  hoff(['status', doc, 'results-ready']);
+  hoff(['ledger', 'set', R, '4', '--state', 'results-ready']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug']);
+  let s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
+  assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug');
+
+  hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective']);
+  s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
+  assert.deepEqual(s.history.slice(-2).map((h) => h.state), ['accepted', 'dispatched'], 'a follow-up is not a rejection');
+});
+
 test('corrective when the builder is gone: re-dispatch cold and say so', () => {
   const R = repo();
   const WT = join(BOX, 'wt-cold');

@@ -12,7 +12,8 @@
 #   wait-for-ready.sh --reap
 #   tmux_window is accepted and ignored for caller compatibility.
 #   Defaults: timeout 7200s, idle 600s, WFR_GRACE=90s, WFR_POLL=5s,
-#   WFR_IDLE_CPU_CENTIS=200, WFR_TURN_SETTLE=45s. Marker path is always
+#   WFR_IDLE_CPU_CENTIS=200, WFR_IDLE_CPU_WINDOW=60s, WFR_TURN_SETTLE=45s,
+#   WFR_TURN_EPILOGUE=5s. Marker path is always
 #   "$HANDOFF.builder". WFR_CPU_EXCLUDE defaults to
 #   SkyComputerUseClient|node_repl|mcp-context-a8c.
 #   WFR_BOARD_CWD=<repo root>: after the WAITER line, print this session's
@@ -43,6 +44,14 @@
 #                            CPU growth and no activity-sidecar writes. Any sign
 #                            of life inside that window retires the candidate as
 #                            the sub-turn it was.
+#
+#                            The harness writes its own end-of-turn records
+#                            (Claude's stop_hook_summary and turn_duration) to
+#                            the session log just AFTER the hook touches the
+#                            marker. Writes in the first WFR_TURN_EPILOGUE
+#                            seconds of a candidate are that epilogue, not
+#                            work; counting them retired every real stop and
+#                            left finished builders waiting for the timeout.
 #
 #                            A marker already present at bridge START is stale
 #                            (its wake was delivered by the previous bridge
@@ -127,7 +136,9 @@ IDLE_SECONDS=${4:-600}
 GRACE="${WFR_GRACE:-90}"
 POLL="${WFR_POLL:-5}"
 IDLE_CPU_CENTIS="${WFR_IDLE_CPU_CENTIS:-200}"
+IDLE_CPU_WINDOW="${WFR_IDLE_CPU_WINDOW:-60}"
 TURN_SETTLE="${WFR_TURN_SETTLE:-45}"
+TURN_EPILOGUE="${WFR_TURN_EPILOGUE:-5}"
 MARKER="$HANDOFF.builder"
 TURN_MARKER="$HANDOFF.turn-ended"
 BOARD_CWD="${WFR_BOARD_CWD:-}"
@@ -300,6 +311,7 @@ saw_marker=false
 idle_pid=""
 idle_started=0
 idle_cpu_base=0
+idle_cpu_window_at=0
 
 check() {
   # turn_baseline / turn_candidate* are deliberately NOT local: they carry the
@@ -354,7 +366,16 @@ check() {
       turn_candidate_at="$now"
       turn_candidate_cpu="$cpu"
     fi
-    if activity_seen; then
+    if [ $(( now - turn_candidate_at )) -lt "$TURN_EPILOGUE" ]; then
+      # Absorb the harness's end-of-turn log writes (see the header) without
+      # hiding them from the idle check: a builder whose markers keep landing
+      # while it streams is still alive.
+      if activity_seen; then
+        touch "$ACTIVITY_STAMP"
+        idle_started="$now"
+        idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
+      fi
+    elif activity_seen; then
       turn_baseline="$tm"; turn_candidate=""
     elif [ $(( cpu - turn_candidate_cpu )) -gt "$IDLE_CPU_CENTIS" ]; then
       turn_baseline="$tm"; turn_candidate=""
@@ -363,20 +384,26 @@ check() {
     fi
   fi
 
+  # Busy is a CPU rate, not a sum: more than IDLE_CPU_CENTIS inside one
+  # IDLE_CPU_WINDOW. An idle Claude builder's tree still burns ~0.5% CPU, which
+  # summed over a 40-minute idle window always passed the threshold.
   if [ "$idle_pid" != "$pid" ]; then
     idle_pid="$pid"
     idle_started="$now"
-    idle_cpu_base="$cpu"
+    idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
   elif activity_seen; then
     touch "$ACTIVITY_STAMP"
     idle_started="$now"
-    idle_cpu_base="$cpu"
+    idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
   else
     delta=$(( cpu - idle_cpu_base ))
     if [ "$delta" -gt "$IDLE_CPU_CENTIS" ]; then
       idle_started="$now"
-      idle_cpu_base="$cpu"
-    elif [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
+      idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
+    elif [ $(( now - idle_cpu_window_at )) -ge "$IDLE_CPU_WINDOW" ]; then
+      idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
+    fi
+    if [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
       finish "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})" 5
     fi
   fi
