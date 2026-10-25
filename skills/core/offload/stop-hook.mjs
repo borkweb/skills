@@ -10,7 +10,7 @@
 // unrelated work), nothing is owed, the hook already fired for this stop
 // (stop_hook_active), or stdin is unreadable. A hook crash must never block a
 // user, so every path that is not a deliberate block exits quietly.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeSync } from 'node:fs';
 import { ledgerFor, renderBoard } from './ledger.mjs';
 
 let input = {};
@@ -48,5 +48,6 @@ const reason =
   'If a human ruling is genuinely required, say so explicitly and end the turn; this check fires once.\n\n' +
   board;
 
-process.stdout.write(`${JSON.stringify({ decision: 'block', reason })}\n`);
+// writeSync, not process.stdout.write: a pipe write is async on macOS and the process.exit below would drop a payload over the pipe buffer.
+writeSync(1, `${JSON.stringify({ decision: 'block', reason })}\n`);
 process.exit(0);

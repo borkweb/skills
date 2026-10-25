@@ -2,7 +2,7 @@
 // SessionStart plugin hook for /offload. Non-consuming: surfaces persistent
 // offload handoffs for this cwd so a fresh/cleared session can reattach.
 // No saved work means no context; helper paths are resolved when the skill loads.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeSync } from 'node:fs';
 import { listFiles, field, age, tokenOf, prune, fileFor } from './dir.mjs';
 import { ledgerFor, renderBoard } from './ledger.mjs';
 
@@ -36,7 +36,8 @@ if (others.length) {
   }
 }
 
-process.stdout.write(`${JSON.stringify({
+// writeSync, not process.stdout.write: a pipe write is async on macOS and the process.exit below would drop a payload over the pipe buffer.
+writeSync(1, `${JSON.stringify({
   hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
 })}\n`);
 process.exit(0);

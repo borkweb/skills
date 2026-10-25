@@ -5,7 +5,7 @@
 // doesn't nag. Silent (no output) below threshold or when already nudged this band.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from 'node:fs';
 
 const DIR = process.env.AGENT_HANDOFFS_DIR || join(homedir(), '.agent-handoffs');
 const THRESHOLD = Number(process.env.BUDGET_HOOK_THRESHOLD_BYTES) || 1_500_000;
@@ -46,7 +46,8 @@ const context =
   `if it would carry state the next session cannot recover from disk/git; otherwise just tell the user ` +
   `the verdict and that no handoff is needed. Either way, the user runs /clear or /compact themselves.`;
 
-process.stdout.write(`${JSON.stringify({
+// writeSync, not process.stdout.write: a pipe write is async on macOS and the process.exit below would drop a payload over the pipe buffer.
+writeSync(1, `${JSON.stringify({
   hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context },
 })}\n`);
 process.exit(0);

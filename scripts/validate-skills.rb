@@ -66,8 +66,23 @@ until pending.empty?
     end
   end
 end
+# Frozen phrases: tokens that hooks, other skills and humans match on verbatim.
+# A reword in one copy must fail here until every copy and its consumers follow.
+INVARIANTS = {
+  'skills/gstack/review/SKILL.md' => ['Pre-Landing Review: N issues', '**SAFE TO LAND:**', '**LAND WITH CAUTION:**', '**DO NOT LAND:**', 'never infer commit, push, merge or PR permission', 'Gate Integrity'],
+  'skills/gstack/review/checklist.md' => ['#### Gate Integrity', '## Sideways sweep', '## Suppressions', 'record which load you assumed'],
+  'hooks/pre-push.md' => ['Gate Integrity'],
+  'skills/core/do/references/briefs.md' => ['SAFE TO LAND, LAND WITH CAUTION, or DO NOT LAND', "don't grade your own work", 'Build the smallest change that fully works', 'never cut validation at trust boundaries', 'Not checked'],
+  'skills/core/offload/builder-template.md' => ['Do not grade your own work', 'RED chronology', 'Build the smallest change that fully works', 'never cut validation at trust boundaries', 'Not checked']
+}.freeze
+INVARIANTS.each do |rel, phrases|
+  text = root.join(rel).read
+  phrases.each { |phrase| errors << "#{rel}: frozen phrase missing: #{phrase.inspect}" unless text.include?(phrase) }
+rescue StandardError => e
+  errors << "#{rel}: #{e.message}"
+end
 if errors.empty?
-  puts "PASS: #{paths.length} skills, YAML policies, manifests and #{seen.length} linked Markdown files"
+  puts "PASS: #{paths.length} skills, YAML policies, manifests, #{seen.length} linked Markdown files and #{INVARIANTS.values.flatten.length} frozen phrases"
 else
   warn errors.join("\n")
   exit 1

@@ -35,12 +35,14 @@ The architect folds the criteria into the frozen gates and the builder brief, so
 
 1. Before any code, reply with a plan and every disagreement with the brief, citing real files. Silent compliance and silent scope additions both count as failures.
 2. Settle a genuinely ambiguous design question with `council`, and record the ruling in the result. If it needs a change to scope or a gate, stop and report it as a blocker.
-3. Implement only within **Owns**. Don't edit frozen gates or contracts, and don't grade your own work.
-4. While iterating, run the narrowest gate that covers the file being edited (one test file, one linter target). Run the full frozen gate set once, after the last edit and before reporting; that run is the one whose numbers go in the result.
+3. Build the smallest change that fully works, in this order: does it need to exist at all (skip and name anything nobody asked for); a helper, component or pattern already in this codebase, used the way the surrounding code uses it; the standard library or platform; an installed dependency; one line a reader gets at a glance; otherwise the minimum code that works. Never add a dependency for a few lines, and never cut validation at trust boundaries, error handling that prevents data loss, security, accessibility or anything the spec asks for. Be lazy about the solution, never about the change: finish every caller, test, fixture, config and export the change touches or breaks.
+4. Implement only within **Owns**. Don't edit frozen gates or contracts, and don't grade your own work.
+5. While iterating, run the narrowest gate that covers the file being edited (one test file, one linter target). Run the full frozen gate set once, after the last edit and before reporting; that run is the one whose numbers go in the result. New logic with a branch, loop, parser, money or security leaves one small test that fails when it breaks; trivial changes need none.
 
 Returns:
 - **Gate results**: one line per gate, with pass/fail, the count and the command that reproduces it. No logs.
 - **Work summary**: changed paths, commit SHAs, what's done, stubbed or deferred, and blockers.
+- **Not checked**: one or two lines on what was skipped or not verified and any risk the architect must know, or `None.`
 - **Open disagreements**: one line each, or `None.`
 
 ## Compression

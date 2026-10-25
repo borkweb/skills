@@ -3,7 +3,7 @@
 // session start (startup|resume|clear|compact). If a handoff is pending for this cwd
 // it injects it: single -> load + consume,
 // multiple -> a pick menu. Reuses mailbox.mjs helpers (no duplicated logic).
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeSync } from 'node:fs';
 import { listFiles, field, age, tokenOf, consumeFile, prune } from './mailbox.mjs';
 
 let input = {};
@@ -34,7 +34,8 @@ if (files.length === 1) {
   }
 }
 
-process.stdout.write(`${JSON.stringify({
+// writeSync, not process.stdout.write: a pipe write is async on macOS and the process.exit below would drop a payload over the pipe buffer.
+writeSync(1, `${JSON.stringify({
   hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context },
 })}\n`);
 if (toConsume) consumeFile(toConsume);

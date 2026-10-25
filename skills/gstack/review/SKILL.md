@@ -102,7 +102,7 @@ Then show a compact Markdown completion table. Fill it with actual results; use 
 
 | Completion summary | Result |
 |---|---|
-| Reviewed scope | Base and head SHAs; committed and/or requested local changes |
+| Reviewed scope | Base and head SHAs; committed and/or requested local changes; the load assumed for scale findings and its source |
 | Diff size | Files changed, insertions and deletions |
 | Scope check | CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING, with details |
 | CRITICAL findings | X total; fixed and unresolved counts; accepted risks noted separately |

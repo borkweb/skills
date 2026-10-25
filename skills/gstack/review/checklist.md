@@ -6,6 +6,8 @@ Use the pinned scope and action mode from SKILL.md. These are diagnostic prompts
 
 Review safety and contract boundaries first, then other relevant behavior. Severity follows demonstrated impact regardless of category. Return findings with file/line, trigger, consequence and a proposed correction; a clean result is valid. The entrypoint defines verification and landing verdicts.
 
+Before judging scale, find the expected load in the repository (README, deploy config, job schedules): one person running a script, or many users and processes at once. Judge every concurrency, memory and performance finding against that load and record which load you assumed.
+
 ## Review Categories
 
 ### Pass 1 — Safety and contracts
@@ -20,6 +22,7 @@ Review safety and contract boundaries first, then other relevant behavior. Sever
 - Read-check-write without uniqueness constraint or catch duplicate key error and retry
 - find-or-create without unique DB index — concurrent calls can create duplicates
 - Status transitions that don't use atomic `WHERE old_status = ? UPDATE SET new_status` — concurrent updates can skip or double-apply transitions
+- Fine for one user, wrong for many: the same work done by every process, memory or lists that only grow, a query per item, O(n²) on large input, per-process state that must be shared
 - Unsafe HTML rendering on user-controlled data (XSS)
 
 #### LLM Output Trust Boundary
