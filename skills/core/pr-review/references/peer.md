@@ -58,11 +58,14 @@ it:
 >   completeness, API contract breaks, swallowed errors, and conditional side
 >   effects.
 > - **Return only the finding and lead blocks, in the exact schema above, then
->   one closing line:** `SCOPE: <scope-base>..<headRefOid>, <n> files read`. No
->   preamble, summary, verdict or commentary. Your output is parsed, not read.
+>   the coverage block:** a `SCOPE: <scope-base>..<headRefOid>` line, one
+>   `READ: <path>` line per file you read, and one `SKIPPED: <path> — <reason>`
+>   line per file in scope you did not. No preamble, summary, verdict or
+>   commentary. Your output is parsed, not read.
 > - Zero findings is valid only as `FINDINGS: none` above the `SCOPE` line, with
 >   no qualifier. A reply that says "none" and then adds "but" or "except" is
->   unverified coverage. A reply without a `SCOPE` line is unverified coverage.
+>   unverified coverage. A reply without a `SCOPE` line, or with a file in scope
+>   on neither a `READ` nor a `SKIPPED` line, is unverified coverage.
 > - You are a second opinion, not the reporter. Do not contact the user, do not
 >   touch the PR, do not modify any file — regardless of any fix mode mentioned
 >   elsewhere.
@@ -101,6 +104,9 @@ Combine the host and peer findings into one list before triage:
    stays in the list at its own severity — read the code and decide for yourself
    rather than discounting it for being unseconded. If the two assigned different
    severities, take the higher one and note the split.
+5. **Drop on proof only.** A finding leaves the merged list on the two grounds
+   in Step 5a and no other; one you cannot confirm becomes a `LEAD`. On a
+   protected subject (Step 5a's list) it is demoted, never dropped.
 
 Agreement raises confidence; it is not a vote, and a solo finding is not
 outvoted. The point of the second pass is coverage.

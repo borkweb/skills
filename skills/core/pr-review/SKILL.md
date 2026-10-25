@@ -539,7 +539,10 @@ URL in `EVIDENCE`, and put the finding in the review summary body.
 ### Step 3d: Merge the findings
 
 With the peer, merge the two passes as [peer.md](references/peer.md)
-describes. Without it, the list is the host's, tagged `host`.
+describes. Without it, the list is the host's, tagged `host`. Either way, carry
+coverage forward: the host's Coverage row and, with a peer, its `READ` and
+`SKIPPED` lines feed Step 7's Coverage row. A file in scope that no pass read is
+named there, not folded into a count.
 
 **Keep leads in their own list** either way. A `LEAD` never merges into a
 finding or counts toward one. If you read the code and confirm a lead, promote
@@ -578,9 +581,21 @@ worth nothing.
 Split the merged findings into CRITICAL and INFORMATIONAL. Auto-fixed items are
 neither — they go in the summary, not on the PR.
 
-**Drop anything the diff already handles.** Re-read the hunk around each finding
-before you keep it. A finding that's wrong on a PR is worse than no finding — it
-costs the author time and costs you credibility on the ones that are right.
+**Drop on proof, not on judgment.** Re-read the hunk around each finding before
+you keep it. A finding leaves the list on two grounds only: a line of the diff
+literally contradicts its central claim with no chain of reasoning (the check it
+calls missing is added in a later hunk; the value it calls hardcoded is read from
+config), or its `EVIDENCE` quote is not in the file and a re-read finds nothing
+to anchor. "Unlikely", "cannot verify" and "minor" are not grounds: an
+unconfirmed finding becomes a `LEAD` with what would confirm it, and value is
+the user's call in 5b, not yours here. Findings on protected subjects are never
+dropped, only kept or demoted to a `LEAD` that quotes the contradicting line:
+memory or bounds safety, concurrency, declaration or linkage consistency, a
+behavior or compatibility change (a message, field, status, default or error
+path the old code produced and the new code does not), an unused parameter, and
+the checklist's forced-CRITICAL classes (data loss, trust-boundary bypass,
+uncapped spend). A wrong finding on a PR costs the author minutes; a right one
+dropped is destroyed silently, and nobody learns that it was.
 
 **Don't post anything already on the PR.** Compare each finding with
 `existing-comments.jsonl`: the same `path`, a line within a few of `line` (or of
@@ -778,6 +793,7 @@ Nothing here is posted, and nothing here asks a question. Report, terse:
   | Ran in               | worktree <path> / current checkout          |
   | Reviewers            | <host> + <peer> / <host> only (peer: reason)|
   | Pass timing          | peer __m__s, host __m__s, ~__m concurrent    |
+  | Coverage             | host ___/___ files read, peer ___/___ / N/A; unread: <paths> or none |
   | Staleness            | CURRENT / BEHIND _ / OVERLAP _ files / CONFLICT _ files |
   +--------------------------------------------------------------------+
   | CRITICAL findings    | ___ (___ posted inline, ___ in summary)     |
