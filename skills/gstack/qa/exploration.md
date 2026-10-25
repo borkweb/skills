@@ -1,10 +1,12 @@
-# Shared browser QA
+# Shared QA exploration
 
 This procedure is shared by qa and qa-only. The invoking skill controls whether source fixes are allowed; report-only may read source for route tracing but must not edit application files.
 
 ## Establish scope
 
-Use the supplied URL, local running app or documented launch command. Use available browser tools with their actual schemas; do not assume a Claude-specific tool exists. If the browser or required credentials are unavailable, report incomplete coverage instead of pretending to test.
+Select the surface before setup. Read the request, project instructions, docs, commands and tests, then choose browser, functional (API, CLI, job, worker or webhook) or a scoped mixture. A URL may name an API, and no URL does not imply a web server. A CLI, worker or webhook change is tested at its own surface with its own expected contract and does not select the browser; a backend-only change behind a UI still gets browser coverage for the flows it affects. Keep each surface's evidence separate and state the selected surfaces in the report. The browser steps below apply to a browser surface.
+
+For a browser surface, use the supplied URL, local running app or documented launch command. Use available browser tools with their actual schemas; do not assume a Claude-specific tool exists. If the browser or required credentials are unavailable, report incomplete coverage instead of pretending to test.
 
 For diff-aware work, verify the base ref and pin the merge-base/head using `../../../scripts/review-scope.py` relative to the invoking skill directory. Include requested local changes explicitly. Trace changed controllers, components, styles, services, migrations and API consumers to affected routes. Do not hardcode main or scan unrelated services when the project URL is available. Map diff-affected routes while the app starts rather than after it is up.
 

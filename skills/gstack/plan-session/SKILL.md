@@ -32,4 +32,4 @@ Write the requested design document with the sections that help execution: goal,
 
 ## Finish
 
-For a session asking for approval of a design, present one concrete reviewable document and the remaining decisions. Do not repeatedly approve each section. If the user already authorized continuing and the design is settled, complete the requested next step; the skill itself does not authorize implementation, remote publication or changes outside scope.
+For a session asking for approval of a design, present one concrete reviewable document and the remaining decisions. Print the document's full text, or at minimum its decision-bearing sections, in the assistant message itself before asking for approval: tool output is often collapsed in the UI, and a Write or Read call alone leaves the user approving a document they cannot see. Do not repeatedly approve each section. If the user already authorized continuing and the design is settled, complete the requested next step; the skill itself does not authorize implementation, remote publication or changes outside scope.

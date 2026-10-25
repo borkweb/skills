@@ -1,6 +1,6 @@
 ---
 name: qa-only
-description: "Perform report-only browser QA with reproducible findings and coverage evidence. May read source for scoping; never edits application files or applies fixes."
+description: "Perform report-only QA at the selected browser, API, CLI, job or webhook surface with reproducible findings and coverage evidence. May read source for scoping; never edits application files or applies fixes."
 
 allowed-tools:
   - Bash
@@ -12,7 +12,7 @@ allowed-tools:
 
 # QA Report Only
 
-Test and document the requested web application using [shared exploration](../qa/exploration.md). The deliverable is a report and evidence; do not edit application code, tests or configuration, commit, push or merge.
+Test and document the requested application at the selected surface using [shared exploration](../qa/exploration.md). The deliverable is a report and evidence; do not edit application code, tests or configuration, commit, push or merge.
 
 Read source when needed to map a requested diff to routes or understand reproduction, including backend changes that affect user flows. Read-only source tracing is compatible with report-only QA. Use the actual verified base; do not assume main.
 

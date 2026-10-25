@@ -59,7 +59,7 @@ DIFF_STAT=$(git diff origin/$BASE --shortstat)
 
 Read the review checklist from `skills/gstack/review/checklist.md`.
 
-Run all CRITICAL and INFORMATIONAL checklist categories against the diff, assigning confidence and severity before filtering. These seven CRITICAL categories are the ones the gate blocks on:
+Run all CRITICAL and INFORMATIONAL checklist categories against the diff, assigning confidence and severity before filtering. These eight CRITICAL categories are the ones the gate blocks on:
 
 1. **SQL & Data Safety** — Raw SQL without parameterization, missing WHERE on UPDATE/DELETE, SQL injection vectors
 2. **Migration & Schema Safety** — Destructive migrations without reversibility, data-loss operations
@@ -68,6 +68,7 @@ Run all CRITICAL and INFORMATIONAL checklist categories against the diff, assign
 5. **LLM Output Trust Boundary** — Unsanitized LLM output used in SQL, HTML, or system commands
 6. **Enum & Value Completeness** — New enum values not handled in all switch/match statements
 7. **API Contract Breaking Changes** — Removed fields, changed response shapes, renamed endpoints
+8. **Gate Integrity** — Tests removed or skipped, snapshots regenerated without their owning test, thresholds or timeouts raised, suppression pragmas or CI bypasses added, exceptions swallowed, with no measurement or decision in the diff that justifies it
 
 **Speed optimization:** Only read files that are in the diff. Don't grep the entire codebase unless checking enum completeness (which requires finding all references to sibling values).
 

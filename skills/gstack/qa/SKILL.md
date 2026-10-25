@@ -1,6 +1,6 @@
 ---
 name: qa
-description: "Test a web application and fix reproducible bugs within the requested scope, with browser evidence and appropriate regression checks. Honors report-only and no-commit requests."
+description: "Test an application at its browser, API, CLI, job or webhook surface and fix reproducible bugs within the requested scope, with evidence and appropriate regression checks. Honors report-only and no-commit requests."
 
 disable-model-invocation: true
 allowed-tools:
@@ -16,7 +16,7 @@ allowed-tools:
 
 # QA: Test, Fix, Verify
 
-Test the requested web application and correct reproducible bugs within scope. Use [exploration.md](exploration.md) for shared browser testing and reporting. A requested report-only run follows qa-only's no-source-edit boundary.
+Test the requested application at the selected surface and correct reproducible bugs within scope. Use [exploration.md](exploration.md) for shared browser testing and reporting. A requested report-only run follows qa-only's no-source-edit boundary.
 
 ## Fix loop
 

@@ -22,7 +22,7 @@ Establish causal evidence before fixing a bug. For diagnosis-only requests, repo
 
 Read the error, failing test, issue or observed behavior. Establish expected versus actual behavior and reproduce the failure in the relevant environment. Inspect the implicated code, callers and data. Reuse a supplied verified root cause rather than repeating discovery.
 
-Use quick mode for a direct, verifiable cause. If its first hypothesis fails, broaden the investigation. For performance, environment or regression problems read only the corresponding section of [specialized.md](specialized.md).
+Use quick mode for a direct, verifiable cause. If its first hypothesis fails, broaden the investigation. For performance, environment, regression, intermittent, order-dependent or concurrency problems read only the corresponding section of [specialized.md](specialized.md).
 
 ## Investigate
 

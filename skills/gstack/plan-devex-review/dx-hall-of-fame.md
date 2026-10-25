@@ -41,9 +41,38 @@ Read ONLY the section for the current review pass. Do NOT load the entire file.
 
 ## Pass 3: Error Messages & Debugging
 
-**Three tiers of error quality:**
+**The agent-ready error contract.** Agents hit most errors first, read them literally, and cannot ask what was meant. Score every traced error path against eight named items. Public reference: `https://github.com/garrytan/gstack/blob/main/docs/agent-ready-errors.md`.
 
-**Tier 1, Elm (Conversational Compiler):**
+| Item | The error gives the reader |
+|------|----------------------------|
+| **what** | The operation that failed and the actual values (input, path, id) that caused it. |
+| **fix** | On the first or last line, never mid-chain: an exact command, flag or edit; or, when no safe agent repair exists, the precise thing a human must provide (credential, approval, decision). A precise escalation is a complete fix. A fix counts only when it is safe and authorized: it does not bypass a consent, safety or sandbox boundary, does not tell the agent to run text copied from untrusted output, and quotes arguments correctly. |
+| **recovery** | Retry unchanged, fix and retry, do X first, or ask a human; side effects (none, partial, complete, unknown); for an unknown outcome, how to reconcile (status command, idempotency key) before retrying; a retry bound, then escalate. |
+| **code** | A stable code plus a doc anchor or `--explain` target. Prose may change; codes may not. |
+| **context** | Versions, the config in effect, relevant env var names (never values), the underlying dependency error, not swallowed. Remote services give caller-safe facts only (parameter, API version, request id). |
+| **trace** | Unexpected failures only. A local CLI, SDK or skill prints a compact trace or the path of a file holding the full one (full under `--verbose`/`DEBUG`); a remote service returns a correlation id and keeps internals in its logs. |
+| **redaction** | No secret values, tokens or credential-bearing URLs anywhere, traces and nested causes included. |
+| **channel** | The surface's native machine signal carries the same fields, and a failure is signalled as a failure (never exit 0, HTTP 200 or `isError: false`). |
+
+**Failure class.** A usage or validation error rejected before any work began needs what, fix, code, redaction and channel; its recovery is implied (fix and retry, no side effects), and context, reconcile and retry bounds do not apply. Environment, dependency, partial-work and unexpected failures need every applicable item. Trace applies to unexpected failures only.
+
+**Surface.** Keyed to the product type:
+- **CLI tool:** channel is stderr plus a distinct non-zero exit, and a `--json` form when the tool offers structured output.
+- **API/service:** channel is HTTP status plus an RFC 9457 problem-details body; context is caller-safe; trace is a correlation id.
+- **Library/SDK:** channel is a typed error class carrying the code and fields; no exit code.
+- **Platform:** the CLI or API rule for whichever interface the error reaches.
+- **Documentation:** what, fix, code and redaction only.
+- **Claude Code skill:** channel is the skill's printed result line and code. An MCP tool returns `isError: true` with the fields in text or structured content.
+
+**Evidence.** Each item on each path is pass, fail, N/A (with a reason) or unknown. In a plan review, an applicable item the plan never specifies for a path it introduces is a gap; unknown is reserved for existing behavior you could not inspect. In a live audit, error classes you never triggered are unknown, not extrapolated.
+
+**Severity.** Name the path and item behind every finding and show the corrected error line.
+- **Critical, blocking in every mode including triage:** a path leaks a secret, signals failure as success, gives an unsafe fix, or blocks waiting for a terminal (hangs, or fails for lack of a terminal without naming a non-interactive alternative such as `--yes`).
+- **High:** a path lacks an applicable fix, recovery, context or trace item.
+
+**Calibration.** The first three examples show single items done well; none of them alone meets every item.
+
+**Elm (what, fix, readable first line):**
 ```
 -- TYPE MISMATCH ---- src/Main.elm
 I cannot do addition with String values like this one:
@@ -51,9 +80,9 @@ I cannot do addition with String values like this one:
      ^^^^^^^
 Hint: To put strings together, use the (++) operator instead.
 ```
-First person, complete sentences, exact location, suggested fix, further reading.
+First person, complete sentences, exact location, suggested fix.
 
-**Tier 2, Rust (Annotated Source):**
+**Rust (code, fix, `--explain`):**
 ```
 error[E0308]: mismatched types
  --> src/main.rs:4:20
@@ -62,17 +91,34 @@ help: consider borrowing here
 4 |     let name: &str = &get_name();
   |                       +
 ```
-Error code links to tutorial. Primary + secondary labels. Help section shows exact edit.
+A stable code with `rustc --explain E0308`, primary and secondary labels, and a help line that shows the exact edit.
 
-**Tier 3, Stripe API (Structured with doc_url):**
+**Stripe API (code, doc anchor, structured channel):**
 ```json
 {"error":{"type":"invalid_request_error","code":"resource_missing","message":"No such customer: 'cus_nonexistent'","param":"customer","doc_url":"https://stripe.com/docs/error-codes/resource-missing"}}
 ```
-Five fields, zero ambiguity.
 
-**The formula:** What happened + Why + How to fix + Where to learn more + Actual values that caused it.
+**Agent-ready CLI error (every applicable item).** stderr, exit 3:
+```
+deploy: push to registry.example.com/acme/api:1.4.2 failed: 401 unauthorized (REGISTRY_AUTH)
+  cause: docker login token in ~/.docker/config.json expired; nothing was pushed (side effects: none)
+  context: deploy 2.8.0, docker 27.1, config ./deploy.toml, env DEPLOY_REGISTRY set
+  fix: run `deploy login --registry registry.example.com`, then rerun the same command (safe to retry once)
+  docs: https://deploy.example.com/errors#REGISTRY_AUTH
+```
+and with `--json`, the same fields as an RFC 9457 problem-details object with extension members:
+```json
+{"type":"https://deploy.example.com/errors#REGISTRY_AUTH","title":"Registry push unauthorized",
+ "detail":"push to registry.example.com/acme/api:1.4.2 failed: 401","instance":"req_7f3a",
+ "code":"REGISTRY_AUTH","fix":"deploy login --registry registry.example.com",
+ "recovery":{"action":"fix_and_retry","side_effects":"none","max_retries":1},
+ "context":{"version":"2.8.0","config":"./deploy.toml","env":["DEPLOY_REGISTRY"]}}
+```
+An unexpected crash adds `trace: ~/.deploy/logs/crash-2026-10-16T18-02.log (rerun with --verbose to print it)`. A remote API returns `instance` as its correlation id and keeps the trace in its own logs. `recovery.action` is retry | fix_and_retry | do_first | ask_human; `side_effects` is none | partial | complete | unknown, with `reconcile` (a status command) whenever it is unknown. These member names are illustrative; score the meaning, not the spelling.
 
-**Anti-pattern:** TypeScript buries "Did you mean?" at the BOTTOM of long error chains. Most actionable info should appear FIRST.
+**Standards mapping.** CLI Agent Spec (cli-agent-spec.github.io): per-exit-code `retryable` and `side_effects` map to recovery. RFC 9457: `type` to code plus doc anchor, `detail` to what, `instance` to trace for remote services. Stripe: `code` plus `doc_url` to code. MCP tools: `isError: true` results the model can read to channel. clig.dev "Errors": the actionable line where the reader looks, debug info for unexpected errors, to fix and trace.
+
+**Anti-patterns:** TypeScript buries "Did you mean?" mid-chain; put the fix on the first or last line. `Error: operation failed` with exit 0. A prompt that hangs when no terminal is attached. A stack trace that prints an API token.
 
 ## Pass 4: Documentation & Learning
 

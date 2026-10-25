@@ -7,7 +7,7 @@ Check the underlying demand, alternatives and constraints before proposing addit
 Keep the existing plan as the baseline. Identify only additions with a clear payoff for this goal, offer them separately and record accept/defer/reject. Accepted additions get explicit acceptance criteria; rejected ones do not reappear later.
 
 ## Hold
-Assess whether the planned solution actually achieves the goal, whether existing code can be reused and where interfaces/failure paths need clarification. Do not add or remove features under the guise of rigor.
+Assess whether the planned solution actually achieves the goal, whether existing code can be reused and where interfaces/failure paths need clarification. Do not add or remove features under the guise of rigor. When the plan adds a status report, audit matrix, certificate or conformance check that nothing consumes, ask who uses it, what decision or delivered behavior changes because it exists, why this is the smallest useful version and when it retires; manufacturing a consumer to pass the question is the pathology, not an answer. Product observability (dashboards, alerts, runbooks for the shipped system), user-facing docs and agent-consumed instructions are product, not artifacts about the work.
 
 ## Reduction
 Find the smallest scope that still achieves the stated goal. Name what would be deferred and the resulting tradeoff. Preserve explicit must-haves and obtain a ruling for material scope reductions not already authorized.
