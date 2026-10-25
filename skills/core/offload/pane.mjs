@@ -13,13 +13,19 @@
 // waits forever on a builder it cannot hear.
 //
 // dispatch.sh leaves a signature that hand-rolling does not:
-//   * the tab is labeled exactly "builder" (dispatch.sh always passes --label builder)
 //   * the harness runs in that tab's ROOT pane, so the tab holds exactly one pane
-// `herdr agent start --split` breaks both: the tab carries the slice's own label
-// and holds two panes — an empty root shell plus the split the agent lives in.
+//   * it writes "<handoff>.pane" naming the frontend, pane and tab it launched
+//   * it labels the tab exactly "builder" — but anyone may rename a tab later, so
+//     the label is only the fallback proof, used when no handoff is supplied or
+//     the tab still carries it
+// `herdr agent start --split` breaks the first: the tab holds two panes — an
+// empty root shell plus the split the agent lives in.
 //
-// Checking the signature turns the prose invariant into a refusal.
+// Checking the signature turns the prose invariant into a refusal. With a
+// handoff, the sidecar is the label-independent proof; without one, the label.
 import { execFileSync } from 'node:child_process';
+import { closeSync, constants, openSync, readSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // dispatch.sh's tab label. Changing it here without changing dispatch.sh makes
 // every dispatch look hand-rolled; launch_contract.test.mjs pins both.
@@ -51,8 +57,43 @@ function tabInfo(tabId) {
 
 const skip = (reason) => ({ verified: false, skipped: true, reason });
 
+// dispatch.sh's sidecar is four short lines; anything bigger is not one.
+const SIDECAR_MAX_BYTES = 4096;
+
+// Does "<handoff>.pane" name this pane, in this tab, on the herdr frontend?
+// Each of the three keys must appear on exactly one whole line, so a prefix, a
+// comment, a duplicate or a CRLF line cannot satisfy it. Any read problem —
+// missing, unreadable, oversized, binary, a directory or FIFO (the read throws) —
+// is "no".
+function sidecarNames(handoff, paneId, tabId) {
+  if (handoff.endsWith('/') || handoff.includes('\0') || handoff.split('/').includes('..')) return false;
+  let fd;
+  try {
+    // O_NONBLOCK so a FIFO at the path cannot hold the open.
+    fd = openSync(`${resolve(handoff)}.pane`, constants.O_RDONLY | constants.O_NONBLOCK);
+    const buf = Buffer.alloc(SIDECAR_MAX_BYTES + 1);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    if (n > SIDECAR_MAX_BYTES || buf.subarray(0, n).includes(0)) return false;
+    const lines = buf.toString('utf8', 0, n).split('\n');
+    const only = (key, value) => {
+      const own = lines.filter((l) => l.startsWith(`${key}=`));
+      return own.length === 1 && own[0] === `${key}=${value}`;
+    };
+    return only('frontend', 'herdr') && only('pane', paneId) && only('tab', tabId);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 /**
  * Does `paneId` look like a pane dispatch.sh created?
+ *
+ * With a `handoff` path, a pane verifies when its tab holds exactly one pane and
+ * either `<handoff>.pane` names the pane and tab (whatever the tab is labeled
+ * now) or the tab is still labeled "builder". Without one, only the label rule
+ * applies.
  *
  * Returns `{ verified, skipped, reason, tabId, label, paneCount }`. `skipped` is
  * the honest third answer — no pane recorded, not inside herdr, no herdr CLI —
@@ -60,7 +101,7 @@ const skip = (reason) => ({ verified: false, skipped: true, reason });
  * landed in tmux or Terminal.app records no pane at all and must not be punished
  * for it.
  */
-export function verifyPane(paneId) {
+export function verifyPane(paneId, handoff) {
   if (!paneId) return skip('no pane recorded');
   if (!process.env.HERDR_ENV) return skip('not inside a herdr session — pane provenance is unverifiable here');
 
@@ -81,7 +122,10 @@ export function verifyPane(paneId) {
   const paneCount = Number(tab.pane_count ?? 0);
   const base = { skipped: false, tabId, label, paneCount };
 
-  if (label !== BUILDER_TAB_LABEL) {
+  const hasHandoff = typeof handoff === 'string' && handoff !== '';
+  const renamed = label !== BUILDER_TAB_LABEL;
+
+  if (renamed && !hasHandoff) {
     return {
       ...base,
       verified: false,
@@ -93,6 +137,13 @@ export function verifyPane(paneId) {
       ...base,
       verified: false,
       reason: `its tab ${tabId} holds ${paneCount} panes — dispatch.sh runs the builder in the tab's only pane, so a split means the builder was started by hand`,
+    };
+  }
+  if (renamed && !sidecarNames(handoff, paneId, tabId)) {
+    return {
+      ...base,
+      verified: false,
+      reason: `its tab ${tabId} is labeled "${label || '(none)'}" and no dispatch sidecar for this handoff names pane ${paneId} — it is probably a hand-started pane`,
     };
   }
   return { ...base, verified: true, reason: '' };

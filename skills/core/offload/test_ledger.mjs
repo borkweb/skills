@@ -536,3 +536,115 @@ test('ledger report --verdicts lists only the review-only rejection verdicts', (
   assert.doesNotMatch(out, /g3 failed/);
   assert.doesNotMatch(out, /SAFE TO LAND/);
 });
+
+// --- pane provenance survives a renamed tab ---------------------------------
+//
+// Anyone may rename a herdr tab, so the "builder" label cannot be the only proof
+// a pane came from dispatch.sh. With a handoff, the ledger also accepts the
+// `<handoff>.pane` sidecar dispatch.sh wrote: frontend, pane and tab as whole
+// lines, on a tab that still holds one pane.
+
+const RENAMED = inHerdr({ 'w1:p21': 'w1:t21' }, { 'w1:t21': 'David:1' });
+const RENAMED_SPLIT = inHerdr({ 'w1:p21': 'w1:t21' }, { 'w1:t21': 'David:2' });
+// dispatch.sh: printf 'frontend=%s\npane=%s\ntab=%s\nharness=%s\n'
+const sidecar = (pane = 'w1:p21', tab = 'w1:t21') => `frontend=herdr\npane=${pane}\ntab=${tab}\nharness=claude\n`;
+const handoffWith = (name, text) => {
+  const h = join(BOX, `${name}.md`);
+  if (text !== undefined) writeFileSync(`${h}.pane`, text);
+  return h;
+};
+const pinned = (REPO, id = '1') => JSON.parse(run(['ledger', 'show', REPO])).slices.find((s) => s.id === id).pane;
+
+test('ledger add accepts a renamed dispatch tab when the handoff has its sidecar', () => {
+  const REPO = repo('renamed-add');
+  const h = handoffWith('renamed-add', sidecar());
+  run(['ledger', 'init', REPO, 'g'], RENAMED);
+  const s = JSON.parse(run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--pane', 'w1:p21', '--handoff', h], RENAMED));
+  assert.equal(s.pane, 'w1:p21');
+});
+
+test('ledger set refuses a renamed tab with no sidecar, a wrong pane or tab, or a split', () => {
+  const REPO = repo('renamed-refuse');
+  run(['ledger', 'init', REPO, 'g'], RENAMED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], RENAMED);
+  const marker = 'SIDECAR-MARKER-77c1';
+  const refusals = [
+    [RENAMED, handoffWith('renamed-none'), /no dispatch sidecar for this handoff names pane w1:p21/],
+    [RENAMED, handoffWith('renamed-other-pane', sidecar('w1:p2')), /no dispatch sidecar/],
+    [RENAMED, handoffWith('renamed-other-tab', sidecar('w1:p21', 'w1:t2')), /no dispatch sidecar/],
+    [RENAMED, handoffWith('renamed-marker', `${marker}\n`), /no dispatch sidecar/],
+    [RENAMED_SPLIT, handoffWith('renamed-split', sidecar()), /holds 2 panes/],
+  ];
+  for (const [opts, h, pattern] of refusals) {
+    const err = runFail(['ledger', 'set', REPO, '1', '--pane', 'w1:p21', '--handoff', h], opts);
+    assert.match(err, /refusing to record pane "w1:p21"/);
+    assert.match(err, pattern);
+    assert.doesNotMatch(err, new RegExp(marker), 'sidecar text never reaches the error');
+    assert.equal(pinned(REPO), '', 'a refused pane leaves the ledger untouched');
+  }
+});
+
+test('ledger set uses the slice’s stored handoff when no --handoff flag is given', () => {
+  const REPO = repo('renamed-stored');
+  const h = handoffWith('renamed-stored', sidecar());
+  run(['ledger', 'init', REPO, 'g'], RENAMED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--handoff', h], RENAMED);
+  assert.equal(JSON.parse(run(['ledger', 'set', REPO, '1', '--pane', 'w1:p21'], RENAMED)).pane, 'w1:p21');
+});
+
+test('ledger set: the --handoff flag wins over the stored handoff', () => {
+  const good = handoffWith('renamed-flag-good', sidecar());
+  const bad = handoffWith('renamed-flag-bad');
+  const REPO = repo('renamed-flag');
+  run(['ledger', 'init', REPO, 'g'], RENAMED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--handoff', bad], RENAMED);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--pane', 'w1:p21'], RENAMED), /no dispatch sidecar/);
+  assert.equal(JSON.parse(run(['ledger', 'set', REPO, '1', '--pane', 'w1:p21', '--handoff', good], RENAMED)).pane, 'w1:p21');
+
+  const REPO2 = repo('renamed-flag-reverse');
+  run(['ledger', 'init', REPO2, 'g'], RENAMED);
+  run(['ledger', 'add', REPO2, '--id', '1', '--title', 't', '--handoff', good], RENAMED);
+  assert.match(runFail(['ledger', 'set', REPO2, '1', '--pane', 'w1:p21', '--handoff', bad], RENAMED), /no dispatch sidecar/);
+  assert.equal(pinned(REPO2), '');
+});
+
+test('a slice with no handoff anywhere keeps the label-only rule', () => {
+  const REPO = repo('renamed-nohandoff');
+  run(['ledger', 'init', REPO, 'g'], RENAMED);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't'], RENAMED);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--pane', 'w1:p21'], RENAMED), /labeled "David", not "builder"/);
+});
+
+test('an unknown slice with a bad pane still reports the pane first', () => {
+  const REPO = repo('renamed-unknown');
+  run(['ledger', 'init', REPO, 'g'], RENAMED);
+  assert.match(runFail(['ledger', 'set', REPO, '9', '--pane', 'w1:p21'], RENAMED), /refusing to record pane/);
+  assert.match(runFail(['ledger', 'set', REPO, '9', '--state', 'accepted'], RENAMED), /no slice "9"/);
+});
+
+test('ledger accepts a pane it cannot verify, with a handoff, outside herdr or without the CLI', () => {
+  const REPO = repo('renamed-skipped');
+  const h = handoffWith('renamed-skipped');
+  run(['ledger', 'init', REPO, 'g']);
+  assert.equal(JSON.parse(run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--pane', 'w1:p21', '--handoff', h])).pane, 'w1:p21');
+  const noCli = { env: { HERDR_ENV: '1', PATH: join(BOX, 'no-herdr-here') } };
+  assert.equal(JSON.parse(run(['ledger', 'set', REPO, '1', '--pane', 'w1:p22', '--handoff', h], noCli)).pane, 'w1:p22');
+});
+
+test('board flags a renamed pane without a sidecar or with a split, not one with a sidecar', () => {
+  const rows = {
+    ok: [RENAMED, sidecar(), false],
+    missing: [RENAMED, undefined, true],
+    split: [RENAMED_SPLIT, sidecar(), true],
+  };
+  for (const [name, [opts, text, flagged]] of Object.entries(rows)) {
+    const REPO = repo(`renamed-board-${name}`);
+    run(['ledger', 'init', REPO, 'g'], RENAMED);
+    const doc = slice(REPO, '1', { state: 'dispatched', docStatus: 'dispatched', pid: process.pid });
+    if (text !== undefined) writeFileSync(`${doc}.pane`, text);
+    run(['ledger', 'set', REPO, '1', '--pane', 'w1:p21'], { env: { ...RENAMED.env, OFFLOAD_ALLOW_UNVERIFIED_PANE: '1' } });
+    const row = JSON.parse(run(['board', REPO, '--json', '--no-git'], opts)).slices[0];
+    assert.equal(row.flags.some((f) => f.startsWith('UNMANAGED PANE')), flagged, name);
+    assert.equal(row.paneCheck.verified, !flagged, name);
+  }
+});
