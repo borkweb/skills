@@ -9,6 +9,8 @@ PIDS=()
 PASSED=0
 FAILED=0
 CASE_ERROR=""
+# Run the copy under test, never a newer installed one (see newest-installed-copy).
+export WFR_NO_UPGRADE=1
 
 track_pid() {
   PIDS+=("$1")
@@ -815,6 +817,245 @@ case_ready_with_board() {
   grep -q 'the slice' "$output" || fail_case "board row missing"
 }
 
+# A builder that ended its turn while a backgrounded command works: the command
+# keeps starting short processes that burn almost no CPU the tree can see (a
+# gate-slot wait loop, or children whose CPU leaves with them). Before process
+# churn counted, this woke the architect for nothing, so architects raised the
+# settle window to 30 minutes and every real stop waited that long.
+start_command_running_builder() {
+  (
+    trap 'exit 0' TERM INT
+    while :; do sleep 1; done
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+}
+
+case_turn_ended_command_running() {
+  local handoff output toucher updater rc
+  handoff=$(new_handoff turn-command-running)
+  output="$TEST_ROOT/turn-command-running.out"
+  start_command_running_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 2
+    touch "$handoff.turn-ended"
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+  (
+    sleep 10
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 18 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=3 WFR_TURN_EPILOGUE=1 \
+    "$WAITER" "$handoff" builder 30 25
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0 ($(head -1 "$output"))"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "missing WAITER: ready"
+}
+
+case_command_running_not_idle() {
+  local handoff output updater rc
+  handoff=$(new_handoff command-running-not-idle)
+  output="$TEST_ROOT/command-running-not-idle.out"
+  start_command_running_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 10
+    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  ) &
+  updater=$!
+  track_pid "$updater"
+
+  run_waiter_capped "$output" 18 \
+    WFR_GRACE=3 WFR_POLL=1 \
+    "$WAITER" "$handoff" builder 30 4
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0 ($(head -1 "$output"))"; return 1; }
+  grep -q '^WAITER: ready$' "$output" ||
+    fail_case "missing WAITER: ready"
+}
+
+# New processes postpone a candidate rather than retire it: once the command
+# ends and the tree goes quiet, the stop is confirmed.
+case_turn_ended_command_then_quiet() {
+  local handoff output toucher rc
+  handoff=$(new_handoff turn-command-then-quiet)
+  output="$TEST_ROOT/turn-command-then-quiet.out"
+  (
+    trap 'exit 0' TERM INT
+    i=0
+    while [ "$i" -lt 6 ]; do sleep 1; i=$(( i + 1 )); done
+    exec sleep 999
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 2
+    touch "$handoff.turn-ended"
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+
+  run_waiter_capped "$output" 18 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=3 WFR_TURN_EPILOGUE=1 \
+    "$WAITER" "$handoff" builder 30 25
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 6 ] || { fail_case "exit=$rc expected=6 ($(head -1 "$output"))"; return 1; }
+  grep -q 'WAITER: builder-awaiting-input' "$output" ||
+    fail_case "missing builder-awaiting-input"
+}
+
+# The same, with the agent's own background CPU trickle (TUI redraws) running:
+# summed over a long postponement it used to retire the real stop.
+case_turn_ended_command_then_quiet_with_trickle() {
+  local handoff output toucher rc
+  handoff=$(new_handoff turn-command-trickle)
+  output="$TEST_ROOT/turn-command-trickle.out"
+  (
+    trap 'kill "$trickle" 2>/dev/null; exit 0' TERM INT
+    perl -MTime::HiRes=time,sleep -e 'while (1) { my $t = time + 0.02; 1 while time < $t; sleep 0.98 }' &
+    trickle=$!
+    i=0
+    while [ "$i" -lt 8 ]; do sleep 1; i=$(( i + 1 )); done
+    wait "$trickle"
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 2
+    touch "$handoff.turn-ended"
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+
+  run_waiter_capped "$output" 22 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=3 WFR_TURN_EPILOGUE=1 \
+    WFR_IDLE_CPU_CENTIS=10 WFR_IDLE_CPU_WINDOW=3 \
+    "$WAITER" "$handoff" builder 40 30
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 6 ] || { fail_case "exit=$rc expected=6 ($(head -1 "$output"))"; return 1; }
+  grep -q 'WAITER: builder-awaiting-input' "$output" ||
+    fail_case "missing builder-awaiting-input"
+}
+
+# A builder that stopped with a never-ending poll loop behind it (a gate-slot
+# wait whose holder hung) starts processes forever. Churn alone counts only for
+# WFR_CHURN_MAX seconds, so the stop and the idle backstop still fire.
+case_endless_loop_still_wakes() {
+  local handoff output toucher rc
+  handoff=$(new_handoff endless-loop-turn)
+  output="$TEST_ROOT/endless-loop-turn.out"
+  start_command_running_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 2
+    touch "$handoff.turn-ended"
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+  run_waiter_capped "$output" 18 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=3 WFR_TURN_EPILOGUE=1 WFR_CHURN_MAX=4 \
+    "$WAITER" "$handoff" builder 30 25
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 6 ] || { fail_case "turn sub-case exit=$rc expected=6 ($(head -1 "$output"))"; return 1; }
+
+  handoff=$(new_handoff endless-loop-idle)
+  output="$TEST_ROOT/endless-loop-idle.out"
+  start_command_running_builder
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  run_waiter_capped "$output" 18 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_CHURN_MAX=4 \
+    "$WAITER" "$handoff" builder 30 4
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 5 ] || { fail_case "idle sub-case exit=$rc expected=5 ($(head -1 "$output"))"; return 1; }
+  grep -q 'WAITER: builder-idle' "$output" ||
+    fail_case "idle sub-case missing builder-idle"
+}
+
+# The counter-case: a stopped builder that left a quiet long-lived child behind
+# (a dev server, a watcher) starts nothing new, so its stop still wakes.
+case_turn_ended_with_quiet_child() {
+  local handoff output toucher rc
+  handoff=$(new_handoff turn-quiet-child)
+  output="$TEST_ROOT/turn-quiet-child.out"
+  (
+    trap 'exit 0' TERM INT
+    sleep 999 &
+    child=$!
+    trap 'kill "$child" 2>/dev/null; exit 0' TERM INT
+    wait "$child"
+  ) &
+  BUILDER_PID=$!
+  track_pid "$BUILDER_PID"
+  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
+  (
+    sleep 2
+    touch "$handoff.turn-ended"
+  ) &
+  toucher=$!
+  track_pid "$toucher"
+
+  run_waiter_capped "$output" 15 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=3 WFR_TURN_EPILOGUE=1 \
+    "$WAITER" "$handoff" builder 30 25
+  rc=$?
+  stop_pid "$BUILDER_PID"
+  [ "$rc" -eq 6 ] || { fail_case "exit=$rc expected=6"; return 1; }
+  grep -q 'WAITER: builder-awaiting-input' "$output" ||
+    fail_case "missing builder-awaiting-input"
+}
+
+# A bridge started from an older plugin version's path hands off to the newest
+# installed copy, so fixes reach runs whose architect pasted the old path.
+case_newest_installed_copy() {
+  local handoff output rc box v
+  handoff=$(new_handoff newest-copy)
+  output="$TEST_ROOT/newest-copy.out"
+  box="$TEST_ROOT/plugin-cache/bork"
+  # 3.12.0 was rolled back (orphaned) and 3.11.0 is a half-written install, so
+  # 3.10.0 is the newest copy to hand off to.
+  for v in 3.9.0 3.10.0 3.11.0 3.12.0 3.2.0 notes; do
+    mkdir -p "$box/$v/skills/core/complete"
+  done
+  cp "$WAITER" "$box/3.9.0/skills/core/complete/wait-for-ready.sh"
+  for v in 3.10.0 3.12.0 3.2.0 notes; do
+    printf '%s\n' '#!/usr/bin/env bash' '# WAITER output contracts' \
+      "echo \"WAITER: copy $v \$1 \${WFR_NO_UPGRADE:-}\"" \
+      > "$box/$v/skills/core/complete/wait-for-ready.sh"
+  done
+  : > "$box/3.11.0/skills/core/complete/wait-for-ready.sh"
+  : > "$box/3.12.0/.orphaned_at"
+
+  run_waiter_capped "$output" 10 -u WFR_NO_UPGRADE \
+    bash "$box/3.9.0/skills/core/complete/wait-for-ready.sh" "$handoff" builder 20 15
+  rc=$?
+  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
+  grep -qx "WAITER: copy 3.10.0 $handoff 1" "$output" ||
+    { fail_case "did not hand off to 3.10.0: $(cat "$output")"; return 1; }
+
+  printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
+  run_waiter_capped "$output" 10 WFR_NO_UPGRADE=1 \
+    bash "$box/3.9.0/skills/core/complete/wait-for-ready.sh" "$handoff" builder 20 15
+  rc=$?
+  [ "$rc" -eq 0 ] || { fail_case "opt-out exit=$rc expected=0"; return 1; }
+  grep -qx 'WAITER: ready' "$output" ||
+    fail_case "WFR_NO_UPGRADE=1 still handed off: $(cat "$output")"
+}
+
 run_case() {
   local name="$1" function_name="$2"
   CASE_ERROR=""
@@ -851,6 +1092,13 @@ run_case activity-unrelated-session-idle case_activity_unrelated_session_idle
 run_case activity-builder-file-not-idle case_activity_builder_file_not_idle
 run_case codex-rollout-unrelated-idle case_codex_rollout_unrelated_idle
 run_case codex-rollout-builder-not-idle case_codex_rollout_builder_not_idle
+run_case turn-ended-command-running case_turn_ended_command_running
+run_case command-running-not-idle case_command_running_not_idle
+run_case turn-ended-with-quiet-child case_turn_ended_with_quiet_child
+run_case turn-ended-command-then-quiet case_turn_ended_command_then_quiet
+run_case turn-ended-command-then-quiet-with-trickle case_turn_ended_command_then_quiet_with_trickle
+run_case endless-loop-still-wakes case_endless_loop_still_wakes
+run_case newest-installed-copy case_newest_installed_copy
 
 echo "TESTS: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

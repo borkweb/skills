@@ -13,9 +13,10 @@
 #   tmux_window is accepted and ignored for caller compatibility.
 #   Defaults: timeout 7200s, idle 600s, WFR_GRACE=90s, WFR_POLL=5s,
 #   WFR_IDLE_CPU_CENTIS=200, WFR_IDLE_CPU_WINDOW=60s, WFR_TURN_SETTLE=45s,
-#   WFR_TURN_EPILOGUE=5s. Marker path is always
+#   WFR_TURN_EPILOGUE=5s, WFR_CHURN_MAX=1800s. Marker path is always
 #   "$HANDOFF.builder". WFR_CPU_EXCLUDE defaults to
-#   SkyComputerUseClient|node_repl|mcp-context-a8c.
+#   SkyComputerUseClient|node_repl|mcp-context-a8c|caffeinate.
+#   WFR_NO_UPGRADE=1 keeps this copy from handing off to a newer installed one.
 #   WFR_BOARD_CWD=<repo root>: after the WAITER line, print this session's
 #   `handoff.mjs board` for that root, so the wake arrives carrying the state of
 #   every slice and the architect never has to remember to run it first. Needs
@@ -41,9 +42,28 @@
 #                            architect learned to `rm` the marker by hand to get
 #                            work done. So a fresh marker only opens a CANDIDATE
 #                            stop, confirmed after WFR_TURN_SETTLE seconds of no
-#                            CPU growth and no activity-sidecar writes. Any sign
-#                            of life inside that window retires the candidate as
-#                            the sub-turn it was.
+#                            CPU growth, no new process in the builder's tree and
+#                            no activity-sidecar writes. Any sign of life inside
+#                            that window retires the candidate as the sub-turn it
+#                            was.
+#
+#                            New processes are the sign that matters most. A
+#                            builder that ends its turn while a backgrounded gate
+#                            run works keeps starting short-lived processes (npm,
+#                            esbuild, browsers, a gate-slot wait loop), and ps
+#                            drops each one's CPU once it exits, so the tree's
+#                            CPU barely moves. CPU alone mistook those runs for a
+#                            stop, and architects raised WFR_TURN_SETTLE to 1800
+#                            to stop the false wakes, which delayed the real ones
+#                            by up to 30 minutes. A stopped builder that left a
+#                            quiet dev server or watcher running starts nothing,
+#                            so it still wakes. New processes postpone a candidate
+#                            rather than retire it, so the stop is confirmed once
+#                            they end. They count only within WFR_CHURN_MAX
+#                            seconds of the last CPU burst or log write: a builder
+#                            that stopped with a never-ending poll loop behind it
+#                            (a gate-slot wait whose holder hung) still wakes, as
+#                            awaiting input or idle, after that long.
 #
 #                            The harness writes its own end-of-turn records
 #                            (Claude's stop_hook_summary and turn_duration) to
@@ -72,6 +92,39 @@
 #   WAITER: reaped pid=<pid> handoff=<path>
 #   WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]
 set -uo pipefail
+
+# Plugin caches keep one directory per version (.../bork/<version>/skills/core/
+# complete/), and architects paste the path they loaded, so a bridge armed after
+# an upgrade would still run the old code. Hand off to the newest installed copy
+# at start only: switching mid-wait would lose the marker baselines. Skip a
+# version the host marked orphaned (uninstalled or rolled back) and a copy that
+# is incomplete: an empty file would exit 0 with no WAITER line, a false ready.
+newest_installed_copy() {
+  local ver_dir root current v copy
+  ver_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." 2>/dev/null && pwd)" || return 1
+  current="${ver_dir##*/}"
+  [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  root="${ver_dir%/*}"
+  while read -r v; do
+    [ "$v" != "$current" ] || return 1
+    copy="$root/$v/skills/core/complete/wait-for-ready.sh"
+    [ ! -e "$root/$v/.orphaned_at" ] || continue
+    grep -q 'WAITER output contracts' "$copy" 2>/dev/null || continue
+    bash -n "$copy" 2>/dev/null || continue
+    printf '%s\n' "$copy"
+    return 0
+  done < <(
+    for v in "$root"/*/; do
+      v="${v%/}"; v="${v##*/}"
+      [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && printf '%s\n' "$v"
+    done | sort -t. -k1,1nr -k2,2nr -k3,3nr
+  )
+  return 1
+}
+
+if [ -z "${WFR_NO_UPGRADE:-}" ] && newer=$(newest_installed_copy); then
+  WFR_NO_UPGRADE=1 exec "${BASH:-bash}" "$newer" "$@"
+fi
 
 usage() {
   echo "WAITER: usage: wait-for-ready.sh <handoff_path> [tmux_window] [timeout_seconds] [idle_seconds]"
@@ -139,6 +192,7 @@ IDLE_CPU_CENTIS="${WFR_IDLE_CPU_CENTIS:-200}"
 IDLE_CPU_WINDOW="${WFR_IDLE_CPU_WINDOW:-60}"
 TURN_SETTLE="${WFR_TURN_SETTLE:-45}"
 TURN_EPILOGUE="${WFR_TURN_EPILOGUE:-5}"
+CHURN_MAX="${WFR_CHURN_MAX:-1800}"
 MARKER="$HANDOFF.builder"
 TURN_MARKER="$HANDOFF.turn-ended"
 BOARD_CWD="${WFR_BOARD_CWD:-}"
@@ -249,8 +303,10 @@ builder_alive() {
   printf '%s\n' "$pid"
 }
 
-cpu_centis() {
-  local root_pid="$1" exclude="${WFR_CPU_EXCLUDE:-SkyComputerUseClient|node_repl|mcp-context-a8c}"
+# "<cpu centis> <pid>..." for the builder's tree: total CPU, then every
+# descendant that isn't excluded (the root is left out; it never changes).
+tree_sample() {
+  local root_pid="$1" exclude="${WFR_CPU_EXCLUDE:-SkyComputerUseClient|node_repl|mcp-context-a8c|caffeinate}"
   ps -ww -axo pid=,ppid=,time=,command= 2>/dev/null |
     awk -v root="$root_pid" -v exclude="$exclude" '
       {
@@ -283,8 +339,10 @@ cpu_centis() {
           }
         }
         total = 0
+        pids = ""
         for (i = 1; i <= NR; i++) {
           if (!selected[pid[i]]) continue
+          if (pid[i] != root) pids = pids " " pid[i]
           fields = split(cpu[i], part, ":")
           if (fields == 2) {
             seconds = (part[1] * 60) + part[2]
@@ -295,7 +353,7 @@ cpu_centis() {
           }
           total += seconds
         }
-        printf "%.0f\n", total * 100
+        if (NR) printf "%.0f%s\n", total * 100, pids
       }
     '
 }
@@ -312,11 +370,16 @@ idle_pid=""
 idle_started=0
 idle_cpu_base=0
 idle_cpu_window_at=0
+tree_root=""
+tree_pids=""
+tree_last=""
+last_strong_at="$started_at"
+turn_quiet_at=0
 
 check() {
   # turn_baseline / turn_candidate* are deliberately NOT local: they carry the
   # settle evaluation across polls, like idle_started does.
-  local now current_status pid cpu delta tm
+  local now current_status pid sample cpu delta tm p spawned working
   now=$(date +%s)
 
   if [ ! -f "$HANDOFF" ]; then
@@ -355,23 +418,47 @@ check() {
     finish "WAITER: builder-exited-without-ready (status=${current_status:-none})" 3
   fi
 
-  cpu=$(cpu_centis "$pid")
+  # A failed ps reuses the last sample, so it reads as "nothing changed" rather
+  # than as every process in the tree being new.
+  sample=$(tree_sample "$pid")
+  [ -n "$sample" ] || sample="$tree_last"
+  tree_last="$sample"
+  cpu="${sample%% *}"
   cpu="${cpu:-0}"
+  # A process in the tree that the last poll did not see means a command is
+  # running, however little CPU the tree shows (see the header). Alone, it
+  # counts for WFR_CHURN_MAX seconds after the last CPU burst or log write.
+  spawned=false
+  if [ "$tree_root" = "$pid" ]; then
+    for p in ${sample#"$cpu"}; do
+      case "$tree_pids" in *" $p "*) ;; *) spawned=true; break ;; esac
+    done
+  fi
+  tree_root="$pid"
+  tree_pids=" ${sample#"$cpu"} "
+  working=false
+  if $spawned && [ $(( now - last_strong_at )) -lt "$CHURN_MAX" ]; then
+    working=true
+  fi
 
-  # Turn-end candidate. A fresh marker opens a candidate stop; any CPU growth or
-  # activity-sidecar write inside WFR_TURN_SETTLE retires it as a sub-turn.
+  # Turn-end candidate. A fresh marker opens a candidate stop. CPU growth or an
+  # activity-sidecar write retires it as a sub-turn; a new process postpones it.
+  # It is confirmed after WFR_TURN_SETTLE seconds with none of the three.
   if tm=$(mtime "$TURN_MARKER") && [ "${tm:-0}" -gt "${turn_baseline:-0}" ]; then
     if [ "$tm" != "$turn_candidate" ]; then
       turn_candidate="$tm"
       turn_candidate_at="$now"
+      turn_quiet_at="$now"
       turn_candidate_cpu="$cpu"
     fi
+    # An exiting child takes its CPU with it; measure from the lower total.
+    [ "$cpu" -ge "$turn_candidate_cpu" ] || turn_candidate_cpu="$cpu"
     if [ $(( now - turn_candidate_at )) -lt "$TURN_EPILOGUE" ]; then
       # Absorb the harness's end-of-turn log writes (see the header) without
       # hiding them from the idle check: a builder whose markers keep landing
       # while it streams is still alive.
-      if activity_seen; then
-        touch "$ACTIVITY_STAMP"
+      if $working || activity_seen; then
+        [ -z "$ACTIVITY_STAMP" ] || touch "$ACTIVITY_STAMP"
         idle_started="$now"
         idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
       fi
@@ -379,7 +466,11 @@ check() {
       turn_baseline="$tm"; turn_candidate=""
     elif [ $(( cpu - turn_candidate_cpu )) -gt "$IDLE_CPU_CENTIS" ]; then
       turn_baseline="$tm"; turn_candidate=""
-    elif [ $(( now - turn_candidate_at )) -ge "$TURN_SETTLE" ]; then
+    elif $working; then
+      # Measure CPU per quiet stretch too: an idle agent's own trickle summed
+      # over a long postponement would otherwise retire a real stop.
+      turn_quiet_at="$now"; turn_candidate_cpu="$cpu"
+    elif [ $(( now - turn_quiet_at )) -ge "$TURN_SETTLE" ]; then
       finish "WAITER: builder-awaiting-input (status=${current_status:-none})" 6
     fi
   fi
@@ -387,21 +478,28 @@ check() {
   # Busy is a CPU rate, not a sum: more than IDLE_CPU_CENTIS inside one
   # IDLE_CPU_WINDOW. An idle Claude builder's tree still burns ~0.5% CPU, which
   # summed over a 40-minute idle window always passed the threshold.
+  # Log writes and CPU bursts are strong signs and refresh last_strong_at; a new
+  # process alone only holds the idle clock while churn still counts.
   if [ "$idle_pid" != "$pid" ]; then
     idle_pid="$pid"
-    idle_started="$now"
+    idle_started="$now"; last_strong_at="$now"
     idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
   elif activity_seen; then
-    touch "$ACTIVITY_STAMP"
-    idle_started="$now"
+    [ -z "$ACTIVITY_STAMP" ] || touch "$ACTIVITY_STAMP"
+    idle_started="$now"; last_strong_at="$now"
     idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
   else
+    # An exiting child takes its CPU with it; measure from the lower total.
+    [ "$cpu" -ge "$idle_cpu_base" ] || idle_cpu_base="$cpu"
     delta=$(( cpu - idle_cpu_base ))
     if [ "$delta" -gt "$IDLE_CPU_CENTIS" ]; then
-      idle_started="$now"
+      idle_started="$now"; last_strong_at="$now"
       idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
     elif [ $(( now - idle_cpu_window_at )) -ge "$IDLE_CPU_WINDOW" ]; then
       idle_cpu_base="$cpu"; idle_cpu_window_at="$now"
+    fi
+    if $working; then
+      idle_started="$now"
     fi
     if [ $(( now - idle_started )) -ge "$IDLE_SECONDS" ]; then
       finish "WAITER: builder-idle after $(( now - idle_started ))s (pid=$pid cpu=$(cpu_seconds "$cpu")s status=${current_status:-none})" 5

@@ -43,13 +43,28 @@ than once without new evidence.
 ## Bridge tuning
 
 - The turn-end hook fires on every sub-turn, so a fresh marker is a candidate stop
-  confirmed only after `WFR_TURN_SETTLE` seconds (default 45) with no CPU growth and
-  no session-log writes. Writes in the first `WFR_TURN_EPILOGUE` seconds (default 5)
-  are the harness's own end-of-turn records and do not count. If a bridge wakes you
-  too often, raise `WFR_TURN_SETTLE`; do not disable the signal.
+  confirmed only after `WFR_TURN_SETTLE` seconds (default 45) with no CPU growth, no
+  new process in the builder's tree and no session-log writes. Writes in the first
+  `WFR_TURN_EPILOGUE` seconds (default 5) are the harness's own end-of-turn records
+  and do not count.
+- A builder that ends its turn while a backgrounded gate run works keeps starting
+  processes. Each new process postpones the candidate, even when the tree's CPU
+  barely moves, and the stop is confirmed once the processes end. Leave
+  `WFR_TURN_SETTLE` at its default: raising it only delays the wake for a real stop.
+  A builder that stopped with a quiet dev server or watcher still running starts
+  nothing, so it still wakes you.
+- New processes alone count for `WFR_CHURN_MAX` seconds (default 1800) after the
+  last CPU burst or session-log write. A builder that stopped with a never-ending
+  poll loop behind it, such as a gate-slot wait whose holder hung, wakes you after
+  that long instead of at the timeout.
 - Idle means less than `WFR_IDLE_CPU_CENTIS` (default 200) of CPU in every
   `WFR_IDLE_CPU_WINDOW` (default 60s) for the whole idle period, with no session-log
-  writes. A long idle period no longer hides a stopped builder.
+  writes and no new process inside the `WFR_CHURN_MAX` limit. A long idle period no
+  longer hides a stopped builder.
+- A bridge started from an older plugin version's path runs the newest installed
+  copy instead, so re-arming after an upgrade picks up bridge fixes. It skips
+  versions the host marked orphaned and copies that are incomplete. Set
+  `WFR_NO_UPGRADE=1` to keep the copy you started.
 - Never `rm` the `.turn-ended` marker by hand. The bridge baselines it at start;
   deleting it races with `dispatch.sh` and a running bridge and eats real wakes.
 - Defaults: timeout 7200s, idle 600s. Both are backstops, not the primary signal.
