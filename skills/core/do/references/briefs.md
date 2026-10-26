@@ -8,6 +8,7 @@ A brief carries a step's inputs to an agent. Handoffs are fast because briefs ar
 - **Where**: absolute worktree path, branch, base..head.
 - **Owns**: paths the agent may change. Reviewers own nothing.
 - **Frozen**: gates with exact commands, and contracts nobody may edit.
+- **Resources**: relevant gate resources, isolation evidence and owner, recorded here or in the linked run notes ([test-resources.md](test-resources.md)). Shared or unknown resources serialize affected gates.
 - **Inputs**: paths to the spec, prior findings, `decisions.md`.
 - **Return**: the output format below, written to an absolute result path under the run directory.
 

@@ -18,7 +18,7 @@ worktree. `do` owns all three.
 | 0, item 6 (prefetch) | Skip the `git fetch` line. `do` fetched every base and head once per repo, so parallel lanes don't race on the same remote refs. Still run the `gh api` comments fetch. If `git cat-file -e <headRefOid>` fails, stop and report. |
 | 1 | Skip it. The brief passes `--comment-only` or `--auto-fix`, `--worktree`, and `--run-fork` when the user allowed it. A fork PR without `--run-fork` means **No**. |
 | 2 | Always a worktree, at `<dir>/worktree`. Every scratch file this skill puts under `<scratchpad>` goes under `<dir>` instead. |
-| 3a | Read CI exactly as Step 3a says, but start no local check. Lanes share one machine and `do` runs one suite at a time. List each check that needs a local run under **Checks pending** in `result.md`, with its command, its reason and `pre-fix`, and record it as `PENDING (local, deferred)`. |
+| 3a | Read CI exactly as Step 3a says, but start no local check. The host applies [test gate resources](../../do/references/test-resources.md): verified isolated gates may overlap; gates with shared or unknown resources serialize. List each check that needs a local run under **Checks pending** in `result.md`, with its command, its reason and `pre-fix`, and record it as `PENDING (local, deferred)`. |
 | 3c (AUTO-FIX) | The post-fix reruns that [auto-fix.md](auto-fix.md) asks for are deferred too. List each under **Checks pending** as `post-fix`. |
 | 4 | If tracked files changed in COMMENT-ONLY mode, stop and report the `git diff`. Don't ask, and don't revert. |
 | 5a | Unchanged. |

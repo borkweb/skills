@@ -59,7 +59,11 @@ worker state: that helper observes external processes and bridges.
    concurrent branches are needed, and tell workers their exact working path.
    Spec and dispatch every slice whose files and dependencies permit concurrent
    work in the same turn, within the runtime's available slots (3–4 lanes);
-   serialize only on a real file or dependency conflict.
+   serialize writers on a real file or dependency conflict. For test gates and
+   worktree pre-warming, follow [test gate resources](../do/references/test-resources.md):
+   parallel gates require verified resource isolation recorded with ownership
+   in the existing brief/ledger notes; shared or unknown resources serialize
+   affected gates. Join prerequisites before final integration gates.
 
 Each worker must report changed files, commit/branch state, raw gate output and
 exit codes, unresolved disagreements, and remaining work to its result file and

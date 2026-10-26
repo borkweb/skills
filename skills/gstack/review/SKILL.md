@@ -28,7 +28,7 @@ Preserve unrelated dirt. Snapshot the checkout before review; if HEAD or scoped 
 
 ## Review
 
-Once scope is pinned, start work that needs only the snapshot before reading the diff. Dispatch any required independent reviewer (see below). Run the repository's existing test and lint commands in the background when they have no external effects. Run one test suite at a time, because suites share ports, databases and fixtures; static checks such as lint, type checks and static analysis share none of these, so start them alongside the test suite. For a small diff with no required reviewer, the background checks are the only parallel work.
+Once scope is pinned, start work that needs only the snapshot before reading the diff. Dispatch any required independent reviewer (see below). Run the repository's existing test and lint commands in the background when they have no external effects. Apply [test gate resources](../../core/do/references/test-resources.md): run gates concurrently only with verified resource isolation recorded in the existing notes/brief; serialize gates with shared or unknown resources. Assess static checks too when they write caches or output. For a small diff with no required reviewer, the background checks are the only parallel work.
 
 Never run a check in the foreground while the same check is running in the background, and never poll its log in a loop; continue reviewing and read the result when its completion notice arrives. Issue independent reads and searches together in one step rather than one per turn. A check passes on its runner summary showing that tests ran, never on exit 0 alone; zero tests run (jest "No tests found", pytest "no tests ran", rspec "0 examples", bun "0 pass 0 fail") is FAIL, not PASS.
 

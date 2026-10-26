@@ -83,9 +83,11 @@ nothing locally. Record each check that needed a local run as `NOT RUN (fork)`.
    `status-before.txt`, is Step 4's baseline.
 4. **Launch in the background, with full output to files.** Set `CI=true` for
    every check, and pass `--ci` to jest, so snapshot tools fail on a missing
-   snapshot instead of writing one into a tracked path. Run one test suite at a
-   time, because suites share ports, databases and fixtures. Start lint, type
-   checks and static analysis alongside it, because they share nothing. Write
+   snapshot instead of writing one into a tracked path. Apply
+   [test gate resources](../../do/references/test-resources.md) to suites, lint,
+   type checks and static analysis: verified isolated gates may overlap; shared
+   or unknown resources serialize affected gates. Record resource evidence and
+   ownership in the existing scratchpad notes before launch. Write
    each command's full output to `<scratchpad>/check-<name>.log`, and never
    pipe it through `tail`.
 

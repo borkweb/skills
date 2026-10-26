@@ -136,7 +136,11 @@ one `dispatch-slice.sh` call per slice (offload's *Dispatch*); the calls fit in 
 single Bash invocation, and their `NEXT` lines then run as background calls in the
 same response. Pre-warm the worktrees (install, baseline suite) while the spec
 reviewers run, so the builders' first gate runs are warm. Serialize only on a real
-file or dependency conflict; a slice that waits for a sibling waits in `specced`,
+file or dependency conflict for writers. For test gates and worktree pre-warming,
+follow [test gate resources](../do/references/test-resources.md): parallel gates
+require verified resource isolation recorded with ownership in the existing
+brief/ledger notes; shared or unknown resources serialize affected gates. Join
+prerequisites before final integration gates. A slice that waits for a sibling waits in `specced`,
 and you dispatch it in the turn the sibling's row goes terminal. There is no
 turn-taking between slices and you never hold the fleet in your head.
 

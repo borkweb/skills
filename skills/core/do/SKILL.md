@@ -57,7 +57,7 @@ For **land**, **ship** and **review batch**, create a private temp directory (th
 
 - Start work as soon as its inputs exist, and never wait on something that doesn't depend on it.
 - Run the independent reviewer, the background suite and your own pass at the same time, then join before fixing.
-- Run one test suite at a time. Suites share ports, databases and fixtures.
+- Run independent test gates concurrently only with verified resource isolation; serialize gates with shared or unknown resources. Record evidence and ownership in existing notes/briefs using [test-resources.md](references/test-resources.md), including dependency installs and static checks. Join prerequisites before final integration gates and acceptance.
 - Parallel writers need separate worktrees and modules that don't import each other. Use at most 3–4 lanes.
 - While an agent or suite runs, prepare the next step: its brief, a commit message, the PR body.
 
