@@ -86,6 +86,8 @@ Report the overlap honestly in one line, using the launch time: *"Peer ran
 barely overlapped, say so rather than describing it as concurrent — the whole
 point is that this is verifiable, not asserted.
 
+The host captures the complete report in `peer.out`; this is `review`'s designated report artifact, so the peer keeps its read-only sandbox and writes no report file itself. Before merging or giving a verdict, read all of `peer.out` (in chunks through the end when tool output is truncated), and validate its pinned `SCOPE` and coverage block against every scoped file. A short completion or exit 0 cannot replace that evidence. Missing, unreadable or incomplete output is missing peer evidence, not a clean pass.
+
 If the peer fails or times out, follow [edge-cases.md](edge-cases.md).
 
 ## Step 3d: Merge

@@ -6,7 +6,7 @@ A brief carries a step's inputs to an agent. Handoffs are fast because briefs ar
 
 - **Goal**: one sentence, plus the endpoint.
 - **Where**: absolute worktree path, branch, base..head.
-- **Owns**: paths the agent may change. Reviewers own nothing.
+- **Owns**: paths the agent may change. Reviewers may write only their explicitly designated report outside the reviewed checkouts; they own no feature files.
 - **Frozen**: gates with exact commands, and contracts nobody may edit.
 - **Resources**: relevant gate resources, isolation evidence and owner, recorded here or in the linked run notes ([test-resources.md](test-resources.md)). Shared or unknown resources serialize affected gates.
 - **Inputs**: paths to the spec, prior findings, `decisions.md`.
@@ -14,7 +14,7 @@ A brief carries a step's inputs to an agent. Handoffs are fast because briefs ar
 
 ## Reviewer
 
-Independent, read-only, and never writes feature code. Reviews the pinned diff against the spec, gates and repo instructions using the `review` skill. Does not run suites; the parent owns gates and passes their results in as inputs.
+Independent, read-only, and never writes feature code. Reviews the pinned diff against the spec, gates and repo instructions using the `review` skill. Does not run suites; the parent owns gates and passes their results in as inputs. Use `review`'s **Independent pass** artifact contract: the assigned absolute result path is the sole report write, the completion returns only that path and scope, and the parent reads and validates the full report before the verdict. Missing shared storage or missing, unreadable or incomplete reports remain missing evidence.
 
 Returns:
 - a numbered findings list: severity, file:line, the evidence, and the smallest fix;
