@@ -46,7 +46,8 @@ export const SLICE_STATES = [
   'dispatched',     // a builder is running this slice
   'blocked',        // builder stopped for an architect ruling
   'results-ready',  // builder reported gates; awaiting architect judgment
-  'accepted',       // gates passed + review clean — TERMINAL
+  'returned',       // sent back with no verdict against the work (a ruling, a restamp, a scope change); not a rejection
+  'accepted',      // gates passed + review clean — TERMINAL
   'rejected',       // failed judgment; a corrective slice supersedes it — TERMINAL
   'merged',         // landed on the base branch — TERMINAL
   'abandoned',      // dropped on purpose — TERMINAL
@@ -280,7 +281,7 @@ export function reconcile(slice, { bridges, withGit = true, withPane = true } = 
     if (slice.handoff && !doc.exists) flags.push('DOC MISSING — the handoff this slice points at is gone');
     else if (doc.exists && !SLICE_STATES.includes(doc.status)) {
       flags.push(`CORRUPT DOC STATUS ("${doc.status || 'empty'}") — the bridge can never match it; rewrite with: handoff.mjs status <path> <state>`);
-    } else if (doc.exists && doc.status && doc.status !== slice.state) {
+    } else if (doc.exists && doc.status && doc.status !== slice.state && slice.state !== 'returned') {
       flags.push(`MISMATCH — ledger says ${slice.state}, doc says ${doc.status}; the doc is the builder's word, act on it`);
     }
   }
@@ -296,6 +297,7 @@ export function reconcile(slice, { bridges, withGit = true, withPane = true } = 
     flags.push(slice.state === 'blocked' ? 'NEEDS ARCHITECT — arbitrate now' : 'NEEDS ARCHITECT — judge the gates');
   }
   if (slice.state === 'specced') flags.push('NOT DISPATCHED');
+  if (slice.state === 'returned') flags.push('RETURNED — send it back with dispatch-slice.sh');
 
   // A pane recorded before this check existed — or recorded past it with
   // OFFLOAD_ALLOW_UNVERIFIED_PANE — still has to surface every wake. This is the
@@ -464,6 +466,9 @@ export function sliceTiming(s) {
   const LANDED = new Set(['accepted', 'merged']);
   const landed = LANDED.has(s.state) || history.some((h) => LANDED.has(h.state));
   const corrective = CORRECTIVE.test(s.title || '');
+  // A `returned` entry (a ruling, a restamp, a scope change) reopens a round
+  // without a verdict against the work, so that round does not cost first pass.
+  const returnedRounds = history.filter((h) => h.state === 'returned').length;
   return {
     id: s.id, title: s.title || '', state: s.state, verdict: s.verdict || '',
     corrective,
@@ -473,7 +478,7 @@ export function sliceTiming(s) {
     review_only_rejections: reviewOnlyVerdicts.length,
     review_only_verdicts: reviewOnlyVerdicts,
     judged: landed || rejections > 0,
-    first_pass: landed && !corrective && rounds.length <= 1 && rejections === 0,
+    first_pass: landed && !corrective && rounds.length - returnedRounds <= 1 && rejections === 0,
     dispatched_at: rounds.length ? rounds[rounds.length - 1].start : null,
     results_at: resultsStamp ?? [...history].reverse().find((h) => h.state === 'results-ready')?.t ?? null,
     terminal_at: terminal,

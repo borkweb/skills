@@ -21,7 +21,7 @@ Preserve the requested prose style; code, commands, errors, commit messages and 
 
 Complete the authorized delivery steps, then update the handoff via its CLI:
 - builder_session: actual session/resume ID.
-- Gate results: pass/fail or NOT RUN, exact counts, command, exit code and path to raw evidence. Then criteria evidence, in the same section: one line per acceptance criterion, by its number, naming the test, command or file:line that proves it and the result, or NOT MET or NOT RUN with the reason. A criterion with no line counts as not met.
+- Gate results: pass/fail or NOT RUN, exact counts, command, exit code and path to raw evidence. Then criteria evidence, in the same section: one line per acceptance criterion, by its number, naming the test, command or file:line that proves it and the result, or NOT MET or NOT RUN with the reason. A criterion with no line counts as not met. On a corrective, report every criterion again, not only the blockers.
 - Work summary: changed paths, branch/commit state, remaining work and blockers, then `Not checked:` one or two lines on what was skipped or not verified and any risk the architect must know.
 Use `node "<resolved handoff.mjs>" section append|set "$OFFLOAD_HANDOFF" "<heading>" --file <file>`; never splice Markdown or write the architect's ledger.
 

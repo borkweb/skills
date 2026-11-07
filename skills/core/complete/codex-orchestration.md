@@ -49,7 +49,10 @@ worker state: that helper observes external processes and bridges.
    exact goal, owned files, protected paths, dependencies, acceptance criteria,
    reproducible gate commands, worktree and branch, result path, and authorized
    commit/push behavior. Preserve any required RED-before-GREEN chronology.
-   Freeze gates before results exist.
+   Freeze gates before results exist. Before dispatch, run each frozen gate's
+   command once, including remote, sandbox and CI gates, to prove it can execute
+   here; a gate nobody can run stops the dispatch until access is fixed, the
+   gate is replaced, or the user rules.
 3. Use the available native spawn tool with **`model: <resolved worker or reviewer model>`**. With
    `collaboration.spawn_agent`, use `fork_turns: "none"` so the model override is
    accepted; provide the handoff path and enough context to work independently.
@@ -114,7 +117,12 @@ access to either the source or the ledger.
 
 Accept only when gates pass and the independent review has no blocking findings.
 Otherwise record rejection and dispatch the corrective work with every confirmed
-blocking finding in one batch. Re-review after corrections, scoped to the change:
+blocking finding in one batch; the worker re-reports evidence for every
+criterion, not only the blockers. When the same criterion or blocker fails a
+second round, stop: rework the criterion or ask the user instead of a third
+corrective. Record a send-back with no verdict against the work (a ruling, a
+restamp, a scope change) as `returned`, and a slice made moot as `abandoned`,
+never as a rejection. Re-review after corrections, scoped to the change:
 give the reviewer the prior blockers and the corrective's own range (previously
 reviewed commit..new HEAD), have it confirm each blocker is resolved, and check
 for regressions against the slice's original range where the corrective touched

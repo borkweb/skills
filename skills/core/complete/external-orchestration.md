@@ -167,7 +167,12 @@ turn-taking between slices and you never hold the fleet in your head.
    - gates or review fail → `ledger set … --state rejected --verdict "<why>"`;
      relay every confirmed defect in one batch; `offload` specs one corrective
      slice onto the same branch and sends it with `dispatch-slice.sh … --corrective`,
-     which reuses the warm builder when it is still at its prompt.
+     which reuses the warm builder when it is still at its prompt. When the same
+     criterion or blocker fails a second round, stop: rework the criterion or ask
+     the user instead of a third corrective.
+   - sent back with no verdict against the work (a ruling, a restamp, a scope
+     change) → `ledger set … --state returned`; made moot by a change of
+     direction → `abandoned`. Neither is a rejection.
    - gates pass and review clean → `ledger set … --state accepted --verdict "<raw numbers>"`.
    - scope left → dispatch the next ready slice(s).
    - goal met across all slices → step 7.

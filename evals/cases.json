@@ -485,6 +485,8 @@
       "Names the One slice tier and the reason",
       "Routes to offload directly; no ledger and no final integration review",
       "Runs a spec reviewer over the slice spec before freezing gates and folds its criteria into the gates",
+      "Runs every frozen gate once before dispatch to prove it can execute",
+      "After offload accepts the slice, reruns only the final gates instead of a second independent review",
       "Does not launch a builder itself",
       "No push retained"
     ]
@@ -580,6 +582,27 @@
       "Does not dispatch with either gap unresolved",
       "Freezes numbered criteria into the gates and the builder brief",
       "Dispatches through dispatch-slice.sh"
+    ]
+  },
+  {
+    "id": "offload-two-miss-stop",
+    "skill": "skills/core/offload",
+    "prompt": "Slice 1's second corrective came back. Gates pass, but the delta review again rejects criterion S1-10 (receipt proof) exactly as it did in round 1. The builder is still at its prompt.",
+    "criteria": [
+      "Does not spec a third corrective for the same criterion",
+      "Reworks the criterion or asks the user, and records which under Decisions + why",
+      "Records the round as rejected with a verdict naming S1-10",
+      "Does not write implementation code"
+    ]
+  },
+  {
+    "id": "offload-returned-not-rejected",
+    "skill": "skills/core/offload",
+    "prompt": "Slice 2 is results-ready and its gates and review are clean, but the user just ruled that the export must also accept a --since flag, so the builder must add it. Send it back.",
+    "criteria": [
+      "Records the send-back with ledger set --state returned, not rejected",
+      "Writes the new requirement as a criterion with a check before re-dispatch",
+      "Re-dispatches through dispatch-slice.sh"
     ]
   }
 ]

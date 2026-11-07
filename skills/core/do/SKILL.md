@@ -15,7 +15,7 @@ Pick the pipeline that matches the request, run independent work concurrently an
 | Review two or more PRs | **review batch**: `pr-review` once per PR, every post confirmed together |
 | Existing change: "fix until SAFE TO LAND", "keep working until it's ready" | **land** |
 | New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
-| A plan or spec to build, or "delegate/offload this" | Build work (below) at the tier the work needs, then run **land** on the result. Do not run a second ledger. |
+| A plan or spec to build, or "delegate/offload this" | Build work (below) at the tier the work needs, then finish as **ship** step 5 says: one slice reruns only the final gates, a fleet runs **land**. Do not run a second ledger. |
 
 Read [pipelines.md](references/pipelines.md) for **land**, **ship** or **review batch**, and [briefs.md](references/briefs.md) before spawning any agent.
 
@@ -25,7 +25,7 @@ Before launching anything that writes code, size the work and pick the tier. Eac
 
 | Tier | When | Runs as |
 | --- | --- | --- |
-| **Local** | One file or one function, no new module, no contract change, gates run in under a minute | The host edits directly, or one subagent. **land**'s fixes are always local. |
+| **Local** | One file or one function, no new module, no contract change, gates run in under a minute | The host edits directly, or one subagent. **land**'s fixes on a Local change are local; on built work they go back to the builder as an `offload` corrective. |
 | **One slice** | One coherent feature that one builder can finish in one sitting, from a plan or spec, no files shared with other pending work | `offload` directly: one handoff, one builder, one independent review. No ledger and no final integration review; the slice review is the acceptance. |
 | **Fleet** | Two or more slices, or any slice whose files overlap another's, or the user said "workers", "delegate", "offload", "herdr" or "tabs" | `complete` (its external route, via `offload`): ledger, concurrent dispatch, per-slice review, final integration review. This is **ship**'s default when the plan has more than one slice. |
 
@@ -53,7 +53,7 @@ Always ask the user about scope expansion, changes to frozen gates, missing auth
 
 ## Run notes
 
-For **land**, **ship** and **review batch**, create a private temp directory (the run directory) and keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
+For **land**, **ship** and **review batch**, create the run directory at `~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4 random chars>/` with mode 700, never under a temp path, so spec reviews, reviewer reports and `decisions.md` outlive the session and later runs can be measured. Keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
 
 ## Concurrency
 

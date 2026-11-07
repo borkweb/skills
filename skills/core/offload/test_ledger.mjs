@@ -437,6 +437,39 @@ test('ledger report derives build and judge minutes per slice and a run summary'
   assert.equal(j.runs[0].max_concurrent, 2);
 });
 
+test('a returned slice is not a rejection and keeps first pass', () => {
+  // Rulings, restamps and scope changes once went results-ready → dispatched,
+  // which the report counts as a rejection; half of one run's "rejections"
+  // were bookkeeping. `returned` records the send-back without a verdict.
+  const REPO = repo('report-returned');
+  fixtureLedger(REPO, 'arch', [
+    { id: '1', title: 'export', state: 'accepted', verdict: 'SAFE TO LAND',
+      history: hist(['dispatched', '09:00'], ['results-ready', '09:40'], ['returned', '09:45'],
+        ['dispatched', '09:45'], ['results-ready', '10:00'], ['accepted', '10:05']) },
+    { id: '2', title: 'import', state: 'accepted', verdict: 'SAFE TO LAND',
+      history: hist(['dispatched', '09:00'], ['results-ready', '09:40'], ['dispatched', '09:45'],
+        ['results-ready', '10:00'], ['accepted', '10:05']) },
+  ]);
+  const r = JSON.parse(run(['ledger', 'report', REPO, '--json'])).runs[0];
+  const returned = r.slices.find((s) => s.id === '1');
+  const bounced = r.slices.find((s) => s.id === '2');
+  assert.equal(returned.rejections, 0);
+  assert.equal(returned.first_pass, true);
+  assert.equal(bounced.rejections, 1);
+  assert.equal(bounced.first_pass, false);
+});
+
+test('ledger set accepts returned and keeps its reason in history', () => {
+  const REPO = repo('set-returned');
+  run(['ledger', 'init', REPO, 'g']);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 'export']);
+  run(['ledger', 'set', REPO, '1', '--state', 'results-ready']);
+  run(['ledger', 'set', REPO, '1', '--state', 'returned', '--verdict', 'ruling on G2 sent back']);
+  const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  assert.equal(s.state, 'returned');
+  assert.equal(s.history.at(-1).verdict, 'ruling on G2 sent back');
+});
+
 test('ledger report counts warm correctives, mid-run rejections and every round from history', () => {
   // Since correctives go back into the warm builder on the SAME slice, the
   // final state and last dispatch hide the rework: a fleebase run with a dozen

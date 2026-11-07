@@ -41,7 +41,7 @@ The architect folds the criteria into the frozen gates and the builder brief, so
 5. While iterating, run the narrowest gate that covers the file being edited (one test file, one linter target). Run the full frozen gate set once, after the last edit and before reporting; that run is the one whose numbers go in the result. A frozen gate you cannot run here (no access, no sandbox, wrong runtime version) is `NOT RUN` with the reason, never a pass. New logic with a branch, loop, parser, money or security leaves one small test that fails when it breaks; trivial changes need none.
 
 Returns:
-- **Gate results**: one line per gate, with pass/fail or `NOT RUN`, the count and the command that reproduces it. No logs. Then **criteria evidence**: one line per acceptance criterion, by its number, naming the test, command or file:line that proves it and the result, or `NOT MET` or `NOT RUN` with the reason. A criterion with no line counts as not met.
+- **Gate results**: one line per gate, with pass/fail or `NOT RUN`, the count and the command that reproduces it. No logs. Then **criteria evidence**: one line per acceptance criterion, by its number, naming the test, command or file:line that proves it and the result, or `NOT MET` or `NOT RUN` with the reason. A criterion with no line counts as not met. On a corrective, report every criterion again, not only the blockers.
 - **Work summary**: changed paths, commit SHAs, what's done, stubbed or deferred, and blockers.
 - **Not checked**: one or two lines on what was skipped or not verified and any risk the architect must know, or `None.`
 - **Open disagreements**: one line each, or `None.`

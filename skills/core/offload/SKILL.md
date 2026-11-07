@@ -122,7 +122,13 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    command (you have Bash). A failed spot-check fails the slice: stop or discard that
    review and send the failure back. A **DO NOT LAND** verdict fails the slice no
    matter how the gates read; spec one corrective slice carrying every confirmed
-   blocker. Scope a corrective's review to the change: give it the prior blockers and
+   blocker. **Two-miss stop:** when the same criterion or blocker fails a second
+   round, do not spec a third corrective; rework the criterion (it is usually
+   ambiguous or unbuildable as written) or ask the user, and record which under
+   *Decisions + why*. A send-back that carries no verdict against the work (a
+   ruling, a restamp, a scope change) is `ledger set … --state returned`, never
+   `rejected`; a slice the user's change of direction made moot is `abandoned`.
+   Scope a corrective's review to the change: give it the prior blockers and
    the corrective's own range (previously reviewed commit..new HEAD), confirm each
    blocker is resolved, and check for regressions against the slice's original range
    where the corrective touched shared code. **LAND WITH CAUTION** → record the
@@ -144,7 +150,9 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    builder verify APIs/formats against reality BEFORE coding. For a **corrective**,
    the spec is the confirmed blockers with the mechanism behind each (see
    [review-criteria.md](../do/references/review-criteria.md) §7); skip the spec
-   reviewer and the plan reviews and go straight to dispatch. Otherwise run these
+   reviewer and the plan reviews and go straight to dispatch. A corrective's builder
+   re-reports the full criteria evidence for the slice, not only the blockers, so
+   the delta review can see a fix that broke a criterion that used to pass. Otherwise run these
    concurrently:
    - a read-only **spec reviewer** agent with the `review` checklist and
      [review-criteria.md](../do/references/review-criteria.md) over the slice
@@ -159,8 +167,14 @@ A slice is one coherent feature: everything a builder needs to make one capabili
      is unchanged on the slice's base, link the main checkout's dependency
      directory instead of installing. `dispatch-slice.sh` reuses an existing
      worktree untouched.
+   - a **gate preflight**: run every frozen gate's command once, including
+     remote, sandbox and CI gates, to prove it can run here (credentials, SSH
+     agent, sandbox access, runtime version). It need not pass on the base; it
+     must execute.
 
-   Join. Rule on every gap the spec reviewer listed: fold it in as a criterion,
+   Join. A gate that cannot execute stops the dispatch: fix the access, replace
+   the gate, or ask the user, and record which. Never dispatch a builder against
+   a gate nobody can run. Rule on every gap the spec reviewer listed: fold it in as a criterion,
    record it as out of scope under *Decisions + why*, or ask the user when it
    changes scope. No gap reaches the builder unresolved. Freeze the gates under
    *Frozen gates* with the spec reviewer's criteria, numbered, folded in (never
