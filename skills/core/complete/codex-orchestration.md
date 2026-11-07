@@ -43,7 +43,9 @@ worker state: that helper observes external processes and bridges.
 2. Before freezing a slice's gates, run a read-only spec reviewer (the resolved
    reviewer model, `review` checklist in hand) over the slice spec and fold the
    acceptance criteria it returns into the gates, so the worker and the later
-   reviewer hold the same bar. Then write each slice's handoff before dispatch:
+   reviewer hold the same bar. Rule on every gap it lists before dispatch (fold
+   it in, record it as out of scope, or ask the user when it changes scope).
+   Then write each slice's handoff before dispatch:
    exact goal, owned files, protected paths, dependencies, acceptance criteria,
    reproducible gate commands, worktree and branch, result path, and authorized
    commit/push behavior. Preserve any required RED-before-GREEN chronology.
@@ -66,7 +68,10 @@ worker state: that helper observes external processes and bridges.
    affected gates. Join prerequisites before final integration gates.
 
 Each worker must report changed files, commit/branch state, raw gate output and
-exit codes, unresolved disagreements, and remaining work to its result file and
+exit codes (a gate it cannot run is `NOT RUN` with the reason, never a pass),
+criteria evidence (one line per numbered acceptance criterion: the test, command
+or file:line that proves it and the result, or `NOT MET`/`NOT RUN` with the
+reason), unresolved disagreements, and remaining work to its result file and
 final response. A blocker report identifies what needs a ruling. Workers must
 not change frozen criteria, claim independent acceptance of their own work, or
 delegate again without the architect assigning that work.
@@ -91,7 +96,14 @@ participants use the resolved reviewer model. If the requested model or native t
 report the precise blocker and seek a user choice instead of selecting a fallback.
 
 When results arrive, compare raw gate evidence with the frozen acceptance
-criteria and inspect the actual diff. Run a separate reviewer using the resolved reviewer model with the
+criteria and inspect the actual diff. Every criterion needs a criteria-evidence
+line; a missing line or `NOT MET` sends the slice back without a review. Before
+any review, run every gate marked `NOT RUN`, each mutation a criterion names (in
+a throwaway detached worktree at the slice head, removed afterward) and each
+real-runtime run a criterion names; a failure sends the slice back as a
+corrective. A gate you cannot run either stays `NOT RUN` as a recorded caveat
+(LAND WITH CAUTION, or ask the user); it never sends the slice back. Then run a
+separate reviewer using the resolved reviewer model with the
 `review` skill against that slice's exact commit and base. Instruct the reviewer
 to stay read-only and return findings plus its verdict; review-skill fix behavior
 does not authorize that reviewer to edit. The builder cannot review itself.

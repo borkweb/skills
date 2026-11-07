@@ -87,10 +87,13 @@ Run these concurrently, as read-only agents:
   public interface, docs) → `plan-devex-review`. Skip them for a trivial goal and
   say so.
 
-Join. Fold the spec reviewers' criteria into each slice's frozen gates and builder
-brief, so the builder and the acceptance reviewer hold the same bar. A DO NOT LAND
-after green gates later means a criterion was missed here; record it under
-*Decisions + why* so the next spec review covers it.
+Join. Rule on every gap the spec reviewers listed (fold it in, record it as out of
+scope, or ask the user when it changes scope). Fold the spec reviewers' criteria,
+numbered, into each slice's frozen gates and builder brief, so the builder and the
+acceptance reviewer hold the same bar. For a DO NOT LAND after green gates later,
+record under *Decisions + why* whether a frozen criterion named each blocker (the
+builder missed it) or none did (the spec review missed it, so the next one should
+cover it), and put the same tag (`named C5`, `unnamed`) in the ledger `--verdict`.
 
 ## 4. Resolve authorization once
 

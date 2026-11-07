@@ -34,6 +34,8 @@ A slice is one coherent feature, not one PR. Split only where files or contracts
 Rules that hold at every tier:
 
 - Before any tier that dispatches a builder, run the **spec reviewer** ([briefs.md](references/briefs.md)) over the slice spec and fold its criteria into the frozen gates and the builder brief, so the builder and the acceptance reviewer hold one bar. A corrective skips it: its criteria are the blockers.
+- Rule on every gap the spec reviewer lists before dispatch: fold it into the spec, record it as out of scope in `decisions.md`, or ask the user when it changes scope.
+- Before spending an independent review on a builder's results, check its criteria evidence and run the checks a green gate cannot prove. A missing evidence line or a `NOT MET` sends the slice back. Run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway worktree, never the builder's), and each real-runtime run a criterion names; a failure sends the slice back as a corrective without a review round. A gate the architect cannot run either stays `NOT RUN` as a recorded caveat or a question for the user, never a send-back. `offload` step 3 and `complete`'s judge step carry this out.
 - Reviewers, council and investigations always use subagents.
 - Never launch builders yourself: no `Agent` builders, and no raw `herdr`, tmux or headless commands. `offload`'s dispatcher is the only launcher.
 - If the tier needs `offload` or `complete` and it can't run (no session key, no herdr), say so and ask. Don't fall back quietly.

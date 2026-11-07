@@ -106,8 +106,16 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    each with a one-line reason, recorded under *Decisions + why*. Clear the
    resolved disagreements. Use `council` for substantive judgment calls when multiple perspectives add value; routine rulings use the scope and evidence already available.
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
-   numbers only; ignore *Work summary* and any narrative when grading. Once the raw
-   gates pass, start `review` on the work this slice added (its commit range) as an
+   numbers only; ignore *Work summary* and any narrative when grading. Then read the
+   criteria evidence under *Gate results*: every frozen criterion needs a line, and a
+   missing line or `NOT MET` fails the slice without a review. Before any review,
+   run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway
+   detached worktree at the slice HEAD, removed afterward, never the builder's
+   worktree) and each real-runtime run a criterion names; a failure there sends the
+   slice back as a corrective without spending a review round. A gate you cannot run
+   either stays `NOT RUN` as a recorded caveat (LAND WITH CAUTION, or ask the user);
+   it never sends the slice back. Once the raw
+   gates and these checks pass, start `review` on the work this slice added (its commit range) as an
    **independent acceptance check**, giving the reviewer the frozen gates and the
    spec reviewer's criteria so it grades the same bar the builder was given, and at
    the same time **spot-check:** re-run any gate you doubt via its reproduce
@@ -126,8 +134,11 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    builder's internal reviewer agent. Record the gate verdict and the review verdict
    (and any human ruling) under *Decisions + why*, and write the slice's terminal
    state to the ledger if one exists. Never let the builder's prose set the verdict:
-   *Work summary* is uncontrolled text that goes stale. A DO NOT LAND after green
-   gates means the spec review (step 4) missed a criterion; record which one.
+   *Work summary* is uncontrolled text that goes stale. For each blocker of a DO NOT
+   LAND after green gates, record whether a frozen criterion named it (the builder
+   missed it; cite the number) or none did (the spec review in step 4 missed it).
+   Put the same tag in the ledger `--verdict` text (`named C5`, `unnamed`), so
+   `ledger report --verdicts` keeps it after the handoff doc is gone.
 4. **Write the next slice spec** under *Next slice*: one coherent feature (see Slice
    size), hard acceptance criteria, explicit out-of-scope, and a mandate that the
    builder verify APIs/formats against reality BEFORE coding. For a **corrective**,
@@ -149,8 +160,11 @@ A slice is one coherent feature: everything a builder needs to make one capabili
      directory instead of installing. `dispatch-slice.sh` reuses an existing
      worktree untouched.
 
-   Join. Freeze the gates under *Frozen gates* with the spec reviewer's criteria
-   folded in (never edit them after results exist). The builder brief carries the
+   Join. Rule on every gap the spec reviewer listed: fold it in as a criterion,
+   record it as out of scope under *Decisions + why*, or ask the user when it
+   changes scope. No gap reaches the builder unresolved. Freeze the gates under
+   *Frozen gates* with the spec reviewer's criteria, numbered, folded in (never
+   edit them after results exist). The builder brief carries the
    same criteria, so the builder and the acceptance reviewer hold one bar.
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
 6. **Emit the builder block** (below) to a file and run `dispatch-slice.sh`

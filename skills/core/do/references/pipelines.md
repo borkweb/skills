@@ -39,7 +39,7 @@ For a new goal that should end merge-ready.
    - the plan reviews from step 2 that the plan changed, if any;
    - each slice's worktree, pre-warmed: create it, then run the dependency install and the baseline gate suite in it as a background task, so the builder's first gate run is warm.
 
-   Join. Freeze each slice's acceptance gates as exact commands with expected results, with the spec reviewer's criteria folded in, before any code exists. From here on, nobody edits the gates. The builder and the later reviewer now hold the same bar; a rejection after green gates means the spec review missed something, so record it in `decisions.md`.
+   Join. Freeze each slice's acceptance gates as exact commands with expected results, with the spec reviewer's criteria folded in, before any code exists. From here on, nobody edits the gates. The builder and the later reviewer now hold the same bar. For each blocker of a rejection after green gates, record in `decisions.md` whether a frozen criterion named it (the builder missed it) or none did (the spec review missed it).
 4. **Implement.** Pick the tier from Build work in SKILL.md: one slice goes to `offload`, two or more to `complete`, which dispatches every slice with disjoint files in the same turn. Hand over the frozen plan, gates and council rulings. Keep running your own reviews and gates concurrently while it works, then merge its result and run the integration gates once (fleet tier only).
 5. **Land.** Run **land** from step 2 on the result. Pass along the gates already frozen; don't re-derive them.
 

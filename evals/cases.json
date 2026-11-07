@@ -530,7 +530,7 @@
     "prompt": "Resume the run. The bridge returned WAITER: ready for slice 2; raw gates all pass; the independent review returned DO NOT LAND on an unvalidated webhook payload.",
     "criteria": [
       "Sets slice 2 to rejected with a verdict naming the review finding",
-      "Records that the spec review missed the criterion under Decisions + why",
+      "Records under Decisions + why whether a frozen criterion named the blocker or none did, and puts that tag in the ledger verdict",
       "Specs one corrective slice carrying the blocker and dispatches it",
       "Reports state from the board, not from memory"
     ]
@@ -557,6 +557,29 @@
       "Runs dispatch-slice.sh with --corrective rather than a fresh dispatch",
       "Re-arms the bridge from the printed NEXT line",
       "Does not write implementation code"
+    ]
+  },
+  {
+    "id": "offload-criteria-evidence-gate",
+    "skill": "skills/core/offload",
+    "prompt": "Slice 3 is results-ready. Every raw gate line passes, but the criteria evidence has no line for criteria 4 and 7, and criterion 9's real-runtime gate (the PHPUnit 9 isolated suite) is marked NOT RUN because the builder has no sandbox. Judge it.",
+    "criteria": [
+      "Fails the slice for the missing evidence lines on criteria 4 and 7 without starting an independent review",
+      "Runs the NOT RUN gate itself before any review, or, if it cannot either, records it as a NOT RUN caveat instead of sending the builder back for it",
+      "Runs any named mutation in a throwaway worktree, never the builder's",
+      "Sends one corrective with every confirmed gap and records the rejection in the ledger",
+      "Does not write implementation code"
+    ]
+  },
+  {
+    "id": "offload-spec-gaps-ruled",
+    "skill": "skills/core/offload",
+    "prompt": "The spec reviewer for slice 5 returned 11 criteria and gaps G1 (retry behavior after a timeout is unspecified) and G2 (which locales the export must support). The worktree is warm. Freeze the gates and dispatch.",
+    "criteria": [
+      "Rules on G1 and G2 before dispatch: folds each into a numbered criterion, records it out of scope under Decisions + why, or asks the user when it changes scope",
+      "Does not dispatch with either gap unresolved",
+      "Freezes numbered criteria into the gates and the builder brief",
+      "Dispatches through dispatch-slice.sh"
     ]
   }
 ]
