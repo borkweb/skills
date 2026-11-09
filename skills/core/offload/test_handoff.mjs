@@ -385,3 +385,26 @@ test('missing native identity still fails closed and malformed Codex ids cannot 
 test('real Claude identity takes precedence over inherited Codex environment', () => {
   assert.equal(run(['key'], { session: 'actual-claude', env: codexEnv }), 'actual-claude');
 });
+
+test('updateDoc retries on a concurrent write instead of dropping it, and leaves no temp file', async () => {
+  // The architect writes Next slice into a warm builder's doc while that
+  // builder may be writing Gate results: neither edit may be lost.
+  const { updateDoc } = await import('./handoff.mjs');
+  const { readdirSync } = await import('node:fs');
+  const dir = mkdtempSync(join(tmpdir(), 'ofl-cas-'));
+  const p = join(dir, 'doc.md');
+  writeFileSync(p, 'status: dispatched\n## Gate results\n\n## Next slice\n\n');
+  let calls = 0;
+  updateDoc(p, (b) => {
+    calls += 1;
+    // First attempt: another writer lands between this read and the write.
+    if (calls === 1) writeFileSync(p, b.replace('## Gate results\n', '## Gate results\nG1 pass\n'));
+    return b.replace('## Next slice\n', '## Next slice\ncorrective\n');
+  });
+  const out = readFileSync(p, 'utf8');
+  assert.equal(calls, 2, 'the change was re-applied to the fresh text');
+  assert.match(out, /G1 pass/, 'the other writer\'s edit survived');
+  assert.match(out, /corrective/);
+  assert.deepEqual(readdirSync(dir), ['doc.md'], 'no temp file left behind');
+  rmSync(dir, { recursive: true, force: true });
+});

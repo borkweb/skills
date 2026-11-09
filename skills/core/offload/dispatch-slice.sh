@@ -26,7 +26,11 @@
 #   --verdict   with --corrective: why the results went back. A slice still at
 #               results-ready or dispatched is recorded as rejected with it
 #               first, so the run report can count and classify the rejection;
-#               a follow-up after acceptance is not a rejection
+#               a follow-up after acceptance is not a rejection. Required in
+#               that case; a review-only verdict needs "named C<n>" or "unnamed"
+#   --past-cap  with --corrective: the user's ruling to continue a slice already
+#               rejected more than OFFLOAD_ROUND_CAP (default 3) times; recorded
+#               as the slice's ledger note. Without it the corrective is refused
 #   --unattended  instead of printing the bridge command, start a detached
 #               bridge + architect-wake.sh chain that resumes this architect
 #               session headlessly when the bridge fires, so the run continues
@@ -47,12 +51,12 @@ WAKE="$(cd "$SCRIPT_DIR/../complete" 2>/dev/null && pwd)/architect-wake.sh"
 
 usage() {
   printf '%s\n' \
-    'Usage: dispatch-slice.sh <repo_root> <worktree> <branch> <block_file> [--id ID] [--title T] [--base REF] [--harness SPEC] [--corrective [--verdict V]] [--unattended]' >&2
+    'Usage: dispatch-slice.sh <repo_root> <worktree> <branch> <block_file> [--id ID] [--title T] [--base REF] [--harness SPEC] [--corrective [--verdict V] [--past-cap RULING]] [--unattended]' >&2
 }
 die() { echo "dispatch-slice: $*" >&2; exit 1; }
 
 POS=()
-ID=""; TITLE=""; BASE=""; HARNESS=""; VERDICT=""; CORRECTIVE=0; UNATTENDED=0
+ID=""; TITLE=""; BASE=""; HARNESS=""; VERDICT=""; PAST_CAP=""; CORRECTIVE=0; UNATTENDED=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --id) ID="${2:-}"; shift 2 ;;
@@ -61,6 +65,7 @@ while [ "$#" -gt 0 ]; do
     --harness) HARNESS="${2:-}"; shift 2 ;;
     --corrective) CORRECTIVE=1; shift ;;
     --verdict) VERDICT="${2:-}"; shift 2 ;;
+    --past-cap) PAST_CAP="${2:-}"; shift 2 ;;
     --unattended) UNATTENDED=1; shift ;;
     -h|--help) usage; exit 2 ;;
     -*) echo "dispatch-slice: unknown flag $1" >&2; usage; exit 2 ;;
@@ -81,6 +86,10 @@ absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$PWD" "
 REPO=$(absolute "$REPO"); WT=$(absolute "$WT")
 
 hoff() { node "$HANDOFF_MJS" "$@"; }
+# The user's halt beats every dispatch, attended or not.
+if halt_reason=$(hoff halted "$REPO" 2>/dev/null); then
+  die "the run in $REPO is halted ($halt_reason); nothing was dispatched. The user clears it with: node $HANDOFF_MJS unhalt \"$REPO\""
+fi
 SID=$(hoff key) || die "could not resolve the session key (CLAUDE_CODE_SESSION_ID / CODEX_SESSION_ID)"
 if [ "$UNATTENDED" -eq 1 ]; then
   case "$SID" in codex:*) die "--unattended resumes the architect with claude --resume; a Codex architect ($SID) cannot be resumed that way" ;; esac
@@ -112,16 +121,35 @@ ledger_dispatched() {
 # A corrective sends results back: record that as a rejection (with the
 # verdict, when given) unless the slice was already judged. A follow-up after
 # acceptance, or a second corrective after a recorded rejection, adds nothing.
-ledger_reject_results() {
+ledger_state() {
   [ "$HAS_LEDGER" -eq 1 ] && [ -n "$ID" ] || return 0
-  local state
-  state=$(hoff ledger show "$REPO" 2>/dev/null |
-    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=(JSON.parse(s).slices||[]).find(x=>x.id===process.argv[1]);process.stdout.write(r?r.state:"")})' "$ID" 2>/dev/null || true)
-  case "$state" in
+  hoff ledger show "$REPO" 2>/dev/null |
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=(JSON.parse(s).slices||[]).find(x=>x.id===process.argv[1]);process.stdout.write(r?r.state:"")})' "$ID" 2>/dev/null || true
+}
+
+# Rejected rounds this slice has had. A slice that fails on a new blocker each
+# round never trips the per-criterion two-miss stop, so the dispatcher caps the
+# rounds itself: past OFFLOAD_ROUND_CAP (default 3) a corrective needs the
+# user's ruling, passed as --past-cap and kept in the ledger.
+ledger_rejections() {
+  [ "$HAS_LEDGER" -eq 1 ] && [ -n "$ID" ] || { echo 0; return 0; }
+  hoff ledger show "$REPO" 2>/dev/null |
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const r=(JSON.parse(s).slices||[]).find(x=>x.id===process.argv[1]);process.stdout.write(String(r?(r.history||[]).filter(h=>h.state==="rejected").length:0))})' "$ID" 2>/dev/null || echo 0
+}
+
+round_cap() {
+  local cap="${OFFLOAD_ROUND_CAP:-3}" n
+  n=$(ledger_rejections)
+  [ "$n" -gt "$cap" ] || return 0
+  [ -n "$PAST_CAP" ] || die "slice $ID has been rejected $n times (cap $cap). Ask the user whether to continue, re-scope or abandon; if they say continue, re-run with --past-cap \"<their ruling>\". Nothing was sent."
+  hoff ledger set "$REPO" "$ID" --note "past round cap ($n > $cap): $PAST_CAP" >/dev/null
+}
+
+ledger_reject_results() {
+  case "$(ledger_state)" in
     results-ready|dispatched)
-      local -a f=(--state rejected)
-      [ -n "$VERDICT" ] && f+=(--verdict "$VERDICT")
-      hoff ledger set "$REPO" "$ID" "${f[@]}" >/dev/null
+      hoff ledger set "$REPO" "$ID" --state rejected --verdict "$VERDICT" >/dev/null ||
+        die "--corrective from unjudged results needs a --verdict the ledger accepts (see the refusal above); nothing was sent"
       ;;
   esac
 }
@@ -192,8 +220,12 @@ FORCE_ENV=()
 if [ "$CORRECTIVE" -eq 1 ]; then
   DOC=$(hoff path "$WT" "$SID")
   [ -f "$DOC" ] || die "no handoff for $WT under session $SID; a corrective needs the slice's existing handoff (dispatch the slice first)"
-  hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
+  # Record the rejection before touching the doc: the ledger refuses one with no
+  # verdict (or a review-only one with no provenance tag), and a refused
+  # corrective must leave the builder's brief as it was.
   ledger_reject_results
+  round_cap
+  hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
   pid=$(builder_pid || true)
   frontend=$(sidecar frontend); pane=$(sidecar pane)
   MSG="Corrective slice from the architect: the last results were rejected. Read the new brief with: node $HANDOFF_MJS section get \"$DOC\" \"Next slice\". Fix every listed blocker within the owned files, rerun the frozen gates, refresh Gate results and Work summary, then run: node $HANDOFF_MJS ready \"$DOC\""

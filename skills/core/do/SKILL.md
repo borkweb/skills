@@ -15,6 +15,7 @@ Pick the pipeline that matches the request, run independent work concurrently an
 | Review two or more PRs | **review batch**: `pr-review` once per PR, every post confirmed together |
 | Existing change: "fix until SAFE TO LAND", "keep working until it's ready" | **land** |
 | New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
+| "Dream", consolidate review criteria from past runs | **dream**: read [dreaming.md](references/dreaming.md). Out-of-band only, never inside another run; proposals only, the user approves each change. |
 | A plan or spec to build, or "delegate/offload this" | Build work (below) at the tier the work needs, then finish as **ship** step 5 says: one slice reruns only the final gates, a fleet runs **land**. Do not run a second ledger. |
 
 Read [pipelines.md](references/pipelines.md) for **land**, **ship** or **review batch**, and [briefs.md](references/briefs.md) before spawning any agent.
@@ -53,7 +54,7 @@ Always ask the user about scope expansion, changes to frozen gates, missing auth
 
 ## Run notes
 
-For **land**, **ship** and **review batch**, create the run directory at `~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4 random chars>/` with mode 700, never under a temp path, so spec reviews, reviewer reports and `decisions.md` outlive the session and later runs can be measured. Keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
+For **land**, **ship** and **review batch**, create the run directory at `~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4 random chars>/` with mode 700, never under a temp path, so spec reviews, reviewer reports and `decisions.md` outlive the session and later runs can be measured. Keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Write spec reviews and acceptance reviews there too, named as `offload`'s *Run directory* says, and pass the path to `ledger init --run-dir` when a ledger is opened. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
 
 ## Concurrency
 

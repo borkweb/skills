@@ -20,6 +20,8 @@ Returns:
 - a numbered findings list: severity, file:line, the evidence, and the smallest fix;
 - a verdict: SAFE TO LAND, LAND WITH CAUTION, or DO NOT LAND.
 
+Diff the test files for removed, skipped or loosened assertions, expectations, fixtures and golden files. Each must appear on the builder's `Loosened tests:` line with a source of truth; one that does not is a class 3 blocker ([review-criteria.md](review-criteria.md)).
+
 For a delta re-review, send only: the diff since the last review, the finding IDs claimed fixed, and new gate results. Ask the reviewer to confirm each fix, check the delta for regressions, and keep the same numbering.
 
 ## Spec reviewer

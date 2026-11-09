@@ -53,7 +53,7 @@ import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DIR, fileFor, listFiles, tokenOf, field, age, prune } from './dir.mjs';
 import {
-  SLICE_STATES, addSlice, allLedgers, initLedger, ledgerFor, pruneLedgers, readLedger, renderReport, renderVerdicts, reportLedger,
+  SLICE_STATES, addSlice, allLedgers, clearHalt, initLedger, readHalt, setHalt, ledgerFor, pruneLedgers, readLedger, renderReport, renderVerdicts, reportLedger,
   renderBoard, setGoal, setSlice,
 } from './ledger.mjs';
 
@@ -239,6 +239,26 @@ function reattach(p, sessionId, steal) {
   process.stdout.write(dest + '\n');
 }
 
+// The architect and a builder both write the same doc (status, Next slice,
+// Gate results). A plain read-modify-write lets one writer silently drop the
+// other's edit, and a half-written doc would be read as truth. So: read, apply
+// the change, re-read just before writing, and retry on the fresh text if
+// someone else wrote in between; then write a temp file and rename it over the
+// doc so a reader never sees a partial write.
+export function updateDoc(p, transform, tries = 5) {
+  for (let i = 0; i < tries; i++) {
+    const before = readFileSync(p, 'utf8');
+    const next = transform(before);
+    if (readFileSync(p, 'utf8') !== before) continue;
+    const tmp = `${p}.tmp-${process.pid}-${i}`;
+    writeFileSync(tmp, next);
+    renameSync(tmp, p);
+    return next;
+  }
+  die(`refusing: ${p} kept changing under this write (${tries} tries). Re-read it and retry.`);
+  return null;
+}
+
 // `status` is the ONE field the wait bridge and every progress readout key on.
 // It used to accept anything, including `undefined` from a call that forgot its
 // value — which wrote `status: undefined`, exited 0, and permanently broke the
@@ -264,10 +284,7 @@ function setStatus(p, value, steal) {
     'A status write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   assertOwner(p, expected, steal, `set status=${v} on`);
-  let b = readFileSync(p, 'utf8');
-  b = setField(b, 'status', v);
-  b = setField(b, 'updated', nowIso());
-  writeFileSync(p, b);
+  updateDoc(p, (b) => setField(setField(b, 'status', v), 'updated', nowIso()));
 }
 
 // --- sections -------------------------------------------------------------
@@ -322,16 +339,20 @@ function sectionWrite(p, heading, text, mode, steal) {
     'A section write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   assertOwner(p, expected, steal, `write section "${heading}" of`);
-  const { body, span } = requireSection(p, heading);
-  const current = body.slice(span.bodyStart, span.bodyEnd);
+  requireSection(p, heading);
   const payload = String(text ?? '').replace(/\n*$/, '');
-  let next;
-  if (mode === 'clear') next = '\n';
-  else if (mode === 'set') next = payload ? `\n${payload}\n\n` : '\n';
-  else next = `${current.replace(/\n*$/, '')}\n${payload}\n\n`.replace(/^\n*/, '\n');
-  let out = body.slice(0, span.bodyStart) + next + body.slice(span.bodyEnd);
-  out = setField(out, 'updated', nowIso());
-  writeFileSync(p, out);
+  // The splice is applied to whatever text updateDoc reads, so a retry after a
+  // concurrent write splices into the fresh doc instead of the stale one.
+  updateDoc(p, (body) => {
+    const span = splitSection(body, heading);
+    if (!span) die(`"## ${heading}" disappeared from ${p} during the write`);
+    const current = body.slice(span.bodyStart, span.bodyEnd);
+    let next;
+    if (mode === 'clear') next = '\n';
+    else if (mode === 'set') next = payload ? `\n${payload}\n\n` : '\n';
+    else next = `${current.replace(/\n*$/, '')}\n${payload}\n\n`.replace(/^\n*/, '\n');
+    return setField(body.slice(0, span.bodyStart) + next + body.slice(span.bodyEnd), 'updated', nowIso());
+  });
 }
 
 // prune() only knows .md/.state, so every dispatch left its .builder/.activity/
@@ -376,14 +397,33 @@ function flagFields(rest) {
 }
 
 function ledgerCmd(rest) {
-  const [sub, ...args] = rest;
+  const [sub, ...rawArgs] = rest;
+  // Value flags come out before positional parsing, so their values are never
+  // read as a cwd or a goal.
+  let args = rawArgs;
+  const takeValue = (flag) => {
+    const i = args.indexOf(flag);
+    if (i === -1) return undefined;
+    const v = String(args[i + 1] ?? '');
+    args = args.filter((_, j) => j !== i && j !== i + 1);
+    return v;
+  };
+  // --since YYYY-MM-DD keeps runs whose ledger was last updated on or after
+  // that day: the dreaming pass reads only what arrived since its last pass.
+  const since = takeValue('--since') ?? '';
+  if (since !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(since)) die('--since needs a date: YYYY-MM-DD');
+  if (rawArgs.includes('--since') && !since) die('--since needs a date: YYYY-MM-DD');
+  // --run-dir links the ledger to the run directory that keeps its reviews.
+  const runDir = sub === 'init' ? takeValue('--run-dir') : undefined;
+  if (runDir !== undefined && !runDir.startsWith('/')) die('--run-dir needs an absolute path');
   const pos = positional(args);
   if (sub === 'report') {
     // Read-only survey: --all crosses sessions on purpose, so no session is required.
     const json = hasFlag(args, '--json');
     const render = (runs) => (hasFlag(args, '--verdicts') ? renderVerdicts(runs) : renderReport(runs, { json }));
     if (hasFlag(args, '--all')) {
-      process.stdout.write(render(allLedgers().map(({ p, l }) => reportLedger(l, p))));
+      const recent = ({ l }) => !since || String(l.updated || l.created || '').slice(0, 10) >= since;
+      process.stdout.write(render(allLedgers().filter(recent).map(({ p, l }) => reportLedger(l, p))));
       return;
     }
     const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
@@ -397,7 +437,7 @@ function ledgerCmd(rest) {
   const sid = requireSession(envSession(), 'The ledger is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
   const cwd = pos[0] ?? process.cwd();
   switch (sub) {
-    case 'init': process.stdout.write(`${initLedger(cwd, sid, pos[1])}\n`); break;
+    case 'init': process.stdout.write(`${initLedger(cwd, sid, pos[1], runDir)}\n`); break;
     case 'path': process.stdout.write(`${ledgerFor(cwd, sid)}\n`); break;
     case 'show': {
       const l = readLedger(ledgerFor(cwd, sid));
@@ -457,6 +497,25 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       break;
     }
     case 'ledger':   ledgerCmd(rest); break;
+    // A human stop for the whole run in <cwd>; any session or shell may set it.
+    case 'halt': {
+      if (!pos[0]) die('usage: handoff.mjs halt <repo_root> [reason]');
+      process.stdout.write(`halted: ${setHalt(pos[0], pos.slice(1).join(' '))}\n`);
+      break;
+    }
+    case 'unhalt': {
+      if (!pos[0]) die('usage: handoff.mjs unhalt <repo_root>');
+      clearHalt(pos[0]);
+      process.stdout.write('unhalted\n');
+      break;
+    }
+    // Exit 0 and print the reason when halted, exit 1 when not.
+    case 'halted': {
+      const h = readHalt(pos[0] ?? process.cwd());
+      if (!h) process.exit(1);
+      process.stdout.write(`${h.reason}\n`);
+      break;
+    }
     case 'board': {
       const sid = requireSession(envSession(), 'The board is keyed to $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.');
       process.stdout.write(renderBoard(pos[0] ?? process.cwd(), sid, {
@@ -469,7 +528,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     default:
       process.stderr.write(
-        'usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|end|prune|section|ledger|board} ...\n',
+        'usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|end|prune|section|ledger|board|halt|unhalt|halted} ...\n',
       );
       process.exit(2);
   }

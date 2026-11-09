@@ -15,7 +15,7 @@
 // bridge, its git worktree — and prints the disagreements loudly. Progress is
 // READ FROM `board`, never reconstructed from context.
 //
-//   node handoff.mjs ledger init  <cwd> [goal]        -> create/print the ledger path
+//   node handoff.mjs ledger init  <cwd> [goal] [--run-dir /abs]  -> create/print the ledger path; link the run dir
 //   node handoff.mjs ledger path  <cwd>               -> print path (no create)
 //   node handoff.mjs ledger show  <cwd>               -> raw JSON
 //   node handoff.mjs ledger add   <cwd> --id 3 --title "..." [--branch b] [--slice-cwd d]
@@ -23,7 +23,7 @@
 //   node handoff.mjs ledger set   <cwd> <id> --state accepted [--verdict "..."] [--pr url]
 //                                       [--note n] [--pane w:p1] [--handoff p] [--branch b]
 //   node handoff.mjs ledger goal  <cwd> "<goal text>"
-//   node handoff.mjs ledger report [<cwd>] [--all] [--json|--verdicts]   -> build/judge minutes per slice, rejections, concurrency
+//   node handoff.mjs ledger report [<cwd>] [--all [--since YYYY-MM-DD]] [--json|--verdicts]   -> build/judge minutes per slice, rejections, concurrency
 //   node handoff.mjs board        <cwd> [--json] [--no-git] [--no-pane]
 //
 // Ownership: the ledger filename is keyed on $CLAUDE_CODE_SESSION_ID, and every
@@ -80,16 +80,52 @@ export function readLedger(p) {
   return null;
 }
 
-export function initLedger(cwd, sessionId, goal) {
+// `runDir` is the run directory (~/.agent-handoffs/runs/...) that keeps this
+// run's spec reviews and acceptance reviews, so the dreaming pass can join a
+// ledger's verdicts to the full reports behind them.
+export function initLedger(cwd, sessionId, goal, runDir) {
   mkdirSync(DIR, { recursive: true });
   const p = ledgerFor(cwd, sessionId);
   const existing = readLedger(p);
   if (existing) {
-    if (goal && !existing.goal) { existing.goal = goal; existing.updated = nowIso(); writeAtomic(p, existing); }
+    let changed = false;
+    if (goal && !existing.goal) { existing.goal = goal; changed = true; }
+    if (runDir && existing.run_dir && existing.run_dir !== runDir) {
+      die(`ledger at ${p} already links run dir ${existing.run_dir}; refusing to relink it to ${runDir}.`);
+    }
+    if (runDir && !existing.run_dir) { existing.run_dir = runDir; changed = true; }
+    if (changed) { existing.updated = nowIso(); writeAtomic(p, existing); }
     return p;
   }
   const t = nowIso();
-  writeAtomic(p, { session: sessionId, cwd, goal: goal || '', created: t, updated: t, slices: [] });
+  writeAtomic(p, { session: sessionId, cwd, goal: goal || '', run_dir: runDir || '', created: t, updated: t, slices: [] });
+  return p;
+}
+
+// --- halt -------------------------------------------------------------------
+// A human stop that the automation obeys. Unattended wakes re-arm themselves
+// after every bridge exit, and the Stop hook can refuse a turn end, so "stop"
+// said in prose is not enough. The marker is keyed on the repo root, not a
+// session, so the user can set it from any shell or session. While it exists,
+// dispatch-slice.sh refuses, architect-wake.sh does not resume the architect,
+// the Stop hook stays quiet and the board leads with HALTED. Only unhalt clears it.
+export const haltPath = (cwd) => join(DIR, `${hash(cwd)}.halt`);
+
+export function readHalt(cwd) {
+  const p = haltPath(cwd);
+  if (!existsSync(p)) return null;
+  try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return { reason: '(unreadable halt marker)', at: '' }; }
+}
+
+export function setHalt(cwd, reason) {
+  mkdirSync(DIR, { recursive: true });
+  writeAtomic(haltPath(cwd), { cwd, reason: reason || 'halted by the user', at: nowIso() });
+  return haltPath(cwd);
+}
+
+export function clearHalt(cwd) {
+  const p = haltPath(cwd);
+  if (existsSync(p)) rmSync(p);
   return p;
 }
 
@@ -165,10 +201,37 @@ function applyFields(slice, f) {
   return slice;
 }
 
+// A rejection is the only record of why work went back. The dreaming pass that
+// maintains review-criteria.md reads these verdicts across runs; a rejection
+// without one cannot be classified, and in the 2026-11 check 29 of 39 sends-back
+// had none. A send-back with no verdict against the work is `returned`, not
+// `rejected`. A review-only rejection also carries its provenance tag: whether a
+// frozen criterion named the blocker (`named C5`) or none did (`unnamed`).
+const VERDICT_TAG = /\b(named\s+C\d+|unnamed)\b/i;
+export function assertVerdict(fields) {
+  if (fields.state !== 'rejected') return;
+  const v = String(fields.verdict ?? '').trim();
+  if (!v) {
+    die(
+      'refusing state=rejected without --verdict.\n' +
+      'Say why the work went back (the failed gate, or the review verdict and its blockers).\n' +
+      'A send-back with no verdict against the work (a ruling, a restamp, a scope change) is --state returned.',
+    );
+  }
+  if (REVIEW_ONLY(v) && !VERDICT_TAG.test(v)) {
+    die(
+      `refusing a review-only rejection without a provenance tag: "${v}"\n` +
+      'Add "named C<n>" when a frozen criterion named the blocker (the builder missed it),\n' +
+      'or "unnamed" when no criterion did (the spec review missed it).',
+    );
+  }
+}
+
 export function addSlice(cwd, sessionId, fields) {
   const { p, l } = loadOwned(cwd, sessionId);
   if (!fields.id) die('ledger add needs --id');
   assertState(fields.state);
+  assertVerdict(fields);
   assertPane(fields.pane, fields.handoff);
   if (l.slices.some((s) => s.id === fields.id)) {
     die(`slice "${fields.id}" already exists in the ledger. Use: ledger set "${cwd}" ${fields.id} --state ...`);
@@ -186,6 +249,7 @@ export function addSlice(cwd, sessionId, fields) {
 export function setSlice(cwd, sessionId, id, fields) {
   const { p, l } = loadOwned(cwd, sessionId);
   assertState(fields.state);
+  assertVerdict(fields);
   // The flag wins over the stored handoff, as it does when the fields are applied.
   const slice = l.slices.find((s) => s.id === id);
   assertPane(fields.pane, fields.handoff ?? slice?.handoff);
@@ -358,13 +422,15 @@ export function renderBoard(cwd, sessionId, { json = false, withGit = true, with
   const rows = l.slices.map((s) => reconcile(s, { bridges, withGit, withPane }));
   if (record) recordReportStamps(p, l, sessionId, rows);
 
-  if (json) return `${JSON.stringify({ ...l, ledger: p, slices: rows }, null, 2)}\n`;
+  const halt = readHalt(l.cwd || cwd);
+  if (json) return `${JSON.stringify({ ...l, ledger: p, halted: halt, slices: rows }, null, 2)}\n`;
 
   const counts = {};
   for (const r of rows) counts[r.state] = (counts[r.state] || 0) + 1;
   const attention = rows.filter((r) => r.flags.length).length;
 
-  let out = `BOARD  ${l.goal || '(no goal recorded)'}\n`;
+  let out = halt ? `HALTED ${halt.reason} (since ${halt.at}). Do not dispatch or resume; clear with: handoff.mjs unhalt "${l.cwd || cwd}"\n` : '';
+  out += `BOARD  ${l.goal || '(no goal recorded)'}\n`;
   out += `       session ${l.session} · root ${l.cwd}\n`;
   out += `       ledger ${p}\n`;
   out += `       ${rows.length} slice${rows.length === 1 ? '' : 's'} · `;
@@ -459,6 +525,13 @@ export function sliceTiming(s) {
       ?? (i === rejectedEntries.length - 1 && s.state === 'rejected' ? s.verdict || '' : ''))
     : (s.state === 'rejected' ? [s.verdict || ''] : []);
   const reviewOnlyVerdicts = verdicts.filter((v) => REVIEW_ONLY(v));
+  // When each review-only rejection happened, for review-criteria `Last seen:`.
+  // History entries carry their own time; a ledger without history falls back
+  // to the slice's last update.
+  const verdictDates = rejectedEntries.length
+    ? rejectedEntries.map((h) => h.at || '')
+    : (s.state === 'rejected' ? [s.updated || ''] : []);
+  const reviewOnlyDates = verdicts.map((v, i) => (REVIEW_ONLY(v) ? verdictDates[i] : null)).filter((d) => d !== null);
   const terminalEntry = [...history].reverse().find((h) => TERMINAL_STATES.has(h.state));
   const terminal = terminalEntry ? terminalEntry.t : (TERMINAL_STATES.has(s.state) ? parseAt(s.updated) : null);
   // A slice reopened after acceptance (a follow-up sent to the warm builder)
@@ -477,6 +550,7 @@ export function sliceTiming(s) {
     rejections,
     review_only_rejections: reviewOnlyVerdicts.length,
     review_only_verdicts: reviewOnlyVerdicts,
+    review_only_dates: reviewOnlyDates,
     judged: landed || rejections > 0,
     first_pass: landed && !corrective && rounds.length - returnedRounds <= 1 && rejections === 0,
     dispatched_at: rounds.length ? rounds[rounds.length - 1].start : null,
@@ -510,7 +584,7 @@ export function reportLedger(l, p) {
   const last = Math.max(...slices.map((s) => s.terminal_at ?? s.results_at ?? s.dispatched_at ?? 0), parseAt(l.updated) ?? 0);
   const total = (k) => slices.reduce((a, s) => a + s[k], 0);
   return {
-    ledger: p, session: l.session, cwd: l.cwd, goal: l.goal || '', created: l.created,
+    ledger: p, session: l.session, cwd: l.cwd, goal: l.goal || '', run_dir: l.run_dir || '', created: l.created,
     span_min: minutes(created, last || null),
     slices,
     counts,
@@ -528,13 +602,19 @@ export function reportLedger(l, p) {
 
 // The review-only rejection verdicts, one per line: the raw material for
 // do/references/review-criteria.md.
+// The run citation that review-criteria.md's `Source:` lines use:
+// `<repo basename>@<first 8 chars of the architect session>/<slice id>`.
+export const runCite = (r, sliceId) =>
+  `${basename(r.cwd || '') || '?'}@${String(r.session || '?').slice(0, 8)}/${sliceId}`;
+
 export function renderVerdicts(runs) {
   let out = '';
   for (const r of runs) {
     for (const s of r.slices) {
-      for (const v of s.review_only_verdicts) {
-        out += `${(r.created || '').slice(0, 10)} ${pad(s.id, 4)} ${v.replace(/\s+/g, ' ')}\n`;
-      }
+      s.review_only_verdicts.forEach((v, i) => {
+        const day = (s.review_only_dates?.[i] || r.created || '').slice(0, 10);
+        out += `${day} ${runCite(r, s.id)}  ${v.replace(/\s+/g, ' ')}\n`;
+      });
     }
   }
   return out || '(no review-only rejections recorded)\n';

@@ -530,11 +530,11 @@ test('a state change stores the verdict it was judged with in history', () => {
   run(['ledger', 'init', REPO, 'g']);
   run(['ledger', 'add', REPO, '--id', '1', '--title', 't']);
   run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
-  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = do not land']);
+  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = do not land (unnamed)']);
   run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
   const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
   const rejected = s.history.find((h) => h.state === 'rejected');
-  assert.equal(rejected.verdict, 'review = do not land');
+  assert.equal(rejected.verdict, 'review = do not land (unnamed)');
   assert.equal(s.history.filter((h) => h.state === 'dispatched').every((h) => !('verdict' in h)), true);
 });
 
@@ -566,6 +566,7 @@ test('ledger report --verdicts lists only the review-only rejection verdicts', (
   ]);
   const out = run(['ledger', 'report', REPO, '--verdicts']);
   assert.match(out, /token leak/);
+  assert.match(out, /\bverdicts@arch\/1\b/, 'each line cites repo@session/slice for review-criteria Source: lines');
   assert.doesNotMatch(out, /g3 failed/);
   assert.doesNotMatch(out, /SAFE TO LAND/);
 });
@@ -680,4 +681,79 @@ test('board flags a renamed pane without a sidecar or with a split, not one with
     assert.equal(row.flags.some((f) => f.startsWith('UNMANAGED PANE')), flagged, name);
     assert.equal(row.paneCheck.verified, !flagged, name);
   }
+});
+
+test('a rejection needs a verdict, and a review-only one needs its provenance tag', () => {
+  const REPO = repo('verdict-required');
+  run(['ledger', 'init', REPO, 'g']);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--state', 'dispatched']);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--state', 'rejected']), /without --verdict/);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', '  ']), /without --verdict/);
+  assert.match(runFail(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = DO NOT LAND: leak']), /provenance tag/);
+  assert.match(runFail(['ledger', 'add', REPO, '--id', '2', '--state', 'rejected']), /without --verdict/);
+  // A failed gate is not review-only, so it needs no tag; returned needs no verdict.
+  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'g3 failed 0/3']);
+  run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
+  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = DO NOT LAND: leak (named C2)']);
+  run(['ledger', 'set', REPO, '1', '--state', 'returned']);
+  const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  assert.equal(s.state, 'returned');
+});
+
+test('ledger report --all --since keeps only runs updated on or after the date', () => {
+  const OLD = repo('since-old');
+  const NEW = repo('since-new');
+  const pOld = fixtureLedger(OLD, 'arch-old', [
+    { id: '1', title: 'o', state: 'rejected', verdict: 'review = do not land: old-leak (unnamed)', history: hist(['dispatched', '09:00'], ['rejected', '09:30']) },
+  ]);
+  const l = JSON.parse(readFileSync(pOld, 'utf8'));
+  l.updated = '2026-01-02T00:00:00.000Z';
+  writeFileSync(pOld, JSON.stringify(l));
+  fixtureLedger(NEW, 'arch-new', [
+    { id: '1', title: 'n', state: 'rejected', verdict: 'review = do not land: new-leak (unnamed)', history: hist(['dispatched', '09:00'], ['rejected', '09:30']) },
+  ]);
+  const out = run(['ledger', 'report', '--all', '--since', '2026-06-01', '--verdicts'], { session: 'someone-else' });
+  assert.match(out, /new-leak/);
+  assert.doesNotMatch(out, /old-leak/);
+  assert.match(run(['ledger', 'report', '--all', '--verdicts'], { session: 'someone-else' }), /old-leak/);
+  assert.match(runFail(['ledger', 'report', '--all', '--since', 'last-week'], { session: 'someone-else' }), /YYYY-MM-DD/);
+});
+
+test('ledger init --run-dir links the run directory once and reports it', () => {
+  const REPO = repo('run-dir');
+  run(['ledger', 'init', REPO, '--run-dir', '/abs/runs/2026-11-09-x-abcd']);
+  let l = JSON.parse(run(['ledger', 'show', REPO]));
+  assert.equal(l.run_dir, '/abs/runs/2026-11-09-x-abcd');
+  assert.equal(l.goal, '', 'the run dir is not read as the goal');
+  run(['ledger', 'init', REPO, 'the goal', '--run-dir', '/abs/runs/2026-11-09-x-abcd']);
+  l = JSON.parse(run(['ledger', 'show', REPO]));
+  assert.equal(l.goal, 'the goal');
+  assert.match(runFail(['ledger', 'init', REPO, '--run-dir', '/abs/other']), /refusing to relink/);
+  assert.match(runFail(['ledger', 'init', REPO, '--run-dir', 'relative/x']), /absolute path/);
+  const j = JSON.parse(run(['ledger', 'report', REPO, '--json']));
+  assert.equal(j.runs[0].run_dir, '/abs/runs/2026-11-09-x-abcd');
+});
+
+test('ledger report --verdicts dates each line by its rejection, not the run start', () => {
+  // A long run (bork-trade spanned weeks) stamped every rejection with the day
+  // the ledger was created, which made review-criteria `Last seen:` stale.
+  const REPO = repo('verdict-dates');
+  fixtureLedger(REPO, 'arch-dates', [
+    { id: '7', title: 'late', state: 'rejected', verdict: 'review = do not land: late-leak (unnamed)',
+      history: [{ state: 'dispatched', at: '2026-10-29T09:00:00.000Z' }, { state: 'rejected', at: '2026-11-02T10:00:00.000Z', verdict: 'review = do not land: late-leak (unnamed)' }] },
+  ], { created: '2026-10-20T09:00:00.000Z' });
+  const line = run(['ledger', 'report', REPO, '--verdicts'], { session: 'arch-dates' }).split('\n').find((x) => x.includes('late-leak'));
+  assert.match(line, /^2026-11-02 /);
+});
+
+test('board leads with HALTED while the run is halted, and its JSON carries the halt', () => {
+  const REPO = repo('board-halt');
+  run(['ledger', 'init', REPO, 'g']);
+  run(['halt', REPO, 'user said stop']);
+  assert.match(board(REPO), /^HALTED user said stop/);
+  assert.equal(JSON.parse(run(['board', REPO, '--no-git', '--json'])).halted.reason, 'user said stop');
+  assert.equal(run(['halted', REPO]), 'user said stop');
+  run(['unhalt', REPO]);
+  assert.doesNotMatch(board(REPO), /HALTED/);
+  assert.match(runFail(['halted', REPO]), /^$/);
 });

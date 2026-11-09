@@ -1,7 +1,7 @@
 // test_architect_wake.mjs — the detached wake resumes the right session with the
 // bridge's output, and fails loudly rather than silently when it cannot.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -105,4 +105,21 @@ test('unattended.sh arms one detached wake per live slice and skips terminal row
     await new Promise((r) => setTimeout(r, 300));
   }
   assert.match(log, /--resume arch-7/, 'the detached chain resumed the architect');
+});
+
+test('a halted run is never resumed: the wake logs the halt and exits', () => {
+  rmSync(LOG, { force: true });
+  const wt = join(BOX, 'wt-halt');
+  const doc = hoff(['init', wt, 'arch-7', 'slice halt']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  hoff(['status', doc, 'results-ready']);
+  hoff(['halt', REPO, 'user said stop']);
+  try {
+    const r = spawnSync('bash', [WAKE, REPO, doc, 'arch-7'], { encoding: 'utf8', env: env() });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(existsSync(LOG), false, 'claude was never called');
+    assert.match(readFileSync(`${doc}.wake.log`, 'utf8'), /run halted \(user said stop\); not resuming/);
+  } finally {
+    hoff(['unhalt', REPO]);
+  }
 });

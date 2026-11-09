@@ -36,7 +36,9 @@ function slice(REPO, id, { state, docStatus, pid }) {
   const doc = hoff(['init', wt, 'arch', `slice ${id}`]);
   if (docStatus) writeFileSync(doc, readFileSync(doc, 'utf8').replace(/^status:.*$/m, `status: ${docStatus}`));
   if (pid !== 'none') writeFileSync(`${doc}.builder`, `${pid}\n`);
-  hoff(['ledger', 'add', REPO, '--id', id, '--title', `slice ${id}`, '--slice-cwd', wt, '--handoff', doc, '--state', state]);
+  // A rejection must carry its verdict (the ledger refuses one without it).
+  const verdict = state === 'rejected' ? ['--verdict', 'g2 failed 3/5'] : [];
+  hoff(['ledger', 'add', REPO, '--id', id, '--title', `slice ${id}`, '--slice-cwd', wt, '--handoff', doc, '--state', state, ...verdict]);
   return doc;
 }
 
@@ -102,4 +104,14 @@ test('stop_hook_active -> never block twice in a row', () => {
 test('garbage on stdin -> silent, never a crash that blocks the user', () => {
   const out = execFileSync(NODE, [HOOK], { encoding: 'utf8', env: envFor('arch'), input: 'not json' });
   assert.equal(out, '');
+});
+
+test('a halted run owes nothing: the stop is never refused', () => {
+  const REPO = repo('halted');
+  hoff(['ledger', 'init', REPO, 'g']);
+  slice(REPO, '1', { state: 'dispatched', docStatus: 'results-ready', pid: 'none' });
+  hoff(['halt', REPO, 'user said stop']);
+  assert.equal(fire({ session_id: 'arch', cwd: REPO }), '');
+  hoff(['unhalt', REPO]);
+  assert.equal(JSON.parse(fire({ session_id: 'arch', cwd: REPO })).decision, 'block', 'unhalt restores the hook');
 });

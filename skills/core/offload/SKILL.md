@@ -66,6 +66,23 @@ a ruling or an owner. **Builders never write the ledger.**
 
 A single-slice run needs no ledger: the handoff is the whole state.
 
+## Run directory
+
+Every spec review and every acceptance review is written to the run directory,
+never only to a temp path or the scratchpad: `spec-review-<slice>.md` and
+`review-<slice>-r<round>.md` (round 1 is the first judgment; each corrective adds
+one). Use the run directory `do` or `complete` created. When `offload` runs on its
+own, create one the same way (`~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4
+random chars>/`, mode 700) and record its path under *Decisions + why*; pass it to
+`ledger init --run-dir` when a ledger exists. These files are what the dreaming
+pass ([dreaming.md](../do/references/dreaming.md)) reads across runs.
+
+Builders, reviewers and the architect do not curate memory during a run: no
+"record what you learned" step, and no edits to `review-criteria.md`, briefs or
+skills from inside a run. They leave structured evidence (verdicts with tags, the
+review files above, `decisions.md`). Only the dreaming pass, run on its own with
+the user approving each change, turns that evidence into criteria.
+
 ## Resolve the builder harness
 
 - The builder comes from `~/.borkweb-skills/config.json` (`dispatch.rules[0].use`,
@@ -108,7 +125,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only; ignore *Work summary* and any narrative when grading. Then read the
    criteria evidence under *Gate results*: every frozen criterion needs a line, and a
-   missing line or `NOT MET` fails the slice without a review. Before any review,
+   missing line, a missing `Loosened tests:` line or `NOT MET` fails the slice without a review. Before any review,
    run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway
    detached worktree at the slice HEAD, removed afterward, never the builder's
    worktree) and each real-runtime run a criterion names; a failure there sends the
@@ -125,7 +142,11 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    blocker. **Two-miss stop:** when the same criterion or blocker fails a second
    round, do not spec a third corrective; rework the criterion (it is usually
    ambiguous or unbuildable as written) or ask the user, and record which under
-   *Decisions + why*. A send-back that carries no verdict against the work (a
+   *Decisions + why*. **Round cap:** `dispatch-slice.sh` refuses a corrective once
+   the slice has more than 3 rejected rounds (`OFFLOAD_ROUND_CAP`), even when each
+   round failed on a different blocker. Ask the user whether to continue, re-scope
+   or abandon, and pass a continue ruling as `--past-cap "<ruling>"`; the ledger
+   keeps it. A send-back that carries no verdict against the work (a
    ruling, a restamp, a scope change) is `ledger set … --state returned`, never
    `rejected`; a slice the user's change of direction made moot is `abandoned`.
    Scope a corrective's review to the change: give it the prior blockers and
@@ -144,7 +165,8 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    LAND after green gates, record whether a frozen criterion named it (the builder
    missed it; cite the number) or none did (the spec review in step 4 missed it).
    Put the same tag in the ledger `--verdict` text (`named C5`, `unnamed`), so
-   `ledger report --verdicts` keeps it after the handoff doc is gone.
+   `ledger report --verdicts` keeps it after the handoff doc is gone. The ledger
+   refuses `rejected` without a verdict, and a review-only one without the tag.
 4. **Write the next slice spec** under *Next slice*: one coherent feature (see Slice
    size), hard acceptance criteria, explicit out-of-scope, and a mandate that the
    builder verify APIs/formats against reality BEFORE coding. For a **corrective**,
@@ -267,6 +289,7 @@ launch; if the user declines, stop at the paste-ready block.
 ## Hard rules
 
 - You do not write implementation code. If tempted, write a tighter slice instead.
+- When the user says stop, run `handoff.mjs halt "<repo root>" "<their words>"` before anything else. While halted, `dispatch-slice.sh` refuses, unattended wakes do not resume you, and the board leads with HALTED. Only the user's go-ahead clears it (`handoff.mjs unhalt`).
 - Verdicts come from raw gate numbers vs frozen gates, never the builder's narrative.
 - A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.

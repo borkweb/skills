@@ -40,8 +40,14 @@ Resolve `SID` with `node "<…>/handoff.mjs" key`. This supports native Claude a
 namespaced Codex identities. Never export a Codex id as a Claude session id.
 
 ```
-node "<…>/handoff.mjs" ledger init "$PWD" "<the goal, verbatim>"
+node "<…>/handoff.mjs" ledger init "$PWD" "<the goal, verbatim>" --run-dir "<run dir>"
 ```
+
+`<run dir>` is the run directory `do` created, or one you create the same way
+(`~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4 random chars>/`, mode 700)
+when `complete` runs on its own. Spec reviews and acceptance reviews are written
+there (see `offload`'s *Run directory*), and the link lets the dreaming pass
+join each verdict to its full review.
 
 This is the architect's own file, one per session, and **builders never write
 it**. It is the only place a slice's terminal state lives. Each slice also gets
@@ -164,7 +170,8 @@ turn-taking between slices and you never hold the fleet in your head.
    `ready` → run `offload` on that slice: its step 0 judges the raw gates and runs
    the acceptance `review`, which already applies the spec reviewer's criteria.
 3. Branch on the verdict:
-   - gates or review fail → `ledger set … --state rejected --verdict "<why>"`;
+   - gates or review fail → `ledger set … --state rejected --verdict "<why>"`
+     (required; a review-only verdict also carries `named C<n>` or `unnamed`);
      relay every confirmed defect in one batch; `offload` specs one corrective
      slice onto the same branch and sends it with `dispatch-slice.sh … --corrective`,
      which reuses the warm builder when it is still at its prompt. When the same

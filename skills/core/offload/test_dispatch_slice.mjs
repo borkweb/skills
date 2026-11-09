@@ -193,7 +193,7 @@ test('corrective into a warm builder: no new tab, the brief goes into the pane, 
   // The builder finished and reported; its process is still at the prompt.
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
   hoff(['status', doc, 'results-ready']);
-  hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak']);
+  hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak (unnamed)']);
 
   const { stdout, log } = run([R, WT, 'feat/warm2', FIX, '--id', '2', '--corrective']);
   assert.doesNotMatch(log, /tab create/, 'no second builder was launched');
@@ -219,15 +219,65 @@ test('corrective after results records the rejection with its verdict; a follow-
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
   hoff(['status', doc, 'results-ready']);
   hoff(['ledger', 'set', R, '4', '--state', 'results-ready']);
-  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
   let s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
-  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug');
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3)');
 
   hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
   run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective']);
   s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.slice(-2).map((h) => h.state), ['accepted', 'dispatched'], 'a follow-up is not a rejection');
+});
+
+test('corrective from unjudged results without a verdict is refused and leaves the brief alone', () => {
+  // A rejection with no verdict cannot be classified by the dreaming pass over
+  // review-criteria.md; refuse it before the builder's brief changes.
+  const R = repo();
+  const WT = join(BOX, 'wt-noverdict');
+  hoff(['ledger', 'init', R, 'g']);
+  run([R, WT, 'feat/noverdict', BLOCK, '--id', '5', '--title', 'nv']);
+  const doc = hoff(['path', WT, 'arch']);
+  hoff(['status', doc, 'results-ready']);
+  hoff(['ledger', 'set', R, '5', '--state', 'results-ready']);
+  const before = hoff(['section', 'get', doc, 'Next slice']);
+  let r = runFail([R, WT, 'feat/noverdict', FIX, '--id', '5', '--corrective']);
+  assert.match(r.stderr, /without --verdict/);
+  r = runFail([R, WT, 'feat/noverdict', FIX, '--id', '5', '--corrective', '--verdict', 'review = DO NOT LAND: race']);
+  assert.match(r.stderr, /provenance tag/);
+  assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'a refused corrective leaves Next slice as it was');
+  assert.equal(JSON.parse(hoff(['ledger', 'show', R])).slices[0].state, 'results-ready');
+});
+
+test('round cap: a 4th rejected round needs the user\'s --past-cap ruling, which the ledger keeps', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-cap');
+  hoff(['ledger', 'init', R, 'g']);
+  run([R, WT, 'feat/cap', BLOCK, '--id', '6', '--title', 'cap']);
+  const doc = hoff(['path', WT, 'arch']);
+  for (let i = 1; i <= 3; i++) {
+    hoff(['ledger', 'set', R, '6', '--state', 'results-ready']);
+    run([R, WT, 'feat/cap', FIX, '--id', '6', '--corrective', '--verdict', `g${i} failed`]);
+  }
+  hoff(['ledger', 'set', R, '6', '--state', 'results-ready']);
+  const before = hoff(['section', 'get', doc, 'Next slice']);
+  const r = runFail([R, WT, 'feat/cap', FIX, '--id', '6', '--corrective', '--verdict', 'g4 failed']);
+  assert.match(r.stderr, /rejected 4 times \(cap 3\)/);
+  assert.match(r.stderr, /--past-cap/);
+  assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'nothing was sent past the cap');
+  run([R, WT, 'feat/cap', FIX, '--id', '6', '--corrective', '--past-cap', 'user: one more round, then abandon']);
+  const s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
+  assert.match(s.note, /past round cap \(4 > 3\): user: one more round/);
+  assert.equal(s.state, 'dispatched');
+});
+
+test('halt refuses every dispatch until unhalt', () => {
+  const R = repo();
+  hoff(['halt', R, 'user said stop']);
+  const r = runFail([R, join(BOX, 'wt-halted'), 'feat/halted', BLOCK, '--id', '1']);
+  assert.match(r.stderr, /halted \(user said stop\); nothing was dispatched/);
+  hoff(['unhalt', R]);
+  run([R, join(BOX, 'wt-halted'), 'feat/halted', BLOCK, '--id', '1']);
 });
 
 test('corrective when the builder is gone: re-dispatch cold and say so', () => {

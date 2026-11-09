@@ -48,6 +48,12 @@ RC=$?
 log "bridge exited $RC"
 printf '%s\n' "$OUT" >> "$LOG"
 
+# The user's halt beats the wake: never resume the architect while it is set.
+if HALT=$(node "$HERE/../offload/handoff.mjs" halted "$REPO" 2>/dev/null); then
+  log "run halted ($HALT); not resuming the architect"
+  exit 0
+fi
+
 MCP=()
 case "${OFFLOAD_ARCHITECT_MCP:-none}" in
   inherit) ;;

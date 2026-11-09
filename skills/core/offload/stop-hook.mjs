@@ -29,6 +29,8 @@ try {
   out = JSON.parse(renderBoard(cwd, session, { json: true, withGit: false, withPane: false }));
 } catch { process.exit(0); }
 if (!out || !Array.isArray(out.slices)) process.exit(0);
+// The user halted this run: nothing is owed, so never refuse the stop.
+if (out.halted) process.exit(0);
 
 // Only the flags the architect can clear by itself, this turn: judge reported
 // gates, arbitrate a blocked builder, or own a slice nobody is working. A specced
