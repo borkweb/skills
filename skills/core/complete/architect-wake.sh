@@ -66,10 +66,10 @@ PERMS=(--permission-mode auto)
 PROMPT="[unattended wake] The wait bridge for $DOC exited $RC with:
 $OUT
 
-You are the architect for $REPO, running unattended: no human is watching this turn. Load the complete skill and follow its 'Each wake' procedure for this slice, reading the board above. Rules for this mode: every dispatch or corrective goes through \"$SLICE\" with --unattended, which arms the next wake itself; never start a background Bash bridge and never ScheduleWakeup. Write every terminal state you decide before ending. If a human ruling is genuinely required, or a command you need is denied, append the question to the handoff's 'Open disagreements' section, say so in your final message, and stop."
+You are the architect for $REPO, running unattended: no human is watching this turn. Load the complete skill and follow its 'Each wake' procedure for this slice, reading the board above. Rules for this mode: every dispatch or corrective goes through \"$SLICE\" with --unattended, which arms the next wake itself; never start a background Bash bridge and never ScheduleWakeup. Write every terminal state you decide before ending. If a human ruling is genuinely required (the round cap is one: never pass --past-cap), or a command you need is denied, append the question to the handoff's 'Open disagreements' section, say so in your final message, and stop."
 
 log "resuming architect session $SID (${PERMS[*]})"
-( cd "$REPO" && env -u CLAUDE_CODE_SESSION_ID claude -p --resume "$SID" "${PERMS[@]}" \
+( cd "$REPO" && env -u CLAUDE_CODE_SESSION_ID OFFLOAD_UNATTENDED_TURN=1 claude -p --resume "$SID" "${PERMS[@]}" \
     ${MCP[@]+"${MCP[@]}"} --output-format text "$PROMPT" ) >> "$LOG" 2>&1
 RC2=$?
 if [ "$RC2" -ne 0 ]; then

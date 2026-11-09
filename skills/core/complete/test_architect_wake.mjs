@@ -18,7 +18,7 @@ process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 const BIN = join(BOX, 'bin');
 const LOG = join(BOX, 'claude.log');
 mkdirSync(BIN, { recursive: true });
-writeFileSync(join(BIN, 'claude'), `#!/usr/bin/env bash\necho "claude $*" >> "${LOG}"\n[ "\${CLAUDE_STUB_FAIL:-}" = 1 ] && { echo 'Session is already running' >&2; exit 1; }\necho "turn done"\n`);
+writeFileSync(join(BIN, 'claude'), `#!/usr/bin/env bash\necho "claude $*" >> "${LOG}"\necho "unattended_turn=\${OFFLOAD_UNATTENDED_TURN:-}" >> "${LOG}"\n[ "\${CLAUDE_STUB_FAIL:-}" = 1 ] && { echo 'Session is already running' >&2; exit 1; }\necho "turn done"\n`);
 chmodSync(join(BIN, 'claude'), 0o755);
 const env = (extra = {}) => ({
   ...process.env, AGENT_HANDOFFS_DIR: BOX, CLAUDE_CODE_SESSION_ID: 'arch-7', HERDR_ENV: '',
@@ -42,6 +42,7 @@ test('the wake runs the bridge, then resumes the architect session with the WAIT
   const log = readFileSync(LOG, 'utf8');
   assert.match(log, /^claude -p --resume arch-7 --permission-mode auto --strict-mcp-config --mcp-config \S+ --output-format text \[unattended wake\]/m);
   assert.match(log, /WAITER: ready/);
+  assert.match(log, /^unattended_turn=1$/m, 'the resumed architect is marked unattended, so it cannot grant --past-cap');
   assert.match(log, /BOARD\s+goal/, 'the board travels with the wake');
   assert.match(log, /Each wake/);
   const wakeLog = readFileSync(`${doc}.wake.log`, 'utf8');

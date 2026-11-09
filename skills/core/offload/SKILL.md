@@ -125,7 +125,10 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only; ignore *Work summary* and any narrative when grading. Then read the
    criteria evidence under *Gate results*: every frozen criterion needs a line, and a
-   missing line, a missing `Loosened tests:` line or `NOT MET` fails the slice without a review. Before any review,
+   missing line or `NOT MET` fails the slice without a review. A missing `Loosened tests:`
+   line alone is bookkeeping, not a verdict against the work: `ledger set … --state
+   returned`, then send the builder a `--corrective` without `--verdict` asking for
+   the line, so it costs no rejection and no round. Before any review,
    run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway
    detached worktree at the slice HEAD, removed afterward, never the builder's
    worktree) and each real-runtime run a criterion names; a failure there sends the
@@ -146,7 +149,8 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    the slice has more than 3 rejected rounds (`OFFLOAD_ROUND_CAP`), even when each
    round failed on a different blocker. Ask the user whether to continue, re-scope
    or abandon, and pass a continue ruling as `--past-cap "<ruling>"`; the ledger
-   keeps it. A send-back that carries no verdict against the work (a
+   keeps it. Only the user grants that ruling; an unattended wake cannot pass
+   `--past-cap` and stops to ask instead. A send-back that carries no verdict against the work (a
    ruling, a restamp, a scope change) is `ledger set … --state returned`, never
    `rejected`; a slice the user's change of direction made moot is `abandoned`.
    Scope a corrective's review to the change: give it the prior blockers and

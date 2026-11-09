@@ -265,9 +265,25 @@ test('round cap: a 4th rejected round needs the user\'s --past-cap ruling, which
   assert.match(r.stderr, /rejected 4 times \(cap 3\)/);
   assert.match(r.stderr, /--past-cap/);
   assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'nothing was sent past the cap');
+  const un = runFail([R, WT, 'feat/cap', FIX, '--id', '6', '--corrective', '--past-cap', 'self-granted'], { OFFLOAD_UNATTENDED_TURN: '1' });
+  assert.match(un.stderr, /unattended wake: --past-cap needs the user's own ruling/);
+  assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'an unattended wake cannot grant itself another round');
   run([R, WT, 'feat/cap', FIX, '--id', '6', '--corrective', '--past-cap', 'user: one more round, then abandon']);
   const s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.match(s.note, /past round cap \(4 > 3\): user: one more round/);
+  assert.equal(s.state, 'dispatched');
+});
+
+test('a returned send-back (missing Loosened tests line) costs no rejection and no round', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-returned');
+  hoff(['ledger', 'init', R, 'g']);
+  run([R, WT, 'feat/returned', BLOCK, '--id', '8', '--title', 'ret']);
+  hoff(['ledger', 'set', R, '8', '--state', 'results-ready']);
+  hoff(['ledger', 'set', R, '8', '--state', 'returned']);
+  run([R, WT, 'feat/returned', FIX, '--id', '8', '--corrective']);
+  const s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
+  assert.equal(s.history.filter((h) => h.state === 'rejected').length, 0);
   assert.equal(s.state, 'dispatched');
 });
 

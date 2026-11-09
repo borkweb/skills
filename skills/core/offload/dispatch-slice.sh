@@ -141,6 +141,11 @@ round_cap() {
   local cap="${OFFLOAD_ROUND_CAP:-3}" n
   n=$(ledger_rejections)
   [ "$n" -gt "$cap" ] || return 0
+  # Only a human grants this. An unattended wake (architect-wake.sh sets the
+  # marker on the resumed architect) has nobody to ask, so it must stop instead.
+  if [ -n "$PAST_CAP" ] && [ "${OFFLOAD_UNATTENDED_TURN:-}" = 1 ]; then
+    die "slice $ID has been rejected $n times (cap $cap) and this is an unattended wake: --past-cap needs the user's own ruling. Append the question to the handoff's Open disagreements and stop. Nothing was sent."
+  fi
   [ -n "$PAST_CAP" ] || die "slice $ID has been rejected $n times (cap $cap). Ask the user whether to continue, re-scope or abandon; if they say continue, re-run with --past-cap \"<their ruling>\". Nothing was sent."
   hoff ledger set "$REPO" "$ID" --note "past round cap ($n > $cap): $PAST_CAP" >/dev/null
 }
