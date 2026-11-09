@@ -175,9 +175,14 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    size), hard acceptance criteria, explicit out-of-scope, and a mandate that the
    builder verify APIs/formats against reality BEFORE coding. For a **corrective**,
    the spec is the confirmed blockers with the mechanism behind each (see
-   [review-criteria.md](../do/references/review-criteria.md) §7); skip the spec
+   [review-criteria.md](../do/references/review-criteria.md) §7) and, for each
+   blocker, one command that goes red on it. Run each command once in a throwaway
+   detached worktree at the rejected HEAD and record its red output in the spec. A
+   behavioral blocker you cannot turn red is restated until it can, or goes back to
+   the reviewer for a reproduction; a blocker no command can show (docs, wording, a
+   missing file) keeps its file:line condition instead. Skip the spec
    reviewer and the plan reviews and go straight to dispatch. A corrective's builder
-   re-reports the full criteria evidence for the slice, not only the blockers, so
+   reports each blocker's command red before the fix and green after, and re-reports the full criteria evidence for the slice, not only the blockers, so
    the delta review can see a fix that broke a criterion that used to pass. Otherwise run these
    concurrently:
    - a read-only **spec reviewer** agent with the `review` checklist and
@@ -202,7 +207,12 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    the gate, or ask the user, and record which. Never dispatch a builder against
    a gate nobody can run. Rule on every gap the spec reviewer listed: fold it in as a criterion,
    record it as out of scope under *Decisions + why*, or ask the user when it
-   changes scope. No gap reaches the builder unresolved. Freeze the gates under
+   changes scope. No gap reaches the builder unresolved. Before freezing, run each
+   criterion's command once in the pre-warmed worktree, still at the base, and
+   record `base: red`, `green` or `n/a` beside it (mutation checks and file:line
+   conditions are `n/a`). A criterion for new or changed behavior that is already
+   green at the base cannot fail, so it proves nothing: rewrite its check, or return
+   it to the spec reviewer, before it freezes. Freeze the gates under
    *Frozen gates* with the spec reviewer's criteria, numbered, folded in (never
    edit them after results exist). The builder brief carries the
    same criteria, so the builder and the acceptance reviewer hold one bar.
