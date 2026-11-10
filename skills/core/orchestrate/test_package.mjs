@@ -52,10 +52,29 @@ test('8: the loop says what to do on exit 124, on several RUN lines, and at a tr
   assert.match(s, /trust dialog[^\n]*blocked[^\n]*(user )?answer/i);
 });
 
-test('6: the SKILL says Codex architects cannot be launched yet and a Codex session can still coordinate', () => {
+test('6: the SKILL says Codex architects cannot be launched yet', () => {
   const s = skill();
-  assert.match(s, /Codex architects cannot be launched yet \(herdr is blocked in Codex's sandbox\); a Codex session can still coordinate\./);
-  assert.ok(!/workspace-write|live Codex check|--harness claude\|codex|approval prompts/.test(s), 'no stale Codex launch text');
+  assert.match(s, /Codex architects cannot be launched yet \(herdr is blocked in Codex's sandbox\)\./);
+  assert.ok(!/workspace-write|live Codex check|--harness claude\|codex|approval prompts|a Codex session can still coordinate/.test(s), 'no stale Codex text');
+});
+
+// Decisions 16 and 17: herdr fails with PermissionDenied inside Codex's sandbox, so the texts
+// must not imply a Codex session can coordinate fully.
+const CODEX_CAN = /Codex session inside its sandbox can `?wait`?, `?show`? and `?ack`?, and can `?answer`? only where it can write the runs home/;
+const CODEX_CANNOT = /cannot `?start`? runs, and its `?answer`? cannot send the architect its pane line, so (it must )?tell the user to continue in the architect's tab/;
+test('f10: the SKILL and the README row say exactly what a Claude session and a Codex session can do', () => {
+  const s = skill();
+  assert.match(s, /Claude session \(in a herdr tab or over Remote Control\) can do the whole loop/);
+  assert.match(s, CODEX_CAN);
+  assert.match(s, CODEX_CANNOT);
+  const frontmatter = s.split('---')[1];
+  assert.ok(!/Claude or Codex/.test(frontmatter), 'the description no longer says Claude or Codex coordinate alike');
+  const row = read('README.md').split('\n').find((l) => /^\| \*\*orchestrate\*\* \|/.test(l));
+  assert.match(row, /Claude session[^|]*(start|whole loop)/i);
+  assert.match(row, CODEX_CAN);
+  assert.match(row, CODEX_CANNOT);
+  assert.match(row, /Codex architects cannot be launched yet/);
+  assert.ok(!/Claude, Codex or Remote Control session can start runs/.test(row), 'the old overclaim is gone');
 });
 
 test('evals/cases.json gains the three orchestration cases with unique ids and resolvable skills', () => {
