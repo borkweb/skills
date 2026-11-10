@@ -170,6 +170,23 @@ test('a second signal after an atomic rename is caught: fire, ack, wait again, a
   assert.match(r.out, /Q2/);
 });
 
+test('C18 a wait armed on a settled run fires when the run is reopened and finishes again', async () => {
+  const wb = newBox();
+  const { id } = mkRun(wb);
+  ok(run(wb, ['set', id, '--state', 'done', '--delivery', 'first']));
+  ok(run(wb, ['ack', id]));
+  const w = spawnChild(wb, ['wait', '--run', id, '--timeout', '20']);
+  await sleep(1500);
+  ok(run(wb, ['reopen', id]));
+  await sleep(1500);
+  ok(run(wb, ['set', id, '--state', 'done', '--delivery', 'second']));
+  const t0 = Date.now();
+  const r = await w.done;
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, new RegExp(`^RUN ${id} done r\\d+\\n$`));
+  assert.ok(Date.now() - t0 < 5000, `${Date.now() - t0} ms`);
+});
+
 test('wait survives a watched run dir deleted mid-wait and still fires for another run', async () => {
   const wb = newBox();
   const gone = mkRun(wb, { slug: 'gone' });

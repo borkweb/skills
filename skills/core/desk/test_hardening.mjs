@@ -61,9 +61,10 @@ for (const kind of ['eisdir', 'eacces']) {
     const id = bad.split('/').pop();
     try {
       for (const c of [['show', id], ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-        ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id]]) {
+        ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['tell', id, '--message', 'x'], ['reopen', id]]) {
         const r = run(hb, c);
         refused(r, c[0]);
+        assert.deepEqual(calls(hb), [], `${c[0]} makes no herdr call`);
         assert.ok(r.err.includes(recPath(bad)), `${c[0]} names the path: ${r.err}`);
         assert.ok(!/ {4}at /.test(r.err));
       }

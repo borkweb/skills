@@ -23,6 +23,8 @@ const a = process.argv.slice(2);
 fs.appendFileSync(process.env.HERDR_STUB_LOG, JSON.stringify(a) + '\\n');
 const mode = process.env.HERDR_STUB_MODE || 'ok';
 const key = a.slice(0, 2).join(' ');
+// Every call records whether the run lock was held at that moment (HERDR_STUB_LOCK_LOG, HERDR_STUB_LOCK_DIR).
+if (process.env.HERDR_STUB_LOCK_LOG) fs.appendFileSync(process.env.HERDR_STUB_LOCK_LOG, key + ' ' + fs.existsSync(process.env.HERDR_STUB_LOCK_DIR + '/run.json.lock') + '\\n');
 const fail = (msg) => { process.stderr.write(msg + '\\n'); process.exit(1); };
 if (key === 'tab create') {
   if (a.includes('--help')) {
@@ -44,10 +46,28 @@ if (key === 'tab create') {
   if (mode === 'prompt-error') process.stdout.write('{"error":{"code":"agent_not_found","message":"no agent"}}\\n');
   else if (mode === 'prompt-blocked') process.stdout.write('{"result":{"status":"agent_blocked"},"type":"agent_prompt"}\\n');
   else process.stdout.write('{"result":{"type":"agent_prompt_accepted"}}\\n');
-} else if (key === 'agent get') {
-  const have = (process.env.HERDR_STUB_AGENTS || '').split(',');
-  if (have.includes(a[2])) process.stdout.write('{"result":{"agent":{"agent":"claude","pane_id":"' + a[2] + '"}}}\\n');
-  else { process.stdout.write('{"error":{"code":"agent_not_found"}}\\n'); process.exit(1); }
+} else if (key === 'agent get' || key === 'agent list') {
+  // herdr 0.9.3 live shapes (spec-review-1 "Live evidence"). HERDR_STUB_AGENTS names the panes that hold an agent;
+  // HERDR_STUB_STATUS maps pane -> agent_status (default idle). HERDR_STUB_AGENT_MODE: fail | hang | malformed | truncated.
+  const hook = process.env.HERDR_STUB_HOOK;
+  if (hook && key === 'agent get' && !fs.existsSync(process.env.HERDR_STUB_LOG + '.hook')) {
+    fs.writeFileSync(process.env.HERDR_STUB_LOG + '.hook', 'ran');
+    for (const args of JSON.parse(hook)) require('node:child_process').spawnSync(process.execPath, [process.env.HERDR_STUB_RUNS, ...args], { env: process.env });
+  }
+  const am = process.env.HERDR_STUB_AGENT_MODE || 'ok';
+  if (am === 'fail') fail('{"error":{"code":"internal_error","message":"boom"},"id":"cli:' + a[0] + ':' + a[1] + '"}');
+  if (am === 'hang') setInterval(() => {}, 1000);
+  else {
+    const have = (process.env.HERDR_STUB_AGENTS || '').split(',').filter(Boolean);
+    const status = JSON.parse(process.env.HERDR_STUB_STATUS || '{}');
+    const info = (pane) => ({ agent: 'claude', agent_session: { agent: 'claude', kind: 'id', source: 'herdr:claude', value: 'sess-' + pane }, agent_status: status[pane] || 'idle', completion_seq: 1, cwd: '/x', pane_id: pane, tab_id: pane.split(':')[0] + ':t1', terminal_title: process.env.HERDR_STUB_TITLE || '\\u2733 stub title' });
+    if (key === 'agent list') {
+      const body = JSON.stringify({ id: 'cli:agent:list', result: { agents: have.map(info) } });
+      process.stdout.write(am === 'malformed' ? 'not json at all\\n' : am === 'truncated' ? body.slice(0, Math.floor(body.length / 2)) : body + '\\n');
+    } else if (have.includes(a[2])) {
+      process.stdout.write(am === 'malformed' ? 'not json\\n' : JSON.stringify({ id: 'cli:agent:get', result: { agent: info(a[2]), type: 'agent_info' } }) + '\\n');
+    } else fail('{"error":{"code":"agent_not_found","message":"agent target ' + a[2] + ' not found"},"id":"cli:agent:get"}');
+  }
 }
 `;
 

@@ -29,6 +29,7 @@ test('init writes the frozen record shape under the runs home with mode 700', ()
   assert.equal(rec.summary, '');
   assert.equal(rec.delivery, null);
   assert.deepEqual(rec.questions, []);
+  assert.deepEqual(rec.messages, [], 'C11: init writes messages: []');
   assert.deepEqual(rec.architect, { harness: null, session_id: null, frontend: null, tab: null, pane: null });
   assert.equal(rec.launched_by, 'self');
   assert.equal(rec.revision, 1);
@@ -102,7 +103,10 @@ test('ids that fail the id rule, and unknown ids, are refused by every id-taking
     withdraw: (id) => ['withdraw', id, 'Q1'],
     ack: (id) => ['ack', id],
     wait: (id) => ['wait', '--run', id, '--timeout', '1'],
+    tell: (id) => ['tell', id, '--message', 'x'],
+    reopen: (id) => ['reopen', id],
   };
+  resetLog(b);
   for (const id of ['..', '../x', '.h', 'a..b', 'no-such-run']) {
     for (const [name, mk] of Object.entries(cmds)) {
       const r = run(b, mk(id));
@@ -111,6 +115,7 @@ test('ids that fail the id rule, and unknown ids, are refused by every id-taking
     }
   }
   assert.equal(sha(recPath(victim)), vsha, 'a traversal id must not touch a dir outside the home');
+  assert.deepEqual(calls(b), [], 'every refusal, tell and reopen included, comes before any herdr call');
   assert.deepEqual(debris(dir), []);
   assert.deepEqual(debris(victim), []);
 });
@@ -219,8 +224,15 @@ test('with OFFLOAD_HANDOFF set every writing command is refused and bytes stay; 
     ['init', '--goal', 'g'], ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
     ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['ack', '--all'],
     ['claim', '--pane', 'tw:p4'], ['release'], ['start', '--repo', repo, '--goal', 'g'],
+    ['tell', id, '--message', 'x'], ['reopen', id],
   ];
   for (const w of writers) refused(run(wb, w, B), w[0]);
+  for (const w of [['tell', id, '--message', 'x'], ['reopen', id]]) {
+    const r = run(wb, w, B);
+    assert.equal(r.code, 1, w[0]);
+    assert.match(r.err, /refused: OFFLOAD_HANDOFF is set/, w[0]);
+  }
+  assert.deepEqual(calls(wb), [], 'a builder refusal makes no herdr call');
   assert.deepEqual(debris(dir), [], 'a refused builder write leaves no lock or tmp file');
   assert.equal(sha(recPath(dir)), rs);
   assert.equal(sha(oj), os);

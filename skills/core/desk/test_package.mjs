@@ -24,9 +24,10 @@ test('runs.mjs and helpers import only node builtins and sibling files; no packa
   assert.ok(!existsSync(join(HERE, 'package.json')));
 });
 
-test('all three plugin manifests carry 3.35.1 and the same skill list, including desk', () => {
+test('all three plugin manifests and the board manifest carry 3.36.0, and the three share one skill list, including desk', () => {
   const m = ['.claude-plugin', '.codex-plugin', '.grok-plugin'].map((d) => JSON.parse(read(`${d}/plugin.json`)));
-  assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.35.1']));
+  assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.36.0']));
+  assert.equal(JSON.parse(read('skills/core/desk/board/.claude-plugin/plugin.json')).version, '3.36.0');
   for (const x of m) assert.deepEqual(x.skills, m[0].skills);
   assert.ok(m[0].skills.includes('./skills/core/desk'));
   assert.ok(!m.some((x) => x.skills.includes('./skills/core/orchestrate')), 'the old orchestrate entry is gone');
@@ -155,4 +156,29 @@ test('f5: the one-slice corrective eval names a C-numbered criterion and require
   assert.match(crit, new RegExp(`named C${n[1]}\\b`), 'the tag cites the same criterion');
   assert.match(crit, /unnamed/);
   assert.ok(c.criteria.length >= 4);
+});
+
+test('C44-C46 the desk SKILL offers tell, new run and the tab in that order, and covers the loop, reporting and scope', () => {
+  const s = skill();
+  const at = (re) => { const i = s.search(re); assert.ok(i >= 0, `${re} is in the SKILL`); return i; };
+  assert.ok(s.includes('## More work for an existing run'));
+  assert.ok(at(/\*\*Tell the run\*\*/) < at(/\*\*Start a new run\*\*/) && at(/\*\*Start a new run\*\*/) < at(/\*\*I'll tell the tab myself\.\*\*/));
+  assert.match(s, /Never offer only the last two/);
+  assert.ok(!s.includes('A done or failed run is final'));
+  assert.match(s, /Done and blocked runs reopen through `tell` or `reopen`; a failed run is final/);
+  for (const cmd of ['tell', 'reopen']) assert.match(s, new RegExp(`^\\| \`${cmd} `, 'm'), `the Commands table has ${cmd}`);
+  assert.match(s, /RUN line whose state is `running` means the run moved on before you acked it \(it was reopened, or its question was answered in its tab\): `show`, `ack`, re-arm/);
+  assert.match(s, /agent status[^\n]*display only[\s\S]*idle or turn ended has stopped without setting a final state[^\n]*\*\*Tell the run\*\*[^\n]*`set --state blocked`/);
+  assert.match(s, /`tell` unchanged/);
+  assert.match(s, /started before this release refuse with `predates_tell`/);
+  assert.match(s, /`question_open`, relay the open question/);
+  assert.match(s, /exit 3[^\n]*architect did not get the work/);
+});
+
+test('C47 the do SKILL reopens before the terminal check, starts a new run for unrelated work and never lets a message answer a question', () => {
+  const d = read('skills/core/do/SKILL.md');
+  assert.match(d, /reopen the run first[^\n]*`runs\.mjs reopen <run>`[^\n]*terminal check on `BORK_RUN_DIR` passes[^\n]*same run dir/);
+  assert.match(d, /`show` the run anyway and, if it reports the run done or blocked, run `runs\.mjs reopen <run>` first/);
+  assert.match(d, /Unrelated new work starts a new run/);
+  assert.match(d, /A message never answers an open question/);
 });

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ageText, buildBoard, bandText, clean, fit, headOf, herdrMessage, homeDisplay, isDirName, isHerdrId, isOldFinished, isTerminalApp,
+  agentWordOf, ageText, buildBoard, bandText, clean, fit, headOf, herdrMessage, parseAgentList, homeDisplay, isDirName, isHerdrId, isOldFinished, isTerminalApp,
   lookOf, parseRecord, reasonOf, repoName, runsHome, toast, workspaceOf,
 } from '../hooks/model.ts';
 
@@ -86,6 +86,12 @@ const MALFORMED = {
   launched_by: (r) => ({ ...r, launched_by: 'x' }),
   'malformed question': (r) => ({ ...r, questions: [{ id: 'x' }] }),
   'question with a bad status': (r) => ({ ...r, questions: [{ id: 'Q1', status: 'nope', options: [] }] }),
+  'messages is null': (r) => ({ ...r, messages: null }),
+  'messages is an object': (r) => ({ ...r, messages: {} }),
+  'a null message': (r) => ({ ...r, messages: [null] }),
+  'a message id that is not M<n>': (r) => ({ ...r, messages: [{ id: 'X1', text: 't', at: 'a' }] }),
+  'a message text that is not a string': (r) => ({ ...r, messages: [{ id: 'M1', text: 5, at: 'a' }] }),
+  'a message without at': (r) => ({ ...r, messages: [{ id: 'M1', text: 't' }] }),
 };
 const BOARD_ONLY = {
   'updated_at is empty': (r) => ({ ...r, updated_at: '' }),
@@ -106,6 +112,9 @@ test('the board accepts exactly the records runs.mjs list accepts, plus its own 
   };
   const malformed = [...Object.values(MALFORMED).map((m) => writeBad(m)), writeBad(null, '{')];
   const dateBad = Object.values(BOARD_ONLY).map((m) => writeBad(m));
+  // Valid for both sides: no messages key (a run from before tell), and a well-formed list.
+  const noMessages = writeBad(({ messages, ...r }) => r);
+  const withMessages = writeBad((r) => ({ ...r, messages: [{ id: 'M1', text: 'hi', by: 'user', at: '2026-11-10T12:00:00Z' }] }));
   mkdirSync(join(f.home, 'no-record'));
   const listed = new Set(JSON.parse(f.cli('list', '--json')).map((r) => r.id));
   const board = new Set();
@@ -122,6 +131,50 @@ test('the board accepts exactly the records runs.mjs list accepts, plus its own 
   assert.equal(bad.size, malformed.length + dateBad.length);
   assert.equal(none, 1);
   for (const id of dateBad) assert.ok(listed.has(id), `${id}: runs.mjs does not check dates, the board does`);
+  for (const id of [noMessages, withMessages]) assert.ok(listed.has(id) && board.has(id), `${id}: both sides accept it`);
+});
+
+test('the board parses a real herdr 0.9.3 agent list into pane -> status and reads nothing else', () => {
+  const stdout = JSON.stringify({ id: 'cli:agent:list', result: { agents: [
+    // One entry captured from herdr 0.9.3 `agent list` (all 16 keys); only the paths, the title and the session id are neutral text.
+    { agent: 'claude', agent_session: { agent: 'claude', kind: 'id', source: 'herdr:claude', value: '00000000-0000-4000-8000-000000000000' }, agent_status: 'idle', completion_seq: 905, cwd: '/code/example', focused: false, foreground_cwd: '/code/example', pane_id: 'w4R:p3', revision: 11, state_change_seq: 905, tab_id: 'w4R:t1', terminal_id: 'term_65fb045feb2234', terminal_title: '✳ Example task title', terminal_title_stripped: 'Example task title', tokens: { character: 'Eleanora' }, workspace_id: 'w4R' },
+    { agent_status: 'working', pane_id: 'w4R:p4' },
+    { agent_status: 'done', pane_id: 'w4R:p5' },
+    { agent_status: 'zz-new', pane_id: 'w4R:p6' },
+    { agent_status: 'constructor', pane_id: 'w4R:p9' },
+    { agent_status: 'idle' },
+    { pane_id: 7, agent_status: 'idle' },
+    { pane_id: 'w4R:p8' },
+    null,
+  ] } });
+  assert.deepEqual([...parseAgentList(stdout)], [['w4R:p3', 'idle'], ['w4R:p4', 'working'], ['w4R:p5', 'done'], ['w4R:p6', 'unknown'], ['w4R:p9', 'unknown'], ['w4R:p8', 'unknown']]);
+  assert.equal(parseAgentList('{"id":"cli:agent:list","result":{"agents":[]}}').size, 0);
+  for (const bad of ['', 'not json', stdout.slice(0, 80), '{}', '{"result":{}}', '{"result":{"agents":{}}}', '{"result":{"agents":"x"}}', '[]', 'null']) assert.equal(parseAgentList(bad), null, bad);
+});
+
+test('a row gets the agent status from the map: gone for a pane the list lacks, none for finished runs, no pane or no map', () => {
+  const agents = new Map([['w66:p8', 'idle']]);
+  const recs = [
+    rec('a'), rec('b', { architect: { frontend: 'herdr', tab: 'w66:t7', pane: 'w66:p9' } }), rec('c', { architect: { frontend: null, tab: null, pane: null } }),
+    rec('d', { state: 'done' }), rec('e', { state: 'failed', architect: { frontend: null, tab: null, pane: 'w66:p9' } }),
+    rec('f', { state: 'needs-me', questions: [{ id: 'Q1', status: 'open', options: [] }] }),
+  ];
+  const by = (b) => Object.fromEntries(rowsOf(b).map((r) => [r.key, r.agent]));
+  assert.deepEqual(by(board(recs, { agents })), { a: 'idle', b: 'gone', c: null, d: null, e: null, f: 'idle' });
+  assert.deepEqual(by(board(recs, { agents: null })), { a: null, b: null, c: null, d: null, e: null, f: null });
+  assert.deepEqual(by(board(recs)), { a: null, b: null, c: null, d: null, e: null, f: null });
+});
+
+test('the card head words: the agent word, never the bare word done, architect gone, in the frozen order', () => {
+  const row = (patch) => ({ ...rowsOf(board([rec('a')]))[0], ...patch });
+  assert.equal(headOf(row({ agent: 'idle' })), 'skills · running · agent idle');
+  assert.equal(headOf(row({ agent: 'working' })), 'skills · running · agent working');
+  assert.equal(headOf(row({ agent: 'blocked' })), 'skills · running · agent blocked');
+  assert.equal(headOf(row({ agent: 'done' })), 'skills · running · agent turn ended');
+  assert.equal(headOf(row({ agent: 'unknown' })), 'skills · running · agent unknown');
+  assert.equal(headOf(row({ agent: 'gone' })), 'skills · running · architect gone');
+  assert.equal(headOf(row({ agent: 'idle', isStale: true, isThis: true, tab: null })), 'skills · stale · agent idle · (this session) · no tab');
+  assert.equal(agentWordOf({ agent: null }), null);
 });
 
 test('conservation: rows drawn + old finished hidden + bad + run dirs without run.json = run dirs', () => {

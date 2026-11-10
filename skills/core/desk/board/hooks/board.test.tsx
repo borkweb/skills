@@ -39,13 +39,19 @@ type Dir = {
   statFails?: string
   readFails?: string
 }
-type Ran = { exitCode: number; stdout?: string; stderr?: string } | 'reject' | 'slow-reject'
+type Ran = { exitCode: number; stdout?: string; stderr?: string; isStdoutTruncated?: boolean } | 'reject' | 'slow-reject'
+const isAgentList = (argv: readonly string[]) => argv[1] === 'agent' && argv[2] === 'list'
 type World = {
   dirs: Record<string, Dir>
   extra: { name: string; kind: 'dir' | 'file' | 'other'; isLink?: boolean }[]
   listFails: string | null
   env: Record<string, string | undefined>
   run: (argv: readonly string[]) => Ran
+  // What `herdr agent list` answers; kept apart from `run` so a press test's own `run` never answers it.
+  // The default is an empty exit 0 (unparsable), so a test that does not care gets no status.
+  agent: () => Ran
+  // 'stat' | 'read' | 'agent', in the order the engine saw them.
+  events: string[]
   panes: string[]
   statExists: string[]
   list: string[]
@@ -58,12 +64,14 @@ type World = {
   stateSets: number
   holdList: Promise<void> | null
   stateGetFails: number
+  // A reason makes `$.ui.panes()` reject.
+  panesFails: string | null
 }
 const OK_RUN: World['run'] = (argv) =>
   argv[1] === 'tab' && argv[2] === 'get' ? { exitCode: 0, stdout: TAB_GET } : { exitCode: 0 }
 const world = (dirs: Record<string, Dir> = {}, patch: Partial<World> = {}): World => ({
-  dirs, extra: [], listFails: null, env: {}, run: OK_RUN, panes: [], statExists: [BIN], list: [], read: [], stat: [], process: [],
-  toasts: [], opened: [], registered: [], stateSets: 0, holdList: null, stateGetFails: 0, ...patch,
+  dirs, extra: [], listFails: null, env: {}, run: OK_RUN, agent: () => ({ exitCode: 0 }), events: [], panes: [], statExists: [BIN], list: [], read: [], stat: [], process: [],
+  toasts: [], opened: [], registered: [], stateSets: 0, holdList: null, stateGetFails: 0, panesFails: null, ...patch,
 })
 const good = (name: string, patch: Record<string, unknown> = {}): Dir => ({ rec: rec(name, patch) })
 const textOf = (d: Dir) => d.text ?? JSON.stringify(d.rec)
@@ -99,6 +107,7 @@ async function boot($: Engine, on: On, w: World, start: { surface?: Surface | nu
   })
   on('fs.stat', (_, e) => {
     w.stat.push(e.path)
+    w.events.push('stat')
     const m = /^\/Users\/t\/.agent-handoffs\/runs\/([^/]+)\/run\.json$/.exec(e.path)
     if (!m) return w.statExists.includes(e.path) ? { value: { kind: 'file' as const, size: 1, mtimeMs: 1, isLink: false } } : { deny: 'ENOENT: no such file' }
     const d = w.dirs[m[1]!]
@@ -108,6 +117,7 @@ async function boot($: Engine, on: On, w: World, start: { surface?: Surface | nu
   })
   on('fs.read', (_, e) => {
     w.read.push(e.path)
+    w.events.push('read')
     const d = w.dirs[e.path.split('/').at(-2)!]
     if (!d || d.noRunJson) return { deny: 'ENOENT: no such file or directory' }
     if (d.readFails) return { deny: d.readFails }
@@ -115,13 +125,14 @@ async function boot($: Engine, on: On, w: World, start: { surface?: Surface | nu
   })
   on('process.run', async (_, e) => {
     w.process.push({ argv: e.argv, timeoutMs: e.init?.timeoutMs })
-    const r = w.run(e.argv)
+    if (isAgentList(e.argv)) w.events.push('agent')
+    const r = isAgentList(e.argv) ? w.agent() : w.run(e.argv)
     if (r === 'reject') return { deny: 'spawn herdr ENOENT' }
     if (r === 'slow-reject') {
       await clock.sleep(e.init?.timeoutMs ?? 0)
       return { deny: 'timed out' }
     }
-    return { value: { exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return { value: { exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '', isStdoutTruncated: r.isStdoutTruncated ?? false, isStderrTruncated: false } }
   })
   on('ui.toast', (_, e) => {
     w.toasts.push(e.text)
@@ -136,7 +147,7 @@ async function boot($: Engine, on: On, w: World, start: { surface?: Surface | nu
     w.panes = w.panes.filter((p) => p !== e.id)
     return { value: undefined }
   })
-  on('ui.panes', () => ({ value: w.panes.map((id) => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) }))
+  on('ui.panes', () => w.panesFails ? { deny: w.panesFails } : ({ value: w.panes.map((id) => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('state.get', (_, e, next) => {
     if (w.stateGetFails > 0) {
@@ -245,7 +256,7 @@ for (const surface of SURFACES) {
     expect(all).not.toContain('failed:')
   })
 
-  for (const [name, stored] of [['another shape tag', { value: { rows: 1 }, version: 3, shape: 'board-0' }], ['no shape tag', { value: { rows: 1 }, version: 3 }]] as const) {
+  for (const [name, stored] of [['another shape tag', { value: { rows: 1 }, version: 3, shape: 'board-0' }], ['the previous shape tag board-2', { value: { rows: 1 }, version: 3, shape: 'board-2' }], ['no shape tag', { value: { rows: 1 }, version: 3 }]] as const) {
     test(`${surface}: a value stored with ${name} draws Reading runs…`, async ($, on) => {
       on('state.get', () => ({ value: stored }))
       expect((await snap($, surface)).all).toContain('Reading runs…')
@@ -572,13 +583,27 @@ test('a record whose stat is unchanged is not read again; a changed stat is', as
   expect(w.read.length).toBe(2)
 })
 
-test('a done record older than 48 h is read once and never again, even after its stat changes', async ($, on) => {
+// A reopen (runs.mjs tell or reopen) makes an old finished run live again, so its record is stat'ed every tick.
+test('a done record older than 48 h is read again when its stat changes: a reopened run appears under In motion', async ($, on) => {
   const w = world({ a: good('a', { state: 'done', updated_at: iso(50 * HOUR) }) })
   const clock = await boot($, on, w)
   expect(w.read.length).toBe(1)
-  w.dirs.a!.mtimeMs = 2
+  expect((await snap($, 'terminal')).all).not.toContain('skills')
+  w.dirs.a = { rec: rec('a', { state: 'running', updated_at: iso(0) }), mtimeMs: 2 }
   await clock.advance(5000)
+  expect(w.read.length).toBe(2)
+  const { all } = await snap($, 'terminal')
+  expect(all).toContain('In motion · 1')
+  expect(all).toContain('skills · running')
+})
+
+test('a done record older than 48 h with an unchanged stat is not read again, but is stat\'ed each tick', async ($, on) => {
+  const w = world({ a: good('a', { state: 'done', updated_at: iso(50 * HOUR) }) })
+  const clock = await boot($, on, w)
+  const stats = w.stat.length
+  await clock.advance(15000)
   expect(w.read.length).toBe(1)
+  expect(w.stat.length).toBe(stats + 3)
 })
 
 test('a done record on the Yesterday line is read again when its stat changes', async ($, on) => {
@@ -812,7 +837,9 @@ const tabbed = (w: World): World => {
   w.dirs.a = good('a')
   return w
 }
-const argvs = (w: World) => w.process.map((p) => [...p.argv])
+// The press's own herdr calls: the tick's `agent list` is not one of them.
+const pressCalls = (w: World) => w.process.filter((p) => !isAgentList(p.argv))
+const argvs = (w: World) => pressCalls(w).map((p) => [...p.argv])
 const press = async ($: Engine, surface: Surface) => {
   const ui = await mountPane($, surface)
   await ui.press({ key: 'a' })
@@ -825,7 +852,7 @@ for (const surface of SURFACES) {
     await boot($, on, w)
     await press($, surface)
     expect(argvs(w)).toEqual([[BIN, 'tab', 'get', 'w66:t7'], [BIN, 'workspace', 'focus', 'w66'], [BIN, 'tab', 'focus', 'w66:t7']])
-    expect(w.process.every((p) => p.timeoutMs === 5000)).toBe(true)
+    expect(pressCalls(w).every((p) => p.timeoutMs === 5000)).toBe(true)
     expect(w.toasts).toEqual([`Switched herdr to skills (w66:t7)${surface === 'desktop' ? ' — switch to your terminal' : ''}`])
   })
 
@@ -955,7 +982,7 @@ test('terminalApp adds /usr/bin/open -b as the fourth argv and drops the switch-
   await press($, 'desktop')
   expect(argvs(w).at(-1)).toEqual(['/usr/bin/open', '-b', 'com.mitchellh.ghostty'])
   expect(argvs(w).length).toBe(4)
-  expect(w.process.at(-1)?.timeoutMs).toBe(5000)
+  expect(pressCalls(w).at(-1)?.timeoutMs).toBe(5000)
   expect(w.toasts).toEqual(['Switched herdr to skills (w66:t7)'])
 })
 
@@ -975,4 +1002,206 @@ test('the default terminalApp is empty: a terminal press adds no open', async ($
   await press($, 'terminal')
   expect(argvs(w).length).toBe(3)
   expect(w.toasts[0]).toBe('Switched herdr to skills (w66:t7)')
+})
+
+// ---- the herdr agent status ---------------------------------------------------------------------------------------
+
+const agentJson = (m: Record<string, string>) =>
+  JSON.stringify({ id: 'cli:agent:list', result: { agents: Object.entries(m).map(([pane_id, agent_status]) => ({ agent: 'claude', agent_session: { value: 'x' }, agent_status, pane_id, tab_id: 'w1:t1', terminal_title: '✳ x' })) } })
+const answers = (m: Record<string, string>): World['agent'] => () => ({ exitCode: 0, stdout: agentJson(m) })
+const onPane = (pane: string, patch: Record<string, unknown> = {}) => ({ architect: { harness: 'claude', session_id: null, frontend: 'herdr', tab: 'w66:t7', pane }, ...patch })
+const agentCalls = (w: World) => w.process.filter((p) => isAgentList(p.argv))
+const open = (w: World) => { w.panes = ['desk-board']; return w }
+
+test('C33 while the Desk pane is closed, five ticks make no agent list call', async ($, on) => {
+  const w = world({ a: good('a') })
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w)
+  for (let i = 0; i < 5; i++) await clock.advance(5000)
+  expect(agentCalls(w).length).toBe(0)
+  expect((await snap($, 'terminal')).all).not.toContain('agent')
+})
+
+test('C34 with the pane open each tick makes one agent list call, 2000 ms, from herdrPath, after the file pass', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w)
+  for (let n = 1; n <= 3; n++) {
+    expect(agentCalls(w).length).toBe(n)
+    expect(w.events.at(-1)).toBe('agent')
+    expect(w.events.filter((e) => e === 'agent').length).toBe(n)
+    await clock.advance(5000)
+  }
+  for (const c of agentCalls(w)) {
+    expect([...c.argv]).toEqual([BIN, 'agent', 'list'])
+    expect(c.timeoutMs).toBe(2000)
+  }
+})
+
+for (const surface of SURFACES) {
+  test(`${surface}: C38 the card head carries the agent word, architect gone, and only for runs that are not finished`, async ($, on) => {
+    const w = open(world({
+      a: good('a', { repo: '/code/ra', ...onPane('w1:p1') }),
+      b: good('b', { repo: '/code/rb', ...onPane('w1:p2') }),
+      c: good('c', { repo: '/code/rc', ...onPane('w1:p3') }),
+      d: asking('d', { repo: '/code/rd', ...onPane('w1:p4') }),
+      e: good('e', { repo: '/code/re', state: 'blocked', ...onPane('w1:p5') }),
+      f: good('f', { repo: '/code/rf', state: 'done', ...onPane('w1:p6') }),
+      g: good('g', { repo: '/code/rg', state: 'failed', ...onPane('w1:p7') }),
+      h: good('h', { repo: '/code/rh', ...noBtn }),
+    }))
+    w.agent = answers({ 'w1:p1': 'idle', 'w1:p2': 'done', 'w1:p4': 'working', 'w1:p5': 'blocked', 'w1:p6': 'idle', 'w1:p7': 'idle' })
+    await boot($, on, w)
+    const { all } = await snap($, surface)
+    expect(all).toContain('ra · running · agent idle')
+    expect(all).toContain('rb · running · agent turn ended')
+    expect(all).toContain('rc · running · architect gone')
+    expect(all).toContain('rd · needs you · agent working')
+    expect(all).toContain('re · blocked · agent blocked')
+    expect(all).toMatch(/rf · done( · no tab)?(\n|$)/)
+    expect(all).not.toMatch(/rf[^\n]*agent/)
+    expect(all).not.toMatch(/rg[^\n]*agent/)
+    expect(all).not.toMatch(/rh · running[^\n]*(agent|gone)/)
+    expect(all).not.toMatch(/agent done\b/)
+  })
+}
+
+test('G5 the head order is repo, run word or stale, agent word, (this session), no tab', async ($, on) => {
+  const w = open(world({
+    a: good('a', { repo: '/code/ra', updated_at: iso(30 * HOUR), architect: { harness: 'claude', session_id: null, frontend: null, tab: null, pane: 'w9:p9' } }),
+  }))
+  w.agent = answers({ 'w9:p9': 'idle' })
+  await boot($, on, w)
+  expect((await snap($, 'terminal', 100)).all).toContain('ra · stale · agent idle · (this session) · no tab')
+})
+
+for (const cols of [40, 64]) {
+  test(`C39 pane at ${cols} columns: no line is wider than the pane with the agent word and every tag together`, async ($, on) => {
+    const w = open(world({
+      a: good('a', { repo: '/code/' + 'r'.repeat(30), ...onPane('w1:p1') }),
+      b: good('b', { repo: '/code/' + 'q'.repeat(30), architect: { harness: 'claude', session_id: null, frontend: null, tab: null, pane: 'w9:p9' } }),
+      c: good('c', { repo: '/code/' + 's'.repeat(30), architect: { harness: 'claude', session_id: null, frontend: null, tab: null, pane: 'w1:p3' } }),
+    }))
+    w.agent = answers({ 'w1:p1': 'done' })
+    await boot($, on, w)
+    for (const surface of SURFACES) {
+      const { texts, buttons, all } = await snap($, surface, cols)
+      for (const l of [...texts.filter((t) => t.props.wrap !== 'wrap'), ...buttons].map((x) => x.text)) expect(Array.from(l).length, l).toBeLessThanOrEqual(cols - 4)
+      // At 40 columns the head is cut before the agent word; the bound above is what matters there.
+      if (cols === 64) expect(all).toContain('agent turn')
+    }
+  })
+}
+
+// Each failure adds no new status: the earlier idle word stays, the rows still draw and the file pass carries on.
+const FAILURES: [string, World['agent']][] = [
+  ['an exit 1', () => ({ exitCode: 1, stdout: agentJson({ 'w66:p8': 'working' }), stderr: '{"error":{"code":"x"}}' })],
+  ['truncated stdout', () => ({ exitCode: 0, stdout: agentJson({ 'w66:p8': 'working' }), isStdoutTruncated: true })],
+  ['unparsable stdout', () => ({ exitCode: 0, stdout: 'not json' })],
+  ['a timeout', () => 'slow-reject'],
+  ['a rejection', () => 'reject'],
+]
+for (const [name, fail] of FAILURES) {
+  test(`C35 ${name} adds no status, the rows draw and the next tick runs`, async ($, on) => {
+    const w = open(world({ a: good('a') }))
+    w.agent = answers({ 'w66:p8': 'idle' })
+    const clock = await boot($, on, w)
+    w.agent = fail
+    w.dirs.a!.mtimeMs = 2
+    const reads = w.read.length
+    await clock.advance(5000)
+    expect(agentCalls(w).length).toBe(2)
+    expect(w.read.length).toBe(reads + 1)
+    const { all } = await snap($, 'terminal')
+    expect(all).toContain('skills · running · agent idle')
+    expect(all).not.toContain('agent working')
+    w.dirs.a!.mtimeMs = 3
+    await clock.advance(5000)
+    expect(w.read.length).toBe(reads + 2)
+    expect((await snap($, 'terminal')).all).toContain('skills · running')
+  })
+}
+
+test('a failure with no earlier good read leaves the row with no status, never architect gone', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = FAILURES[0]![1]
+  await boot($, on, w)
+  const { all } = await snap($, 'terminal')
+  expect(all).toContain('skills · running')
+  expect(all).not.toMatch(/agent|gone/)
+})
+
+test('C36/C37 a good map is kept 15 s after its read and a failure skips 15 s of calls', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w) // t0: a good read
+  const seen: { calls: number; word: boolean }[] = []
+  w.agent = () => ({ exitCode: 1 })
+  for (let t = 5; t <= 25; t += 5) {
+    await clock.advance(5000)
+    seen.push({ calls: agentCalls(w).length, word: (await snap($, 'terminal')).all.includes('agent idle') })
+  }
+  // +5 the failing call, +10 +15 +20 skipped, +25 the next call.
+  expect(seen.map((s) => s.calls)).toEqual([2, 2, 2, 2, 3])
+  // +5 +10 +15 still show the last good word; at +20 it is dropped.
+  expect(seen.map((s) => s.word)).toEqual([true, true, true, false, false])
+})
+
+test('closing the Desk pane drops the map and stops the calls; reopening reads again', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w)
+  w.panes = []
+  await clock.advance(5000)
+  expect(agentCalls(w).length).toBe(1)
+  w.panes = ['desk-board']
+  await clock.advance(5000)
+  expect(agentCalls(w).length).toBe(2)
+  expect((await snap($, 'terminal')).all).toContain('agent idle')
+})
+
+test('C41 a stable agent list writes no state; a status change writes once', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w)
+  const sets = w.stateSets
+  await clock.advance(5000)
+  await clock.advance(5000)
+  expect(w.stateSets).toBe(sets)
+  w.agent = answers({ 'w66:p8': 'working' })
+  await clock.advance(5000)
+  expect(w.stateSets).toBe(sets + 1)
+})
+
+// ---- an agent read that throws never costs the tick its file pass -------------------------------------------------------
+
+test('P7 a rejection from ui.panes on the first tick still publishes the rows, without a status', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.panesFails = 'engine: ui.panes is unavailable'
+  w.agent = answers({ 'w66:p8': 'idle' })
+  await boot($, on, w)
+  const { all } = await snap($, 'terminal')
+  expect(all).toContain('In motion · 1')
+  expect(all).toContain('skills · running')
+  expect(all).not.toMatch(/agent|gone/)
+})
+
+test('P7 a rejection mid-run keeps the last good word, redraws the changed rows and the next tick runs', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w)
+  w.panesFails = 'engine: ui.panes is unavailable'
+  w.dirs.a = { rec: rec('a', { goal: 'Ship the board, again' }), mtimeMs: 2 }
+  await clock.advance(5000)
+  let all = (await snap($, 'terminal')).all
+  expect(all).toContain('Ship the board, again')
+  expect(all).toContain('skills · running · agent idle')
+  w.dirs.a = { rec: rec('a', { goal: 'Ship it a third time' }), mtimeMs: 3 }
+  await clock.advance(5000)
+  all = (await snap($, 'terminal')).all
+  expect(all).toContain('Ship it a third time')
+  // The failed read starts the 15 s skip; once it has passed and ui.panes works again, the agent list is read again.
+  w.panesFails = null
+  await clock.advance(20000)
+  expect(agentCalls(w).length).toBeGreaterThan(1)
 })
