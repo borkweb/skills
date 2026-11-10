@@ -57,6 +57,39 @@ This file covers the common path. Some cases have their own file in
 
 ---
 
+## Rules
+
+- **Ask once, at the start — or not at all.** Fix mode, location and the fork
+  question are settled in Step 1, or by flags. After that the only stop is the
+  Step 5 post confirmation, which is about what goes on the PR, not about what
+  you do locally.
+- **Never wait on a question.** Fetching and reading CI start before Step 1
+  asks anything.
+- **Nothing reaches the PR unseen.** Every comment is shown in full and confirmed
+  before posting, critical ones included.
+- **Two reviewers when the diff needs them, one reporter.** The peer finds; the
+  host merges, decides, posts, and speaks.
+- **Peer first, checks next, host third, join last.** The passes overlap by
+  construction, not by luck. Waiting on the peer before the host pass starts is
+  the one sequencing mistake this skill is built to prevent.
+- **CI before local.** A check CI already answered for this commit is not run
+  again here.
+- **Review what's new.** On a re-run, review the new commits and recheck the
+  earlier CRITICAL findings. Never post a finding that is already on the PR.
+- **Quoted evidence or it's a lead.** Only findings with a verified `EVIDENCE`
+  line reach the PR.
+- **Precision over volume.** Findings that are wrong, or right but trivial, train
+  the author to ignore the ones that matter.
+- **One review, not a swarm of comments.** Batch the critical and chosen
+  informational findings into a single COMMENT review.
+- **Review the tree that lands.** Check staleness against a freshly fetched base
+  before the review starts, not after the verdict.
+- **Plain English on the PR.** Comment and review-body prose follows ASD-STE100.
+  Code and suggestion blocks stay verbatim.
+- **Be terse.** One line problem, one line fix. No preamble, no compliments.
+
+---
+
 ## Operating contract
 
 This overrides any conflicting instruction in the skills this one calls.
@@ -840,36 +873,3 @@ Leave a worktree you reused from `git worktree list` in place.
 
 Never `--force` a worktree removal. That's how a review becomes a data-loss
 incident.
-
----
-
-## Rules
-
-- **Ask once, at the start — or not at all.** Fix mode, location and the fork
-  question are settled in Step 1, or by flags. After that the only stop is the
-  Step 5 post confirmation, which is about what goes on the PR, not about what
-  you do locally.
-- **Never wait on a question.** Fetching and reading CI start before Step 1
-  asks anything.
-- **Nothing reaches the PR unseen.** Every comment is shown in full and confirmed
-  before posting, critical ones included.
-- **Two reviewers when the diff needs them, one reporter.** The peer finds; the
-  host merges, decides, posts, and speaks.
-- **Peer first, checks next, host third, join last.** The passes overlap by
-  construction, not by luck. Waiting on the peer before the host pass starts is
-  the one sequencing mistake this skill is built to prevent.
-- **CI before local.** A check CI already answered for this commit is not run
-  again here.
-- **Review what's new.** On a re-run, review the new commits and recheck the
-  earlier CRITICAL findings. Never post a finding that is already on the PR.
-- **Quoted evidence or it's a lead.** Only findings with a verified `EVIDENCE`
-  line reach the PR.
-- **Precision over volume.** Findings that are wrong, or right but trivial, train
-  the author to ignore the ones that matter.
-- **One review, not a swarm of comments.** Batch the critical and chosen
-  informational findings into a single COMMENT review.
-- **Review the tree that lands.** Check staleness against a freshly fetched base
-  before the review starts, not after the verdict.
-- **Plain English on the PR.** Comment and review-body prose follows ASD-STE100.
-  Code and suggestion blocks stay verbatim.
-- **Be terse.** One line problem, one line fix. No preamble, no compliments.
