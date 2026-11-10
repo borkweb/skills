@@ -21,6 +21,11 @@ Or as a Claude Code [plugin](https://code.claude.com/docs/en/plugins)
 /plugin install bork
 ```
 
+Optional, Claude Code only: `desk-board` adds a live board of `desk` runs (press a run to switch herdr to its tab). It is a separate plugin in the same marketplace.
+```bash
+/plugin install desk-board@skills
+```
+
 Choose one installation route per runtime. Installing the same skills both as a
 plugin and in `.agents/skills` can produce duplicate entries. The Codex marketplace
 is `.agents/plugins/marketplace.json`; this repository does not mirror the plugin
