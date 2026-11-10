@@ -5,7 +5,7 @@
 // pane, and any of them would change what runs.mjs does. PATH holds only the
 // stub dir, node's dir and /usr/bin:/bin, so the live herdr is unreachable.
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -37,6 +37,10 @@ if (key === 'tab create') {
 } else if (key === 'agent prompt') {
   if (process.env.HERDR_STUB_SNAP_SRC) fs.copyFileSync(process.env.HERDR_STUB_SNAP_SRC, process.env.HERDR_STUB_LOG + '.snap');
   if (mode === 'prompt-fail') fail('herdr: agent not found');
+  // herdr 0.9.3 live (evidence-A/a40b-*.err): exit 1, JSON error body on stderr.
+  if (mode === 'prompt-live-notfound') fail('{"error":{"code":"agent_not_found","message":"agent target w66:p5 not found"},"id":"cli:agent:prompt"}');
+  if (mode === 'prompt-live-blocked') fail('{"error":{"code":"agent_blocked","message":"agent w66:p6 is blocked and requires interactive input"},"id":"cli:agent:prompt"}');
+  if (mode === 'prompt-stderr-error') process.stderr.write('{"error":{"code":"agent_not_found","message":"no agent"},"id":"cli:agent:prompt"}\\n');
   if (mode === 'prompt-error') process.stdout.write('{"error":{"code":"agent_not_found","message":"no agent"}}\\n');
   else if (mode === 'prompt-blocked') process.stdout.write('{"result":{"status":"agent_blocked"},"type":"agent_prompt"}\\n');
   else process.stdout.write('{"result":{"type":"agent_prompt_accepted"}}\\n');
@@ -58,6 +62,7 @@ if (act === 'ask') {
   const r = cli(['ask', process.env.BORK_RUN_ID, '--question', 'which?', '--options', '[{"label":"A","description":"a"},{"label":"B","description":"b"}]', '--recommendation', 'A']);
   process.exit(r.status);
 }
+if (act === 'block') cli(['set', process.env.BORK_RUN_ID, '--state', 'blocked', '--summary', 'circuit breaker']);
 if (act === 'done') cli(['set', process.env.BORK_RUN_ID, '--state', 'done', '--delivery', 'shipped']);
 if (act === 'exit3') process.exit(3);
 `;
@@ -166,5 +171,14 @@ export const orchestratorRun = (b, opts) => {
   writeRec(r.dir, { launched_by: 'orchestrator' });
   return r;
 };
+// A lock file as a crashed or live writer would leave it.
+export const staleLock = (dir, pid, ageSec) => {
+  const p = join(dir, 'run.json.lock');
+  writeFileSync(p, JSON.stringify({ pid, at: new Date(Date.now() - ageSec * 1000).toISOString() }));
+  const t = new Date(Date.now() - ageSec * 1000);
+  utimesSync(p, t, t);
+  return p;
+};
+export const deadPid = () => spawnSync(NODE, ['-e', '']).pid;
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export { existsSync };

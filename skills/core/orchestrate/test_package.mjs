@@ -46,6 +46,13 @@ test('the SKILL routes do runs, names matt:orchestrator, relays questions verbat
   assert.match(s, /approval prompts/);
 });
 
+test('8: the loop says what to do on exit 124, on several RUN lines, and at a trust dialog', () => {
+  const s = skill();
+  assert.match(s, /exit 124[^\n]*re-arm[^\n]*(no|without) `?show`? or `?ack/i, 'on 124, re-arm without show or ack');
+  assert.match(s, /more than one RUN line[^\n]*`show` and `ack --revision` each one before (you )?re-arm/i);
+  assert.match(s, /trust dialog[^\n]*blocked[^\n]*(user )?answer/i);
+});
+
 test('evals/cases.json gains the three orchestration cases with unique ids and resolvable skills', () => {
   const cases = JSON.parse(read('evals/cases.json'));
   const ids = cases.map((c) => c.id);

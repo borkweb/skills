@@ -68,18 +68,19 @@ function resolveRun(arg) {
 
 // ---- record: read, validate, lock, atomic write --------------------------------
 
-function invalidReason(rec) {
+function invalidReason(rec, dir) {
   if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return 'not a JSON object';
   if (rec.schema !== 1) return `unsupported schema ${JSON.stringify(rec.schema)}`;
   if (!STATES.includes(rec.state)) return `unknown state ${JSON.stringify(rec.state)}`;
   if (!Array.isArray(rec.questions)) return 'questions is not a list';
   if (!Array.isArray(rec.history)) return 'history is not a list';
   for (const k of ['revision', 'signal_revision', 'orchestrator_ack']) if (!Number.isInteger(rec[k])) return `${k} is not an integer`;
+  if (rec.id !== basename(dir)) return 'id does not match the run dir name';
   if (typeof rec.goal !== 'string') return 'goal is not a string';
   if (!rec.architect || typeof rec.architect !== 'object') return 'architect is missing';
   if (!['orchestrator', 'self'].includes(rec.launched_by)) return 'launched_by is missing';
   for (const q of rec.questions) {
-    if (!q || typeof q.id !== 'string' || !['open', 'answered', 'withdrawn'].includes(q.status) || !Array.isArray(q.options)) return 'a question is malformed';
+    if (!q || typeof q.id !== 'string' || !/^Q\d+$/.test(q.id) || !['open', 'answered', 'withdrawn'].includes(q.status) || !Array.isArray(q.options)) return 'a question is malformed';
   }
   return null;
 }
@@ -93,11 +94,11 @@ function readRun(dir) {
   let text;
   try { text = readFileSync(path, 'utf8'); } catch (e) {
     if (e.code === 'ENOENT') throw new Fail(`no run.json at ${path}`);
-    throw e;
+    throw new Invalid(path, `unreadable (${e.code ?? e.message})`);
   }
   let rec;
   try { rec = JSON.parse(text); } catch (e) { throw new Invalid(path, `malformed JSON (${e.message})`); }
-  const why = invalidReason(rec);
+  const why = invalidReason(rec, dir);
   if (why) throw new Invalid(path, why);
   return rec;
 }
@@ -126,9 +127,10 @@ function lockIsStale(path) {
 // If what we moved turns out to be fresh (a racing breaker already replaced it), put it back.
 function breakStale(lock) {
   const moved = `${lock}.stale-${process.pid}-${rand()}`;
-  try { renameSync(lock, moved); } catch { return; }
+  try { renameSync(lock, moved); } catch (e) { return e.code === 'ENOENT'; } // false: cannot break it (for example a read-only run dir)
   if (!lockIsStale(moved)) { try { linkSync(moved, lock); } catch { /* another writer holds it now */ } }
   rmSync(moved, { force: true });
+  return true;
 }
 
 function withLock(dir, fn) {
@@ -142,7 +144,7 @@ function withLock(dir, fn) {
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (lockIsStale(lock)) { breakStale(lock); continue; }
+      if (lockIsStale(lock) && breakStale(lock)) continue;
       if (Date.now() > end) throw new Fail(`could not take the run lock ${lock} within 5 s; another writer holds it`);
       sleepMs(backoff + Math.random() * backoff);
       backoff = Math.min(backoff * 2, 50);
@@ -195,28 +197,35 @@ function which(bin) {
 const herdr = (args) => spawnSync('herdr', args, { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] });
 const clean = (s) => String(s).replace(CONTROL, '');
 
+// The error code of a JSON error body, 'error' when it has none, null when the text holds no error.
+function errorOf(text) {
+  try { const e = JSON.parse(text || 'null')?.error; return e ? String(e.code ?? 'error') : null; } catch { return null; }
+}
+
 // A nudge is one fixed-grammar line (words, run id, state token, Q<n>); never record text.
 function nudge(pane, line) {
   if (typeof pane !== 'string' || !pane || pane.startsWith('-') || !which('herdr')) return;
   const r = herdr(['agent', 'prompt', pane, clean(line).slice(0, 300)]);
+  // herdr 0.9.3 fails with exit 1 and a JSON error body on stderr; older shapes use stdout or exit 0.
+  const bodyError = errorOf(r.stdout) ?? errorOf(r.stderr);
   let why = null;
   if (r.error) why = r.error.code || 'spawn failed';
-  else if (r.status !== 0) why = `exit ${r.status}`;
-  else if (/agent_blocked/.test(r.stdout || '')) why = 'agent_blocked';
-  else { try { if (JSON.parse(r.stdout || 'null')?.error) why = 'herdr returned an error'; } catch { /* plain output is fine */ } }
-  if (why) process.stderr.write(`warning: could not nudge pane ${clean(pane)} (${why}); the run record is already written\n`);
+  else if (r.status !== 0) why = bodyError ?? `exit ${r.status}`;
+  else if (/agent_blocked/.test(`${r.stdout}${r.stderr}`)) why = 'agent_blocked';
+  else if (bodyError) why = bodyError;
+  if (why) process.stderr.write(`warning: could not nudge pane ${clean(pane)} (${clean(why).slice(0, 40)}); the run record is already written\n`);
 }
 
 function readOrch() {
   try { const j = JSON.parse(readFileSync(orchFile(), 'utf8')); return j && typeof j === 'object' ? j : null; } catch { return null; }
 }
 
-function nudgeOrchestrator(rec) {
+function nudgeOrchestrator(dir, rec) {
   if (rec.launched_by !== 'orchestrator') return;
   const pane = readOrch()?.pane;
   if (!pane) return;
   const q = openQuestions(rec).at(-1)?.id;
-  nudge(pane, `bork run ${rec.id}: ${rec.state}${rec.state === 'needs-me' && q ? ` ${q}` : ''}`);
+  nudge(pane, `bork run ${basename(dir)}: ${rec.state}${rec.state === 'needs-me' && q ? ` ${q}` : ''}`);
 }
 
 const signalled = (res) => res.wrote && res.rec.signal_revision === res.rec.revision;
@@ -261,7 +270,7 @@ function createRun({ goal, repo = null, slug, runDir, launchedBy = 'self', harne
   }
   chmodSync(dir, 0o700);
   return withLock(dir, () => {
-    if (statSyncOrNull(recFile(dir))) return { dir, rec: readRun(dir), existed: true };
+    if (statSyncOrNull(recFile(dir))) return { dir, rec: readRun(dir) };
     const at = nowIso();
     const rec = {
       schema: 1, id: basename(dir), run_dir: dir, repo, goal, task, state: 'running', summary: '', delivery: null,
@@ -270,7 +279,7 @@ function createRun({ goal, repo = null, slug, runDir, launchedBy = 'self', harne
       history: [{ at, state: 'running', note: 'created' }],
     };
     atomicWrite(recFile(dir), `${JSON.stringify(rec, null, 2)}\n`);
-    return { dir, rec, existed: false };
+    return { dir, rec };
   });
 }
 const statSyncOrNull = (p) => { try { return statSync(p); } catch { return null; } };
@@ -291,8 +300,8 @@ function cmdInit(o) {
   const repo = o.repo !== undefined ? gitTop(o.repo) : null;
   const slug = o.slug ?? defaultSlug(repo);
   checkId(slug);
-  const { dir, rec, existed } = createRun({ goal, repo, slug, runDir: o['run-dir'] });
-  out(o.json && !existed ? JSON.stringify(rec) : dir);
+  const { dir, rec } = createRun({ goal, repo, slug, runDir: o['run-dir'] });
+  out(o.json ? JSON.stringify(rec) : dir);
 }
 
 function cmdSet(o, [arg]) {
@@ -310,7 +319,7 @@ function cmdSet(o, [arg]) {
     if (o.summary !== undefined) rec.summary = o.summary;
     if (o.delivery !== undefined) rec.delivery = o.delivery;
   });
-  if (signalled(res)) nudgeOrchestrator(res.rec);
+  if (signalled(res)) nudgeOrchestrator(dir, res.rec);
   out(o.json ? JSON.stringify(res.rec) : `${res.rec.id} ${res.rec.state}`);
 }
 
@@ -345,7 +354,7 @@ function cmdAsk(o, [arg]) {
     if (rec.state === 'needs-me') rec.signal_revision = rec.revision;
     else transition(rec, 'needs-me', `asked ${qid}`, at);
   });
-  nudgeOrchestrator(res.rec);
+  nudgeOrchestrator(dir, res.rec);
   out(qid);
 }
 
@@ -368,7 +377,7 @@ function cmdAnswer(o, [arg, qid]) {
     });
     resumeIfClear(rec, `answered ${qid}`, at);
   });
-  if (!o['no-nudge'] && res.rec.architect.pane) nudge(res.rec.architect.pane, `bork run ${res.rec.id}: answered ${qid}`);
+  if (!o['no-nudge'] && res.rec.architect.pane) nudge(res.rec.architect.pane, `bork run ${basename(dir)}: answered ${qid}`);
   out(`${qid} answered`);
 }
 
@@ -429,18 +438,29 @@ const firstLine = (s, n = 100) => String(s).split('\n')[0].slice(0, n);
 const warnInvalid = (e) => process.stderr.write(`warning: skipping ${e.message}\n`);
 
 // Every readable run under the home; invalid ones are reported through onInvalid and skipped.
-function scanRuns(onInvalid = warnInvalid) {
+// With a cache (wait), a run.json is re-read only when its mtime, size or inode changed; names in skip are not touched.
+function scanRuns(onInvalid = warnInvalid, { cache, skip } = {}) {
   const home = realHome();
   if (!home) return [];
   const found = [];
   for (const name of readdirSync(home)) {
-    if (!ID_RE.test(name) || name.includes('..')) continue;
+    if (!ID_RE.test(name) || name.includes('..') || skip?.has(name)) continue;
     const dir = join(home, name);
     let st;
     try { st = lstatSync(dir); } catch { continue; }
     if (!st.isDirectory()) continue;
-    try { found.push({ name, dir, rec: readRun(dir) }); } catch (e) {
-      if (e.invalid) onInvalid(e);
+    let sig = null;
+    if (cache) {
+      try { const f = statSync(recFile(dir)); sig = `${f.mtimeMs}:${f.size}:${f.ino}`; } catch { cache.delete(name); }
+      const hit = sig && cache.get(name);
+      if (hit?.sig === sig) { if (hit.err) onInvalid(hit.err); else found.push({ name, dir, rec: hit.rec }); continue; }
+    }
+    try {
+      const rec = readRun(dir);
+      cache?.set(name, { sig, rec });
+      found.push({ name, dir, rec });
+    } catch (e) {
+      if (e.invalid) { cache?.set(name, { sig, err: e }); onInvalid(e); }
       else if (!/no run\.json/.test(e.message)) throw e;
     }
   }
@@ -507,13 +527,14 @@ function cmdWait(o) {
   const only = o.run?.length ? new Set(o.run.map((r) => resolveRun(r).id)) : null;
   const warned = new Set();
   const settled = new Set();
+  const cache = new Map();
   const lastOpen = (rec) => openQuestions(rec).at(-1)?.id;
 
   const scan = () => {
     const fired = [];
-    for (const { name, rec } of scanRuns((e) => { if (!warned.has(e.message)) { warned.add(e.message); warnInvalid(e); } })) {
+    const warnOnce = (e) => { if (!warned.has(e.message)) { warned.add(e.message); warnInvalid(e); } };
+    for (const { name, rec } of scanRuns(warnOnce, { cache, skip: settled })) {
       if (only && !only.has(name)) continue;
-      if (settled.has(name)) continue;
       if (rec.signal_revision > rec.orchestrator_ack) fired.push(`RUN ${name} ${rec.state} r${rec.signal_revision}${rec.state === 'needs-me' && lastOpen(rec) ? ` ${lastOpen(rec)}` : ''}`);
       else if (TERMINAL.has(rec.state)) settled.add(name);
     }
@@ -550,8 +571,13 @@ function cmdWait(o) {
     };
     const tick = () => {
       if (finished) return;
-      const fired = scan();
-      if (fired.length) finish(0, fired); else syncWatchers();
+      try {
+        const fired = scan();
+        if (fired.length) finish(0, fired); else syncWatchers();
+      } catch (e) {
+        process.stderr.write(`runs: wait stopped: ${e.message}\n`);
+        finish(1, []); // clears every timer and watcher; nothing outlives the failure
+      }
     };
     function schedule() { if (!pending) pending = setTimeout(() => { pending = null; tick(); }, 25); }
     const poll = setInterval(tick, 1000); // the stat pass: at least once a second
@@ -617,12 +643,21 @@ function launchScript({ id, dir, repo, harness, model, sessionId, home }) {
   return `#!/usr/bin/env bash
 # Generated by runs.mjs start for run ${id}. Runs inside the herdr tab.
 ${exp.map(([k, v]) => `export ${k}=${shq(v)}`).join('\n')}
-cd ${shq(repo)} || exit 1
-${arch.map(shq).join(' ')}
-code=$?
 NODE=${shq(process.execPath)}
 [ -x "$NODE" ] || NODE=node
-"$NODE" "$BORK_RUNS_CLI" set "$BORK_RUN_ID" --state blocked --summary "architect exited (code $code)" >/dev/null 2>&1 || true
+# A run already blocked keeps its summary (the architect's reason); the exit is added as a note.
+# Any other non-terminal run is set blocked. A terminal run refuses the set and stays as it is.
+blocked_hook() {
+  if "$NODE" -e 'process.exit(JSON.parse(require("node:fs").readFileSync(process.env.BORK_RUN_DIR + "/run.json", "utf8")).state === "blocked" ? 0 : 1)' 2>/dev/null; then
+    "$NODE" "$BORK_RUNS_CLI" set "$BORK_RUN_ID" --note "$1" >/dev/null 2>&1 || true
+  else
+    "$NODE" "$BORK_RUNS_CLI" set "$BORK_RUN_ID" --state blocked --summary "$1" >/dev/null 2>&1 || true
+  fi
+}
+cd ${shq(repo)} || { blocked_hook "architect could not start (cd failed)"; exit 1; }
+${arch.map(shq).join(' ')}
+code=$?
+blocked_hook "architect exited (code $code)"
 exit "$code"
 `;
 }

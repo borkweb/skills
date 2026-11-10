@@ -2,11 +2,10 @@
 // (spec v2 sections 1 and 4; criteria A6-A16).
 import assert from 'node:assert';
 import test from 'node:test';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  NODE, QOPTS, ask, calls, claim, debris, mkRepo, mkRun, newBox, readRec, recPath, resetLog, run, runAsync, sha, writeRec,
+  QOPTS, ask, calls, claim, deadPid, debris, mkRepo, mkRun, newBox, readRec, recPath, resetLog, run, runAsync, sha, staleLock, writeRec,
 } from './testkit.mjs';
 
 const b = newBox();
@@ -408,15 +407,6 @@ test('20 parallel writers keep every change', async () => {
   assert.equal(rec.revision, 1 + 20);
   assert.deepEqual(debris(dir), []);
 });
-
-const staleLock = (dir, pid, ageSec) => {
-  const p = join(dir, 'run.json.lock');
-  writeFileSync(p, JSON.stringify({ pid, at: new Date(Date.now() - ageSec * 1000).toISOString() }));
-  const t = new Date(Date.now() - ageSec * 1000);
-  utimesSync(p, t, t);
-  return p;
-};
-const deadPid = () => spawnSync(NODE, ['-e', '']).pid;
 
 test('a lock older than 10 s whose pid is dead is broken and the write succeeds', () => {
   const { dir, id } = mkRun(b);

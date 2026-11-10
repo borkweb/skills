@@ -4,9 +4,9 @@
 import assert from 'node:assert';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { HERE, NODE, NODE_DIR, barePath, calls, env, mkRepo, newBox, readRec, resetLog, run, sha } from './testkit.mjs';
+import { HERE, NODE_DIR, barePath, calls, mkRepo, newBox, readRec, resetLog, run, sha } from './testkit.mjs';
 
 const b = newBox();
 const repo = mkRepo(b, 'target');
@@ -249,11 +249,8 @@ test('when the architect exits non-terminal launch.sh sets blocked and signals; 
   assert.equal(sha(join(d.dir, 'run.json')), before, 'a terminal run gets no history entry or revision from launch.sh');
 });
 
-test('start writes nothing but its run dir files (no goal in tab label beyond the slug) and quotes nothing unsafely', () => {
+test('a started run dir holds exactly run.json, launch-prompt.md and launch.sh', () => {
   const sb = newBox();
   const r = launchFor(sb);
   assert.deepEqual(readdirSync(r.dir).sort(), ['launch-prompt.md', 'launch.sh', 'run.json']);
-  assert.equal(realpathSync(r.dir), r.dir);
-  assert.ok(env(sb).PATH.includes(sb.bin));
-  assert.ok(NODE);
 });
