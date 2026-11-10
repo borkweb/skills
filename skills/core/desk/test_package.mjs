@@ -1,6 +1,7 @@
 // test_package.mjs — structural checks for the skill, manifests, README and evals
 // (spec v2 section 6; criteria A4, A37-A39).
 import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -23,17 +24,56 @@ test('runs.mjs and helpers import only node builtins and sibling files; no packa
   assert.ok(!existsSync(join(HERE, 'package.json')));
 });
 
-test('all three plugin manifests carry 3.33.0 and the same skill list, including desk', () => {
+test('all three plugin manifests carry 3.34.0 and the same skill list, including desk', () => {
   const m = ['.claude-plugin', '.codex-plugin', '.grok-plugin'].map((d) => JSON.parse(read(`${d}/plugin.json`)));
-  assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.33.0']));
+  assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.34.0']));
   for (const x of m) assert.deepEqual(x.skills, m[0].skills);
   assert.ok(m[0].skills.includes('./skills/core/desk'));
   assert.ok(!m.some((x) => x.skills.includes('./skills/core/orchestrate')), 'the old orchestrate entry is gone');
 });
 
+// The desk board (slice 2): an optional Claude Code plugin shipped beside the desk skill.
+const BOARD = 'skills/core/desk/board';
+const boardManifest = () => JSON.parse(read(`${BOARD}/.claude-plugin/plugin.json`));
+
+test('marketplace lists desk-board at the board folder and leaves the bork entry alone', () => {
+  const plugins = JSON.parse(read('.claude-plugin/marketplace.json')).plugins;
+  assert.deepEqual(plugins.find((p) => p.name === 'bork'), { name: 'bork', source: './' });
+  assert.equal(plugins.find((p) => p.name === 'desk-board')?.source, `./${BOARD}`);
+  assert.ok(existsSync(join(ROOT, BOARD, '.claude-plugin', 'plugin.json')));
+});
+
+test('the board version equals the bork version, so the two installs cannot drift', () => {
+  assert.equal(boardManifest().version, JSON.parse(read('.claude-plugin/plugin.json')).version);
+});
+
+test('the board manifest names the plugin, its contract, bork as author and an empty terminalApp default', () => {
+  const m = boardManifest();
+  assert.equal(m.name, 'desk-board');
+  assert.equal(m.types, './types/index.d.ts');
+  assert.deepEqual(m.author, JSON.parse(read('.claude-plugin/plugin.json')).author);
+  assert.equal(m.userConfig.terminalApp.type, 'string');
+  assert.equal(m.userConfig.terminalApp.default, '');
+  assert.deepEqual(JSON.parse(read(`${BOARD}/hooks/hooks.json`)), { modules: ['./register.tsx'] });
+  // A session that hot-reloads the folder lays a tsconfig.json beside the manifest; it must never be committed.
+  const tracked = spawnSync('git', ['ls-files', `${BOARD}/tsconfig.json`], { cwd: ROOT, encoding: 'utf8' });
+  if (tracked.status === 0) assert.equal(tracked.stdout.trim(), '', 'the mod ships no tsconfig');
+});
+
+test('the SKILL has a Board section: command, keyboard, install, development and terminalApp', () => {
+  const s = skill();
+  const board = s.slice(s.indexOf('## Board (optional, Claude only)'));
+  assert.ok(board.startsWith('## Board'), 'the section exists');
+  for (const w of ['/desk-board', 'ctrl+x tab', '/plugin marketplace update skills', '/plugin install desk-board@skills', 'CLAUDE_CODE_PLUGIN_DIRS',
+    '--plugin-dir', 'com.mitchellh.ghostty', `osascript -e 'id of app "Ghostty"'`, 'BORK_RUNS_HOME', 'only when absolute']) assert.ok(board.includes(w), `Board section mentions ${w}`);
+});
+
 test('README has a desk row', () => {
   assert.match(read('README.md'), /^\| \*\*desk\*\* \|/m);
   assert.ok(!/^\| \*\*orchestrate\*\* \|/m.test(read('README.md')), 'the old orchestrate row is gone');
+  const row = read('README.md').split('\n').filter((l) => /^\| \*\*desk\*\* \|/.test(l));
+  assert.equal(row.length, 1, 'the desk row is one table line');
+  assert.match(row[0], /desk-board/i);
 });
 
 test('the SKILL routes do runs, names matt:orchestrator, relays questions verbatim and acks by RUN line revision', () => {

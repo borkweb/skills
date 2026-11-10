@@ -1,0 +1,18 @@
+{
+	"name": "desk-board",
+	"description": "A live board of bork do runs in Claude Code: what is in motion, what waits on you, what finished. A press on a run switches herdr to its tab.",
+	"version": "3.34.0",
+	"author": {
+		"name": "Matthew Batchelder",
+		"email": "borkweb@gmail.com"
+	},
+	"types": "./types/index.d.ts",
+	"userConfig": {
+		"terminalApp": {
+			"type": "string",
+			"title": "Terminal app bundle id",
+			"description": "macOS bundle id of the terminal that shows herdr (for example com.mitchellh.ghostty). A press then also raises that app. Leave empty to only switch the herdr tab.",
+			"default": ""
+		}
+	}
+}
