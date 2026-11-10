@@ -61,7 +61,7 @@ for (const kind of ['eisdir', 'eacces']) {
     const id = bad.split('/').pop();
     try {
       for (const c of [['show', id], ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-        ['answer', id, 'Q1', '--answer', 'A'], ['withdraw', id, 'Q1'], ['ack', id]]) {
+        ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id]]) {
         const r = run(hb, c);
         refused(r, c[0]);
         assert.ok(r.err.includes(recPath(bad)), `${c[0]} names the path: ${r.err}`);
@@ -296,4 +296,36 @@ test('r2-4: a stale lock that cannot be broken because the run dir is not writab
   assert.notEqual(other.code, 0);
   assert.ok(!/not writable/.test(other.err), `a live writer keeps the old message: ${other.err}`);
   assert.match(other.err, /another writer/, other.err);
+});
+
+// ---- polish 2 (review-integration findings 2 and 9; decisions 15) --------------------------------
+
+test('f2: show prints who launched the run', () => {
+  const hb = newBox();
+  const self = mkRun(hb, { slug: 'selfrun' });
+  const orch = orchestratorRun(hb, { slug: 'orchrun' });
+  const a = run(hb, ['show', self.id]);
+  ok(a);
+  assert.match(a.out, /^launched by: self$/m);
+  const b = run(hb, ['show', orch.id]);
+  ok(b);
+  assert.match(b.out, /^launched by: orchestrator$/m);
+});
+
+test('f9: answer without --by exits 2 with a usage line and changes nothing', () => {
+  const hb = newBox();
+  ok(claim(hb));
+  const { dir, id } = orchestratorRun(hb);
+  ask(hb, id);
+  const before = sha(recPath(dir));
+  resetLog(hb);
+  const r = run(hb, ['answer', id, 'Q1', '--answer', 'A']);
+  assert.equal(r.code, 2, `exit ${r.code}: ${r.err}`);
+  assert.match(r.err, /usage: .*answer .*--by/i, r.err);
+  assert.equal(sha(recPath(dir)), before, 'the record is untouched');
+  assert.deepEqual(calls(hb), [], 'no nudge');
+  assert.deepEqual(debris(dir), []);
+  const good = run(hb, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user']);
+  ok(good, 'with --by it works');
+  assert.equal(readRec(dir).questions[0].answered_by, 'user');
 });

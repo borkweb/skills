@@ -98,7 +98,7 @@ test('ids that fail the id rule, and unknown ids, are refused by every id-taking
     show: (id) => ['show', id],
     set: (id) => ['set', id, '--state', 'blocked'],
     ask: (id) => ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-    answer: (id) => ['answer', id, 'Q1', '--answer', 'A'],
+    answer: (id) => ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'],
     withdraw: (id) => ['withdraw', id, 'Q1'],
     ack: (id) => ['ack', id],
     wait: (id) => ['wait', '--run', id, '--timeout', '1'],
@@ -154,7 +154,7 @@ test('an invalid run.json makes every command exit non-zero naming the path, byt
     const before = sha(recPath(dir));
     const cmds = [
       ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-      ['answer', id, 'Q1', '--answer', 'A'], ['withdraw', id, 'Q1'], ['ack', id], ['show', id],
+      ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['show', id],
       ['init', '--goal', 'g', '--run-dir', dir],
     ];
     for (const c of cmds) {
@@ -217,7 +217,7 @@ test('with OFFLOAD_HANDOFF set every writing command is refused and bytes stay; 
   const runsBefore = readdirSync(wb.runs).join(',');
   const writers = [
     ['init', '--goal', 'g'], ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-    ['answer', id, 'Q1', '--answer', 'A'], ['withdraw', id, 'Q1'], ['ack', id], ['ack', '--all'],
+    ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['ack', '--all'],
     ['claim', '--pane', 'tw:p4'], ['release'], ['start', '--repo', repo, '--goal', 'g'],
   ];
   for (const w of writers) refused(run(wb, w, B), w[0]);
@@ -242,7 +242,7 @@ test('runs.mjs never touches backlog.md, coordination.sqlite or assignments/', (
   const { id } = mkRun(ob);
   ask(ob, id);
   ok(run(ob, ['claim', '--pane', 'tw:p3']));
-  ok(run(ob, ['answer', id, 'Q1', '--answer', 'A', '--no-nudge']));
+  ok(run(ob, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user', '--no-nudge']));
   ok(run(ob, ['set', id, '--state', 'blocked']));
   ok(run(ob, ['ack', '--all']));
   ok(run(ob, ['list']));
@@ -267,7 +267,7 @@ test('every subcommand runs on its valid path; no args and unknown subcommands e
   ok(ask(sb, id), 'ask');
   ok(run(sb, ['wait', '--run', id, '--timeout', '5']), 'wait');
   ok(run(sb, ['ack', id]), 'ack');
-  ok(run(sb, ['answer', id, 'Q1', '--answer', 'A']), 'answer');
+  ok(run(sb, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user']), 'answer');
   ok(ask(sb, id, 'again'), 'ask 2');
   ok(run(sb, ['withdraw', id, 'Q2']), 'withdraw');
   ok(run(sb, ['start', '--repo', repo, '--goal', 'g']), 'start');
@@ -310,14 +310,14 @@ test('answering or withdrawing the last open question resumes only a needs-me ru
   const two = mkRun(b);
   ask(b, two.id, 'one');
   ask(b, two.id, 'two');
-  ok(run(b, ['answer', two.id, 'Q1', '--answer', 'A']));
+  ok(run(b, ['answer', two.id, 'Q1', '--answer', 'A', '--by', 'user']));
   assert.equal(readRec(two.dir).state, 'needs-me');
   ok(run(b, ['withdraw', two.id, 'Q2']));
   assert.equal(readRec(two.dir).state, 'running');
   const blocked = mkRun(b);
   ask(b, blocked.id);
   ok(run(b, ['set', blocked.id, '--state', 'blocked', '--summary', 'stuck']));
-  ok(run(b, ['answer', blocked.id, 'Q1', '--answer', 'B']));
+  ok(run(b, ['answer', blocked.id, 'Q1', '--answer', 'B', '--by', 'user']));
   assert.equal(readRec(blocked.dir).state, 'blocked');
   const w = mkRun(b);
   ask(b, w.id);
@@ -344,10 +344,10 @@ test('a done or failed run refuses every change but ack; show marks open questio
   for (const term of ['done', 'failed']) {
     const { dir, id } = mkRun(b);
     ask(b, id);
-    if (term === 'done') { run(b, ['answer', id, 'Q1', '--answer', 'A']); ok(run(b, ['set', id, '--state', 'done', '--delivery', 'd'])); } else ok(run(b, ['set', id, '--state', 'failed', '--summary', 'x']));
+    if (term === 'done') { run(b, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user']); ok(run(b, ['set', id, '--state', 'done', '--delivery', 'd'])); } else ok(run(b, ['set', id, '--state', 'failed', '--summary', 'x']));
     const changes = [
       ['set', id, '--state', 'blocked'], ['set', id, '--note', 'n'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-      ['answer', id, 'Q1', '--answer', 'B'], ['withdraw', id, 'Q1'],
+      ['answer', id, 'Q1', '--answer', 'B', '--by', 'user'], ['withdraw', id, 'Q1'],
     ];
     for (const c of changes) refused(noChange(dir, () => run(b, c)), `${term} ${c[0]}`);
     ok(run(b, ['ack', id]));
@@ -545,9 +545,9 @@ test('answer records answer, who and when; choice only for a label; refuses a se
   ok(run(b, ['answer', id, 'Q2', '--answer', 'something free-form', '--by', 'orchestrator']));
   q = readRec(dir).questions[1];
   assert.deepEqual([q.status, q.choice, q.answered_by], ['answered', null, 'orchestrator']);
-  refused(noChange(dir, () => run(b, ['answer', id, 'Q1', '--answer', 'A'])), 'second answer');
-  refused(noChange(dir, () => run(b, ['answer', id, 'Q9', '--answer', 'A'])), 'unknown Q');
-  refused(noChange(dir, () => run(b, ['answer', id, 'Q2', '--answer', 'A'])), 'answered Q2');
+  refused(noChange(dir, () => run(b, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'])), 'second answer');
+  refused(noChange(dir, () => run(b, ['answer', id, 'Q9', '--answer', 'A', '--by', 'user'])), 'unknown Q');
+  refused(noChange(dir, () => run(b, ['answer', id, 'Q2', '--answer', 'A', '--by', 'user'])), 'answered Q2');
 });
 
 test('withdraw sets withdrawn and applies the state rules; a second withdraw is refused', () => {

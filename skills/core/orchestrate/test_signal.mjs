@@ -162,7 +162,7 @@ test('a second signal after an atomic rename is caught: fire, ack, wait again, a
   const w = spawnChild(wb, ['wait', '--run', id, '--timeout', '20']);
   await sleep(800);
   const t0 = Date.now();
-  run(wb, ['answer', id, 'Q1', '--answer', 'A', '--no-nudge']);
+  run(wb, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user', '--no-nudge']);
   ask(wb, id, 'two');
   const r = await w.done;
   assert.equal(r.code, 0, r.err);
@@ -243,7 +243,7 @@ test('answer nudges architect.pane; --no-nudge and a null pane make no call', ()
     ask(nb, id);
     writeRec(dir, { architect: { harness: 'claude', session_id: null, frontend: 'herdr', tab: 't', pane } });
     resetLog(nb);
-    ok(run(nb, ['answer', id, 'Q1', '--answer', 'A', ...extra]));
+    ok(run(nb, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user', ...extra]));
     assert.equal(nudges(nb).length, n, `${pane} ${extra}`);
     if (n) assert.deepEqual(nudges(nb)[0], ['agent', 'prompt', 'w9:p7', `bork run ${id}: answered Q1`]);
   }
@@ -257,7 +257,7 @@ test('every nudge is one short line from the fixed grammar with no control chara
     const { dir, id } = orchestratorRun(nb, { slug: `g${i}` });
     writeRec(dir, { architect: { harness: 'claude', session_id: null, frontend: 'herdr', tab: 't', pane: 'w9:p7' } });
     ask(nb, id);
-    run(nb, ['answer', id, 'Q1', '--answer', 'A']);
+    run(nb, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user']);
     run(nb, ['set', id, '--state', ['done', 'failed', 'blocked'][i], '--summary', 's', '--delivery', 'd']);
     seen.push(id);
   }
@@ -284,7 +284,7 @@ test('text planted in summary, note, question, context, options, answer and goal
   const opts = JSON.stringify([{ label: 'ZZ_LA_ZZ', description: 'ZZ_DA_ZZ' }, { label: 'ZZ_LB_ZZ', description: 'ZZ_DB_ZZ' }]);
   run(nb, ['set', id, '--state', 'blocked', '--summary', 'ZZ_SUM_ZZ', '--note', 'ZZ_NOTE_ZZ']);
   run(nb, ['ask', id, '--question', 'ZZ_Q_ZZ', '--options', opts, '--recommendation', 'ZZ_LA_ZZ', '--context', 'ZZ_CTX_ZZ']);
-  run(nb, ['answer', id, 'Q1', '--answer', 'ZZ_ANS_ZZ']);
+  run(nb, ['answer', id, 'Q1', '--answer', 'ZZ_ANS_ZZ', '--by', 'user']);
   run(nb, ['set', id, '--state', 'running']);
   run(nb, ['set', id, '--state', 'done', '--summary', 'ZZ_SUM2_ZZ', '--delivery', 'ZZ_DEL_ZZ']);
   assert.ok(nudges(nb).length >= 3);
@@ -313,7 +313,7 @@ test('with herdr absent, no claim, or a null pane, set/ask/answer succeed and se
   // pane: null
   ok(run(nb, ['claim'], { HERDR_PANE_ID: undefined }));
   assert.equal(JSON.parse(readFileSync(join(nb.orch, 'orchestrator.json'), 'utf8')).pane, null);
-  ok(run(nb, ['answer', id, 'Q1', '--answer', 'A']));
+  ok(run(nb, ['answer', id, 'Q1', '--answer', 'A', '--by', 'user']));
   ok(run(nb, ['set', id, '--state', 'blocked', '--summary', 's']));
   assert.deepEqual(calls(nb), []);
   // herdr absent from PATH with a claimed pane
@@ -321,7 +321,7 @@ test('with herdr absent, no claim, or a null pane, set/ask/answer succeed and se
   const bare = { PATH: barePath() };
   ok(run(nb, ['set', id, '--state', 'running'], bare));
   ok(run(nb, ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'], bare));
-  ok(run(nb, ['answer', id, 'Q2', '--answer', 'A'], bare));
+  ok(run(nb, ['answer', id, 'Q2', '--answer', 'A', '--by', 'user'], bare));
   assert.deepEqual(calls(nb), []);
   assert.ok(readRec(dir).revision > 5);
 });

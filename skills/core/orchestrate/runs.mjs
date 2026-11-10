@@ -371,6 +371,7 @@ function findOpen(rec, qid) {
 }
 
 function cmdAnswer(o, [arg, qid]) {
+  if (o.by === undefined) throw usageFail('usage: runs.mjs answer <run> Q<n> --answer <text> --by user|orchestrator (--by is required)');
   const { dir } = resolveRun(arg);
   if (o.answer === undefined) throw usageFail('answer needs --answer');
   const res = mutate(dir, (rec, at) => {
@@ -378,7 +379,7 @@ function cmdAnswer(o, [arg, qid]) {
     const q = findOpen(rec, qid);
     Object.assign(q, {
       status: 'answered', answer: o.answer, choice: q.options.some((x) => x.label === o.answer) ? o.answer : null,
-      answered_at: at, answered_by: o.by ?? 'orchestrator',
+      answered_at: at, answered_by: o.by,
     });
     resumeIfClear(rec, `answered ${qid}`, at);
   });
@@ -484,6 +485,7 @@ function cmdShow(o, [arg]) {
   const a = rec.architect;
   const lines = [
     `run: ${id}`, `state: ${rec.state}${flags.length ? ` (${flags.join(', ')})` : ''}`, `goal: ${firstLine(rec.goal, 200)}`,
+    `launched by: ${rec.launched_by}`,
     `summary: ${rec.summary || '-'}`, `delivery: ${rec.delivery ?? '-'}`, `run dir: ${dir}`,
     `architect: ${a.harness ?? '-'} tab ${a.tab ?? '-'} pane ${a.pane ?? '-'}`,
   ];
@@ -638,11 +640,11 @@ Record state and questions with that CLI:
 `;
 }
 
-function launchScript({ id, dir, repo, harness, model, sessionId, home }) {
+// Claude only. The Codex launch line was removed under decisions 16: herdr is blocked inside
+// Codex's workspace-write sandbox, so cmdStart refuses a Codex architect before any side effect.
+function launchScript({ id, dir, repo, model, sessionId, home }) {
   const prompt = `Read ${dir}/launch-prompt.md and follow it.`;
-  const arch = harness === 'claude'
-    ? ['claude', ...(model ? ['--model', model] : []), '--session-id', sessionId, prompt]
-    : ['codex', ...(model ? ['-m', model] : []), '--sandbox', 'workspace-write', '--add-dir', home, '--add-dir', join(handoffsDir(), 'offload'), prompt];
+  const arch = ['claude', ...(model ? ['--model', model] : []), '--session-id', sessionId, prompt];
   const exp = [['BORK_RUN_ID', id], ['BORK_RUN_DIR', dir], ['BORK_RUNS_CLI', CLI_PATH], ['BORK_RUNS_HOME', home]];
   for (const k of ['AGENT_HANDOFFS_DIR', 'ORCHESTRATOR_HOME']) if (process.env[k]) exp.push([k, process.env[k]]);
   return `#!/usr/bin/env bash
@@ -668,16 +670,17 @@ exit "$code"
 }
 
 function cmdStart(o) {
-  const goal = readGoal(o);
   const harness = o.harness ?? 'claude';
-  if (!['claude', 'codex'].includes(harness)) throw new Fail(`unknown harness ${JSON.stringify(harness)}; use claude or codex`);
+  if (harness === 'codex') throw usageFail("Codex architect launch is disabled: herdr is not reachable inside Codex's sandbox, so a Codex architect cannot send pane messages. Codex sessions can still coordinate (claim, wait, show, answer, ack). Use --harness claude.");
+  if (harness !== 'claude') throw new Fail(`unknown harness ${JSON.stringify(harness)}; use claude`);
+  const goal = readGoal(o);
   if (!o.repo) throw usageFail('start needs --repo <abs path | project name>');
   const repo = gitTop(o.repo.startsWith('/') ? o.repo : projectPath(o.repo));
   if (!process.env.HERDR_ENV) throw new Fail('start needs herdr: HERDR_ENV is not set (there is no headless fallback)');
   if (!which('herdr')) throw new Fail('start needs herdr on PATH (there is no headless fallback)');
 
   const slug = defaultSlug(repo);
-  const sessionId = harness === 'claude' ? randomUUID() : null;
+  const sessionId = randomUUID();
   const { dir, rec } = createRun({ goal, repo, slug, launchedBy: 'orchestrator', harness, sessionId, task: o.task ?? null });
   const home = realHome();
   let tab = null;
@@ -692,7 +695,7 @@ function cmdStart(o) {
 
   try {
     writeFileSync(join(dir, 'launch-prompt.md'), launchPrompt({ id: rec.id, dir, goal }), { mode: 0o600 });
-    writeFileSync(join(dir, 'launch.sh'), launchScript({ id: rec.id, dir, repo, harness, model: o.model, sessionId, home }), { mode: 0o700 });
+    writeFileSync(join(dir, 'launch.sh'), launchScript({ id: rec.id, dir, repo, model: o.model, sessionId, home }), { mode: 0o700 });
   } catch (e) { fail(e.message); }
 
   const ws = process.env.HERDR_WORKSPACE_ID || parse(call(['pane', 'current']))?.result?.pane?.workspace_id || fail('herdr pane current gave no workspace');
