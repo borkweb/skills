@@ -171,10 +171,11 @@ const snap = async ($: Engine, surface: Surface, cols = 56) => {
   const ui: Handle = await mountPane($, surface, cols)
   const texts = await ui.findAll({ type: 'Text' })
   const buttons = await ui.findAll({ type: 'Button' })
+  const boxes = await ui.findAll({ type: 'Box' })
   const markdown = await ui.find({ type: 'Markdown' })
   await ui.unmount()
   const lines = [...texts.map((t) => t.text), ...buttons.map((b) => b.text)]
-  return { texts, buttons, markdown, lines, all: lines.join('\n'), keys: buttons.map((b) => b.key) }
+  return { texts, buttons, boxes, markdown, lines, all: lines.join('\n'), keys: buttons.map((b) => b.key) }
 }
 // One look at the band: whether it yielded to the engine, and what it drew otherwise.
 const bandSnap = async ($: Engine, surface: Surface, over: { hasSurvey?: boolean } = {}) => {
@@ -360,7 +361,7 @@ for (const surface of SURFACES) {
     const { all } = await snap($, surface)
     expect(all).toContain('Needs you · 2')
     expect(all).toContain('In motion · 1')
-    expect(all).toContain('Finished · 1')
+    expect(all).toContain('Finished today · 1')
   })
 
   test(`${surface}: a group with no rows is not drawn`, async ($, on) => {
@@ -369,6 +370,7 @@ for (const surface of SURFACES) {
     expect(all).toContain('In motion · 1')
     expect(all).not.toContain('Needs you')
     expect(all).not.toContain('Finished')
+    expect(all).not.toContain('Yesterday')
   })
 
   test(`${surface}: a needs-me row shows the last open question undimmed; with none it falls back`, async ($, on) => {
@@ -392,21 +394,57 @@ for (const surface of SURFACES) {
   test(`${surface}: a row without a herdr tab is Text with no tab and no Button`, async ($, on) => {
     await boot($, on, world({ a: good('a', noBtn) }))
     const { all, keys } = await snap($, surface)
-    expect(all).toContain('skills · running · 1m · no tab')
+    expect(all).toContain('skills · running · no tab')
     expect(keys).toEqual([])
   })
 
-  test(`${surface}: a pressable row is one plain Button keyed by the dir with line 2 outside it`, async ($, on) => {
+  test(`${surface}: a run is a round card colored by state, its head one plain Button keyed by the dir`, async ($, on) => {
     await boot($, on, world({ 'run-1': good('run-1', { goal: 'Ship the board\nsecond line' }) }))
-    const { buttons, texts } = await snap($, surface)
+    const { buttons, texts, boxes } = await snap($, surface)
     const b = buttons.find((x) => x.key === 'run-1')
     expect(b?.props.plain).toBe(true)
     expect(b?.props.variant).toBeUndefined()
     expect(b?.props.hotkey).toBeUndefined()
     expect(b?.props.label).toBe('Go to skills: Ship the board (running, 1m)')
-    expect(b?.text).toContain('skills · running · 1m')
-    expect(b?.text).not.toContain('Ship the board')
-    expect(texts.find((t) => t.text === 'Ship the board')?.props.dimColor).toBe(true)
+    expect(b?.text).toBe('● skills · running')
+    expect(texts.filter((t) => t.text === 'Ship the board')).toHaveLength(1)
+    expect(texts.some((t) => t.text === '1m')).toBe(true)
+    const card = boxes.find((x) => x.key === 'card-run-1')
+    expect(card?.props.borderStyle).toBe('round')
+    expect(card?.props.borderColor).toBe('suggestion')
+  })
+
+  test(`${surface}: each card's border takes its state's color, and finished cards are dim`, async ($, on) => {
+    await boot($, on, world({
+      n: asking('n'), b: good('b', { state: 'blocked' }), s: good('s', { updated_at: iso(25 * HOUR) }),
+      d: good('d', { state: 'done' }), f: good('f', { state: 'failed' }),
+    }))
+    const { boxes } = await snap($, surface)
+    const card = (k: string) => boxes.find((x) => x.key === `card-${k}`)?.props
+    expect(card('n')?.borderColor).toBe('warning')
+    expect(card('b')?.borderColor).toBe('error')
+    expect(card('s')?.borderColor).toBe('inactive')
+    expect(card('d')?.borderColor).toBe('success')
+    expect(card('f')?.borderColor).toBe('error')
+    expect(card('d')?.borderDimColor).toBe(true)
+    expect(card('n')?.borderDimColor).not.toBe(true)
+  })
+
+  test(`${surface}: a run finished 24 to 48 h ago is one dim entry on the Yesterday line, not a card`, async ($, on) => {
+    await boot($, on, world({
+      y: good('y', { state: 'done', delivery: 'merged', updated_at: iso(30 * HOUR) }),
+      z: good('z', { ...noBtn, state: 'failed', repo: '/code/zed', updated_at: iso(40 * HOUR) }),
+    }))
+    const { all, buttons, texts, boxes, keys } = await snap($, surface)
+    expect(texts.some((t) => t.text === 'Yesterday')).toBe(true)
+    const y = buttons.find((x) => x.key === 'y')
+    expect(y?.props.plain).toBe(true)
+    expect(y?.props.dimColor).toBe(true)
+    expect(y?.text).toBe('✓ skills 30h')
+    expect(texts.some((t) => t.text === '✗ zed 40h')).toBe(true)
+    expect(keys).toEqual(['y'])
+    expect(all).not.toContain('merged')
+    expect(boxes.some((x) => x.key?.startsWith('card-'))).toBe(false)
   })
 
   test(`${surface}: a finished row with a herdr tab is pressable`, async ($, on) => {
@@ -454,7 +492,7 @@ for (const surface of SURFACES) {
     const { all } = await snap($, surface)
     expect(all).toContain('- · running')
     expect(all).toContain('Needs you · 2')
-    expect(all).toContain('Finished · 1')
+    expect(all).toContain('Finished today · 1')
     expect(all).not.toContain('could not be read')
   })
 }
@@ -468,16 +506,20 @@ for (const cols of [40, 64]) {
       c: good('c', { state: 'done', delivery: long }),
       d: good('d', { state: 'failed', summary: long }),
       e: good('e', { ...noBtn, goal: long, repo: '/code/' + 'q'.repeat(30) }),
+      y: good('y', { state: 'done', repo: '/code/' + 'y'.repeat(60), updated_at: iso(30 * HOUR) }),
     }))
     for (const surface of SURFACES) {
-      const { lines } = await snap($, surface, cols)
+      // A card's border and padding take 4 columns. A wrapping Text (the question) folds instead of overflowing.
+      const { texts, buttons } = await snap($, surface, cols)
+      const lines = [...texts.filter((t) => t.props.wrap !== 'wrap'), ...buttons].map((x) => x.text)
       expect(lines.length).toBeGreaterThan(6)
-      for (const l of lines) expect(Array.from(l).length, l).toBeLessThanOrEqual(cols)
+      for (const l of lines) expect(Array.from(l).length, l).toBeLessThanOrEqual(cols - 4)
+      expect(texts.find((t) => t.text.startsWith('Q1: long words'))?.props.wrap).toBe('wrap')
     }
   })
 }
 
-test('the board orders Needs you newest first, In motion oldest created first, Finished newest first and hides old finished', async ($, on) => {
+test('the board orders Needs you newest first, In motion oldest created first, Finished and Yesterday newest first and hides past 48 h', async ($, on) => {
   await boot($, on, world({
     n1: asking('n1', { updated_at: iso(3 * HOUR) }),
     n2: asking('n2', { updated_at: iso(MIN) }),
@@ -489,18 +531,21 @@ test('the board orders Needs you newest first, In motion oldest created first, F
     f2: good('f2', { state: 'failed', updated_at: iso(MIN) }),
     f3: good('f3', { state: 'done', updated_at: iso(25 * HOUR) }),
     f4: good('f4', { state: 'done', updated_at: iso(23 * HOUR + 59 * MIN) }),
+    f5: good('f5', { state: 'failed', updated_at: iso(47 * HOUR) }),
+    f6: good('f6', { state: 'done', updated_at: iso(49 * HOUR) }),
   }))
-  expect((await snap($, 'terminal')).keys).toEqual(['n2', 'n3', 'n1', 'm2', 'm3', 'm1', 'f2', 'f1', 'f4'])
+  expect((await snap($, 'terminal')).keys).toEqual(['n2', 'n3', 'n1', 'm2', 'm3', 'm1', 'f2', 'f1', 'f4', 'f3', 'f5'])
 })
 
 test('ages come from the tick: a clock move with no tick leaves the drawn age', async ($, on) => {
   const w = world({ a: good('a', { updated_at: iso(59e3) }) })
   const clock = await boot($, on, w)
-  expect((await snap($, 'terminal')).all).toContain('skills · running · now')
+  const age = async () => (await snap($, 'terminal')).texts.some((t) => t.text === 'now') ? 'now' : (await snap($, 'terminal')).texts.some((t) => t.text === '1m') ? '1m' : '?'
+  expect(await age()).toBe('now')
   await clock.advance(4000)
-  expect((await snap($, 'terminal')).all).toContain('skills · running · now')
+  expect(await age()).toBe('now')
   await clock.advance(1000)
-  expect((await snap($, 'terminal')).all).toContain('skills · running · 1m')
+  expect(await age()).toBe('1m')
 })
 
 // ---- refresh --------------------------------------------------------------------------------------------------------
@@ -526,13 +571,22 @@ test('a record whose stat is unchanged is not read again; a changed stat is', as
   expect(w.read.length).toBe(2)
 })
 
-test('a done record older than 24 h is read once and never again, even after its stat changes', async ($, on) => {
-  const w = world({ a: good('a', { state: 'done', updated_at: iso(30 * HOUR) }) })
+test('a done record older than 48 h is read once and never again, even after its stat changes', async ($, on) => {
+  const w = world({ a: good('a', { state: 'done', updated_at: iso(50 * HOUR) }) })
   const clock = await boot($, on, w)
   expect(w.read.length).toBe(1)
   w.dirs.a!.mtimeMs = 2
   await clock.advance(5000)
   expect(w.read.length).toBe(1)
+})
+
+test('a done record on the Yesterday line is read again when its stat changes', async ($, on) => {
+  const w = world({ a: good('a', { state: 'done', updated_at: iso(30 * HOUR) }) })
+  const clock = await boot($, on, w)
+  expect(w.read.length).toBe(1)
+  w.dirs.a!.mtimeMs = 2
+  await clock.advance(5000)
+  expect(w.read.length).toBe(2)
 })
 
 test('a run dir deleted between ticks leaves no row', async ($, on) => {
@@ -711,7 +765,7 @@ test('the terminal band does not count this session’s own run, but the pane dr
   const w = world({ own: asking('own', { architect: { harness: 'claude', session_id: null, frontend: 'herdr', tab: 'w9:t9', pane: 'w9:p9' } }) })
   await boot($, on, w)
   expect((await bandSnap($, 'terminal')).yielded).toBe(true)
-  expect((await snap($, 'terminal')).all).toContain('skills · needs-me · 1m · (this session)')
+  expect((await snap($, 'terminal')).all).toContain('skills · needs you · (this session)')
 })
 
 test('with HERDR_PANE_ID unset a run whose architect pane is null is not this session', async ($, on) => {

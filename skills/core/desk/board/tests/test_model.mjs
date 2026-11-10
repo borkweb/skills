@@ -8,8 +8,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  ageText, buildBoard, bandText, clean, fit, herdrMessage, homeDisplay, isDirName, isHerdrId, isOldFinished, isTerminalApp,
-  parseRecord, reasonOf, repoName, runsHome, toast, workspaceOf,
+  ageText, buildBoard, bandText, clean, fit, headOf, herdrMessage, homeDisplay, isDirName, isHerdrId, isOldFinished, isTerminalApp,
+  lookOf, parseRecord, reasonOf, repoName, runsHome, toast, workspaceOf,
 } from '../hooks/model.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -64,7 +64,7 @@ function fixture() {
   cli('set', runs.old.id, '--state', 'done', '--delivery', 'old delivery');
   const oldFile = join(runs.old.dir, 'run.json');
   const o = JSON.parse(readFileSync(oldFile, 'utf8'));
-  o.updated_at = new Date(Date.now() - 48 * HOUR).toISOString();
+  o.updated_at = new Date(Date.now() - 50 * HOUR).toISOString();
   writeFileSync(oldFile, `${JSON.stringify(o, null, 2)}\n`);
   return { root, home, cli, runs, env };
 }
@@ -194,9 +194,52 @@ test('headings carry counts and an empty group is absent', () => {
   assert.deepEqual(b.groups.map((g) => g.title), ['Needs you · 2', 'In motion · 1']);
 });
 
-test('finished runs show at 23 h 59 m and hide at 24 h 1 m', () => {
-  const b = board([rec('in', { state: 'done', updated_at: iso(23 * HOUR + 59 * MIN) }), rec('out', { state: 'failed', updated_at: iso(24 * HOUR + MIN) })]);
-  assert.deepEqual(keysOf(b, 'finished'), ['in']);
+test('finished runs are Finished today to 24 h, Yesterday to 48 h, then hidden', () => {
+  const b = board([
+    rec('today', { state: 'done', updated_at: iso(23 * HOUR + 59 * MIN) }),
+    rec('yday-new', { state: 'failed', updated_at: iso(24 * HOUR + MIN) }),
+    rec('yday-old', { state: 'done', updated_at: iso(47 * HOUR + 59 * MIN) }),
+    rec('gone', { state: 'failed', updated_at: iso(48 * HOUR + MIN) }),
+  ]);
+  assert.deepEqual(keysOf(b, 'finished'), ['today']);
+  assert.deepEqual(keysOf(b, 'earlier'), ['yday-new', 'yday-old']);
+  assert.equal(rowsOf(b).some((r) => r.key === 'gone'), false);
+  assert.equal(b.rows, 3);
+  assert.deepEqual(b.groups.map((g) => g.title), ['Finished today · 1', 'Yesterday · 2']);
+});
+
+test('Yesterday rows are newest first, aged in hours and dimmed', () => {
+  const b = board([
+    rec('e40', { state: 'done', updated_at: iso(40 * HOUR) }),
+    rec('e25', { state: 'failed', updated_at: iso(25 * HOUR + 30 * MIN) }),
+    rec('e30', { state: 'done', updated_at: iso(30 * HOUR) }),
+  ]);
+  assert.deepEqual(keysOf(b, 'earlier'), ['e25', 'e30', 'e40']);
+  assert.deepEqual(b.groups[0].rows.map((r) => r.age), ['25h', '30h', '40h']);
+  assert.ok(b.groups[0].rows.every((r) => r.isDimRow));
+});
+
+test('a finished record is old (never drawn again) only past 48 h', () => {
+  assert.equal(isOldFinished(rec('a', { state: 'done', updated_at: iso(47 * HOUR) }), NOW), false);
+  assert.equal(isOldFinished(rec('a', { state: 'failed', updated_at: iso(49 * HOUR) }), NOW), true);
+  assert.equal(isOldFinished(rec('a', { state: 'running', updated_at: iso(49 * HOUR) }), NOW), false);
+});
+
+test('each state has its own glyph, color and word; a stale run is gray', () => {
+  const looks = Object.fromEntries(['needs-me', 'blocked', 'running', 'done', 'failed'].map((s) => [s, lookOf({ state: s, isStale: false })]));
+  assert.deepEqual(looks['needs-me'], { glyph: '◆', color: 'warning', word: 'needs you' });
+  assert.deepEqual(looks.blocked, { glyph: '■', color: 'error', word: 'blocked' });
+  assert.deepEqual(looks.running, { glyph: '●', color: 'suggestion', word: 'running' });
+  assert.deepEqual(looks.done, { glyph: '✓', color: 'success', word: 'done' });
+  assert.deepEqual(looks.failed, { glyph: '✗', color: 'error', word: 'failed' });
+  assert.deepEqual(lookOf({ state: 'running', isStale: true }), { glyph: '○', color: 'inactive', word: 'stale' });
+});
+
+test('a card head reads repo · word, then this session and no tab', () => {
+  const row = (patch) => ({ ...rowsOf(board([rec('a')]))[0], ...patch });
+  assert.equal(headOf(row({})), 'skills · running');
+  assert.equal(headOf(row({ state: 'needs-me', isThis: true })), 'skills · needs you · (this session)');
+  assert.equal(headOf(row({ isStale: true, tab: null })), 'skills · stale · no tab');
 });
 
 test('a needs-me or blocked run 30 days old is still in Needs you', () => {

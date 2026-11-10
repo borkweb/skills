@@ -118,8 +118,10 @@ export function parseRecord(text: string, dirName: string): Parsed {
   return why ? { bad: why } : { rec: rec as Rec }
 }
 
+// A finished run is a card for its first day, one entry on the Yesterday line for its second, then gone.
+// An old one can never be drawn again, so its record is not read again.
 export const isOldFinished = (rec: Rec, now: number): boolean =>
-  (rec.state === 'done' || rec.state === 'failed') && now - Date.parse(rec.updated_at) > DAY_MS
+  (rec.state === 'done' || rec.state === 'failed') && now - Date.parse(rec.updated_at) > 2 * DAY_MS
 
 // ---- the view model ---------------------------------------------------------------------------
 
@@ -139,7 +141,8 @@ function line2Of(rec: Rec, goal: string): string {
 
 export function buildBoard(input: { items: Item[]; bad: number; now: number; home: string; thisPane: string | null; readAt: number }): Board {
   const { now } = input
-  const rows = { needs: [] as { at: number; row: Row }[], motion: [] as { at: number; row: Row }[], finished: [] as { at: number; row: Row }[] }
+  type Slot = { at: number; row: Row }
+  const rows: Record<Group['id'], Slot[]> = { needs: [], motion: [], finished: [], earlier: [] }
   for (const { dir, rec } of input.items) {
     const updated = Date.parse(rec.updated_at)
     const age = now - updated
@@ -148,20 +151,22 @@ export function buildBoard(input: { items: Item[]; bad: number; now: number; hom
     const group: Group['id'] | null =
       rec.state === 'needs-me' || rec.state === 'blocked' ? 'needs'
         : rec.state === 'running' ? 'motion'
-          : age <= DAY_MS ? 'finished' : null
+          : age <= DAY_MS ? 'finished'
+            : age <= 2 * DAY_MS ? 'earlier' : null
     if (!group) continue
     const row: Row = {
-      key: dir, repo: repoName(rec.repo), state: rec.state, age: ageText(age), goal, tab,
+      // Every Yesterday entry would read 1d, so they are aged in hours.
+      key: dir, repo: repoName(rec.repo), state: rec.state, age: group === 'earlier' ? `${Math.floor(age / 3600e3)}h` : ageText(age), goal, tab,
       isStale: rec.state === 'running' && age > DAY_MS,
       isThis: input.thisPane !== null && input.thisPane !== '' && rec.architect.pane === input.thisPane,
-      line2: line2Of(rec, goal), isDimLine: rec.state !== 'needs-me', isDimRow: group === 'finished',
+      line2: line2Of(rec, goal), isDimLine: rec.state !== 'needs-me', isDimRow: group === 'finished' || group === 'earlier',
     }
     // Needs you and Finished: newest first. In motion: oldest created first, so rows stay put.
     rows[group].push({ at: group === 'motion' ? Date.parse(rec.created_at) : -updated, row })
   }
   const title = (name: string, n: number) => `${name} · ${n}`
   const groups: Group[] = []
-  for (const [id, name] of [['needs', 'Needs you'], ['motion', 'In motion'], ['finished', 'Finished']] as const) {
+  for (const [id, name] of [['needs', 'Needs you'], ['motion', 'In motion'], ['finished', 'Finished today'], ['earlier', 'Yesterday']] as const) {
     const list = rows[id].sort((a, b) => a.at - b.at || (a.row.key < b.row.key ? -1 : 1)).map((x) => x.row)
     if (list.length) groups.push({ id, title: title(name, list.length), rows: list })
   }
@@ -174,8 +179,24 @@ export function buildBoard(input: { items: Item[]; bad: number; now: number; hom
   }
 }
 
-export const line1Of = (r: Row): string =>
-  [r.repo, r.state, r.age, r.isStale && 'stale', r.isThis && '(this session)', r.tab === null && 'no tab'].filter(Boolean).join(' · ')
+// ---- the card look ------------------------------------------------------------------------------
+
+// Colors are theme keys, so they follow the person's theme.
+export type Look = { glyph: string; color: string; word: string }
+const LOOKS: Record<RunState, Look> = {
+  'needs-me': { glyph: '◆', color: 'warning', word: 'needs you' },
+  blocked: { glyph: '■', color: 'error', word: 'blocked' },
+  running: { glyph: '●', color: 'suggestion', word: 'running' },
+  done: { glyph: '✓', color: 'success', word: 'done' },
+  failed: { glyph: '✗', color: 'error', word: 'failed' },
+}
+export const lookOf = (r: Pick<Row, 'state' | 'isStale'>): Look =>
+  r.isStale ? { glyph: '○', color: 'inactive', word: 'stale' } : { ...LOOKS[r.state] }
+export const GROUP_COLOR: Record<Group['id'], string> = { needs: 'warning', motion: 'suggestion', finished: 'success', earlier: 'success' }
+
+// A card's first line, without its glyph and age: the repo, what the run is doing, then its tags.
+export const headOf = (r: Row): string =>
+  [r.repo, lookOf(r).word, r.isThis && '(this session)', r.tab === null && 'no tab'].filter(Boolean).join(' · ')
 export const labelOf = (r: Row): string => `Go to ${r.repo}: ${r.goal} (${r.state}, ${r.age})`
 export const footerText = (bad: number) => `${bad} run record${bad === 1 ? '' : 's'} could not be read`
 export const emptyText = (home: string) => `No runs in ${home}`
