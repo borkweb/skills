@@ -93,6 +93,17 @@ test('f2/f6/f8: the SKILL covers self-launched questions, an unnudged answer and
   for (const l of s.split('\n').filter((x) => /runs\.mjs answer|^\| `answer/.test(x))) assert.match(l, /--by/, `every answer example carries --by: ${l}`);
 });
 
+test('scope: the coordinator starts runs only on request, passes the goal unchanged and does no research', () => {
+  const s = skill();
+  const scope = s.slice(s.indexOf('## Scope'), s.indexOf('## The loop'));
+  assert.ok(s.indexOf('## Scope') !== -1 && s.indexOf('## Scope') < s.indexOf('## The loop'), 'a Scope section precedes the loop');
+  assert.match(scope, /only when the user asks/i);
+  assert.match(scope, /goal[^\n]*unchanged/i);
+  assert.match(scope, /do not research, read code or plan/i);
+  assert.match(scope, /ask the user which repo/i);
+  assert.match(s, /\*\*`start`\.\*\*[^\n]*only when the user asks/i, 'the start step repeats the request-only rule');
+});
+
 test('f5: the one-slice corrective eval names a C-numbered criterion and requires --verdict with a provenance tag', () => {
   const c = JSON.parse(read('evals/cases.json')).find((x) => x.id === 'offload-one-slice-corrective-passes-verdict');
   const n = c.prompt.match(/\bC(\d+)\b/);
