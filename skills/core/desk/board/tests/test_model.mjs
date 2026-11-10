@@ -136,16 +136,18 @@ test('the board accepts exactly the records runs.mjs list accepts, plus its own 
 
 test('the board parses a real herdr 0.9.3 agent list into pane -> status and reads nothing else', () => {
   const stdout = JSON.stringify({ id: 'cli:agent:list', result: { agents: [
-    { agent: 'claude', agent_session: { value: 'x' }, agent_status: 'idle', pane_id: 'w4R:p3', tab_id: 'w4R:t1', terminal_title: '✳ Store nav header parity' },
+    // One entry captured from herdr 0.9.3 `agent list` (all 16 keys); only the paths, the title and the session id are neutral text.
+    { agent: 'claude', agent_session: { agent: 'claude', kind: 'id', source: 'herdr:claude', value: '00000000-0000-4000-8000-000000000000' }, agent_status: 'idle', completion_seq: 905, cwd: '/code/example', focused: false, foreground_cwd: '/code/example', pane_id: 'w4R:p3', revision: 11, state_change_seq: 905, tab_id: 'w4R:t1', terminal_id: 'term_65fb045feb2234', terminal_title: '✳ Example task title', terminal_title_stripped: 'Example task title', tokens: { character: 'Eleanora' }, workspace_id: 'w4R' },
     { agent_status: 'working', pane_id: 'w4R:p4' },
     { agent_status: 'done', pane_id: 'w4R:p5' },
     { agent_status: 'zz-new', pane_id: 'w4R:p6' },
+    { agent_status: 'constructor', pane_id: 'w4R:p9' },
     { agent_status: 'idle' },
     { pane_id: 7, agent_status: 'idle' },
     { pane_id: 'w4R:p8' },
     null,
   ] } });
-  assert.deepEqual([...parseAgentList(stdout)], [['w4R:p3', 'idle'], ['w4R:p4', 'working'], ['w4R:p5', 'done'], ['w4R:p6', 'unknown'], ['w4R:p8', 'unknown']]);
+  assert.deepEqual([...parseAgentList(stdout)], [['w4R:p3', 'idle'], ['w4R:p4', 'working'], ['w4R:p5', 'done'], ['w4R:p6', 'unknown'], ['w4R:p9', 'unknown'], ['w4R:p8', 'unknown']]);
   assert.equal(parseAgentList('{"id":"cli:agent:list","result":{"agents":[]}}').size, 0);
   for (const bad of ['', 'not json', stdout.slice(0, 80), '{}', '{"result":{}}', '{"result":{"agents":{}}}', '{"result":{"agents":"x"}}', '[]', 'null']) assert.equal(parseAgentList(bad), null, bad);
 });

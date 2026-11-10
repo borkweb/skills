@@ -537,7 +537,7 @@ function agentMap() {
   try { agents = JSON.parse(r.stdout)?.result?.agents; } catch { return null; }
   if (!Array.isArray(agents)) return null;
   const map = new Map();
-  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, a.agent_status in AGENT_WORD ? a.agent_status : 'unknown');
+  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, Object.hasOwn(AGENT_WORD, a.agent_status) ? a.agent_status : 'unknown');
   return map;
 }
 

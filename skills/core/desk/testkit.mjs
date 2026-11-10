@@ -23,6 +23,8 @@ const a = process.argv.slice(2);
 fs.appendFileSync(process.env.HERDR_STUB_LOG, JSON.stringify(a) + '\\n');
 const mode = process.env.HERDR_STUB_MODE || 'ok';
 const key = a.slice(0, 2).join(' ');
+// Every call records whether the run lock was held at that moment (HERDR_STUB_LOCK_LOG, HERDR_STUB_LOCK_DIR).
+if (process.env.HERDR_STUB_LOCK_LOG) fs.appendFileSync(process.env.HERDR_STUB_LOCK_LOG, key + ' ' + fs.existsSync(process.env.HERDR_STUB_LOCK_DIR + '/run.json.lock') + '\\n');
 const fail = (msg) => { process.stderr.write(msg + '\\n'); process.exit(1); };
 if (key === 'tab create') {
   if (a.includes('--help')) {
@@ -47,7 +49,6 @@ if (key === 'tab create') {
 } else if (key === 'agent get' || key === 'agent list') {
   // herdr 0.9.3 live shapes (spec-review-1 "Live evidence"). HERDR_STUB_AGENTS names the panes that hold an agent;
   // HERDR_STUB_STATUS maps pane -> agent_status (default idle). HERDR_STUB_AGENT_MODE: fail | hang | malformed | truncated.
-  if (process.env.HERDR_STUB_LOCK_LOG) fs.appendFileSync(process.env.HERDR_STUB_LOCK_LOG, key + ' ' + fs.existsSync(process.env.HERDR_STUB_LOCK_DIR + '/run.json.lock') + '\\n');
   const hook = process.env.HERDR_STUB_HOOK;
   if (hook && key === 'agent get' && !fs.existsSync(process.env.HERDR_STUB_LOG + '.hook')) {
     fs.writeFileSync(process.env.HERDR_STUB_LOG + '.hook', 'ran');

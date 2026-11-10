@@ -106,6 +106,7 @@ test('ids that fail the id rule, and unknown ids, are refused by every id-taking
     tell: (id) => ['tell', id, '--message', 'x'],
     reopen: (id) => ['reopen', id],
   };
+  resetLog(b);
   for (const id of ['..', '../x', '.h', 'a..b', 'no-such-run']) {
     for (const [name, mk] of Object.entries(cmds)) {
       const r = run(b, mk(id));
@@ -114,6 +115,7 @@ test('ids that fail the id rule, and unknown ids, are refused by every id-taking
     }
   }
   assert.equal(sha(recPath(victim)), vsha, 'a traversal id must not touch a dir outside the home');
+  assert.deepEqual(calls(b), [], 'every refusal, tell and reopen included, comes before any herdr call');
   assert.deepEqual(debris(dir), []);
   assert.deepEqual(debris(victim), []);
 });

@@ -155,7 +155,7 @@ export function parseAgentList(stdout: string): Map<string, string> | null {
   try { agents = JSON.parse(stdout)?.result?.agents } catch { return null }
   if (!Array.isArray(agents)) return null
   const map = new Map<string, string>()
-  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, typeof a.agent_status === 'string' && a.agent_status in AGENT_WORD ? a.agent_status : 'unknown')
+  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, typeof a.agent_status === 'string' && Object.hasOwn(AGENT_WORD, a.agent_status) ? a.agent_status : 'unknown')
   return map
 }
 
@@ -180,7 +180,7 @@ export function buildBoard(input: { items: Item[]; bad: number; now: number; hom
       isStale: rec.state === 'running' && age > DAY_MS,
       isThis: input.thisPane !== null && input.thisPane !== '' && rec.architect.pane === input.thisPane,
       // A pane the list does not hold is gone; a run with no pane, a finished run or no list at all has no status.
-      agent: input.agents && typeof rec.architect.pane === 'string' && rec.architect.pane !== '' && (rec.state !== 'done' && rec.state !== 'failed') ? input.agents.get(rec.architect.pane) ?? 'gone' : null,
+      agent: input.agents && typeof rec.architect.pane === 'string' && rec.architect.pane !== '' && (rec.state !== 'done' && rec.state !== 'failed') ? (input.agents.get(rec.architect.pane) ?? 'gone') as Row['agent'] : null,
       line2: line2Of(rec, goal), isDimLine: rec.state !== 'needs-me', isDimRow: group === 'finished' || group === 'earlier',
     }
     // Needs you and Finished: newest first. In motion: oldest created first, so rows stay put.

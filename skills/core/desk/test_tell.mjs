@@ -202,7 +202,7 @@ test('C4 no herdr call runs while the run lock is held', () => {
   resetLog(b);
   ok(tell(id, 'm', { ...LIVE, HERDR_STUB_LOCK_LOG: lockLog, HERDR_STUB_LOCK_DIR: dir }));
   const seen = readFileSync(lockLog, 'utf8').trim().split('\n');
-  assert.deepEqual(seen, ['agent get false'], 'the preflight asked once with no lock; the nudge is not an agent get/list call');
+  assert.deepEqual(seen, ['agent get false', 'agent prompt false'], 'the preflight and the nudge each ran with no lock held');
   assert.equal(nudges(b).length, 1);
 });
 
@@ -360,11 +360,13 @@ test('C10a/b reopen: done and blocked run again; the note and summary are --note
 test('C10c reopen on a running run: exit 0, "already open", no write', () => {
   const { dir, id } = mk();
   const before = sha(recPath(dir));
+  resetLog(b);
   const r = run(b, ['reopen', id]);
   ok(r);
   assert.equal(r.out, `${id} running (already open)\n`);
   assert.equal(sha(recPath(dir)), before);
   assert.deepEqual(debris(dir), []);
+  assert.deepEqual(calls(b), [], 'reopen makes no herdr call');
 });
 
 test('C10d/e reopen refuses an open question (any state) and a failed run; nothing is written, no herdr call', () => {

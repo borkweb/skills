@@ -14,7 +14,7 @@ const lineOf = (out, id) => out.split('\n').find((l) => l.startsWith(`${id}  `))
 const ok = (r) => assert.equal(r.code, 0, r.err);
 
 test('C20 list words: one row per raw status, the bare word "done" never describes the agent', () => {
-  const rows = [['working', 'agent working'], ['blocked', 'agent blocked'], ['idle', 'agent idle'], ['done', 'agent turn ended'], ['unknown', 'agent unknown'], ['zz-new', 'agent unknown']];
+  const rows = [['working', 'agent working'], ['blocked', 'agent blocked'], ['idle', 'agent idle'], ['done', 'agent turn ended'], ['unknown', 'agent unknown'], ['zz-new', 'agent unknown'], ['constructor', 'agent unknown'], ['toString', 'agent unknown']];
   for (const [raw, word] of rows) {
     const { b, runs } = world(['w9:p1']);
     const r = run(b, ['list'], { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_STATUS: JSON.stringify({ 'w9:p1': raw }) });
