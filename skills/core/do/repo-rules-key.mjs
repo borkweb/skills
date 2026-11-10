@@ -23,7 +23,11 @@ const die = (msg, code = 1) => {
   process.exit(code);
 };
 
-const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+// An inherited GIT_DIR (git hooks, `submodule foreach`) would override the path argument.
+const GIT_ENV = { ...process.env };
+for (const v of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE']) delete GIT_ENV[v];
+
+const git = (cwd, args) => execFileSync('git', args, { cwd, env: GIT_ENV, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
 
 function normalize(url) {
   let s = url.trim().toLowerCase();
