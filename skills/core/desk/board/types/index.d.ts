@@ -9,6 +9,8 @@ export type DeskRow = {
   isThis: boolean
   /** A checked herdr tab id, or null when the row cannot be pressed. */
   tab: string | null
+  /** herdr's agent_status for a run that is not finished and has a pane (`gone`: herdr answered and the pane has no agent); null: no status. */
+  agent: 'working' | 'blocked' | 'idle' | 'done' | 'unknown' | 'gone' | null
   goal: string
   line2: string
   isDimLine: boolean

@@ -27,6 +27,7 @@ export type Rec = {
   delivery?: unknown
   questions: Question[]
   architect: { frontend?: unknown; tab?: unknown; pane?: unknown }
+  messages?: unknown
   created_at: string
   updated_at: string
 }
@@ -106,6 +107,8 @@ export function invalidReason(rec: unknown, dirName: string): string | null {
   for (const q of r.questions as Record<string, unknown>[]) {
     if (!q || typeof q.id !== 'string' || !/^Q\d+$/.test(q.id) || !['open', 'answered', 'withdrawn'].includes(q.status as string) || !Array.isArray(q.options)) return 'a question is malformed'
   }
+  // The same rule as runs.mjs: messages may be absent; present, every element needs id (M<n>), text and at.
+  if (r.messages !== undefined && (!Array.isArray(r.messages) || r.messages.some((m: Record<string, unknown> | null) => !m || typeof m.id !== 'string' || !/^M\d+$/.test(m.id) || typeof m.text !== 'string' || typeof m.at !== 'string'))) return 'messages is malformed'
   for (const k of ['created_at', 'updated_at']) if (typeof r[k] !== 'string' || Number.isNaN(Date.parse(r[k] as string))) return `${k} is not a date`
   return null
 }
@@ -119,7 +122,7 @@ export function parseRecord(text: string, dirName: string): Parsed {
 }
 
 // A finished run is a card for its first day, one entry on the Yesterday line for its second, then gone.
-// An old one can never be drawn again, so its record is not read again.
+// Its record is still stat'ed every tick: a reopen (`tell`, `reopen`) makes an old run live again.
 export const isOldFinished = (rec: Rec, now: number): boolean =>
   (rec.state === 'done' || rec.state === 'failed') && now - Date.parse(rec.updated_at) > 2 * DAY_MS
 
@@ -139,7 +142,24 @@ function line2Of(rec: Rec, goal: string): string {
   return summary || goal
 }
 
-export function buildBoard(input: { items: Item[]; bad: number; now: number; home: string; thisPane: string | null; readAt: number }): Board {
+// ---- the herdr agent status ---------------------------------------------------------------------------
+
+export const AGENT_WORD: Record<string, string> = {
+  working: 'agent working', blocked: 'agent blocked', idle: 'agent idle', done: 'agent turn ended', unknown: 'agent unknown',
+}
+
+// `herdr agent list` stdout as pane -> agent_status (a word herdr adds later is `unknown`); null when it is not that list.
+// Only pane_id and agent_status are read: terminal_title and the rest are other people's text.
+export function parseAgentList(stdout: string): Map<string, string> | null {
+  let agents: unknown
+  try { agents = JSON.parse(stdout)?.result?.agents } catch { return null }
+  if (!Array.isArray(agents)) return null
+  const map = new Map<string, string>()
+  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, typeof a.agent_status === 'string' && a.agent_status in AGENT_WORD ? a.agent_status : 'unknown')
+  return map
+}
+
+export function buildBoard(input: { items: Item[]; bad: number; now: number; home: string; thisPane: string | null; readAt: number; agents?: Map<string, string> | null }): Board {
   const { now } = input
   type Slot = { at: number; row: Row }
   const rows: Record<Group['id'], Slot[]> = { needs: [], motion: [], finished: [], earlier: [] }
@@ -159,6 +179,8 @@ export function buildBoard(input: { items: Item[]; bad: number; now: number; hom
       key: dir, repo: repoName(rec.repo), state: rec.state, age: group === 'earlier' ? `${Math.floor(age / 3600e3)}h` : ageText(age), goal, tab,
       isStale: rec.state === 'running' && age > DAY_MS,
       isThis: input.thisPane !== null && input.thisPane !== '' && rec.architect.pane === input.thisPane,
+      // A pane the list does not hold is gone; a run with no pane, a finished run or no list at all has no status.
+      agent: input.agents && typeof rec.architect.pane === 'string' && rec.architect.pane !== '' && (rec.state !== 'done' && rec.state !== 'failed') ? input.agents.get(rec.architect.pane) ?? 'gone' : null,
       line2: line2Of(rec, goal), isDimLine: rec.state !== 'needs-me', isDimRow: group === 'finished' || group === 'earlier',
     }
     // Needs you and Finished: newest first. In motion: oldest created first, so rows stay put.
@@ -194,9 +216,10 @@ export const lookOf = (r: Pick<Row, 'state' | 'isStale'>): Look =>
   r.isStale ? { glyph: '○', color: 'inactive', word: 'stale' } : { ...LOOKS[r.state] }
 export const GROUP_COLOR: Record<Group['id'], string> = { needs: 'warning', motion: 'suggestion', finished: 'success', earlier: 'success' }
 
-// A card's first line, without its glyph and age: the repo, what the run is doing, then its tags.
+// A card's first line, without its glyph and age: the repo, what the run is doing, what its agent is doing, then its tags.
+export const agentWordOf = (r: Pick<Row, 'agent'>): string | null => (r.agent === null ? null : r.agent === 'gone' ? 'architect gone' : AGENT_WORD[r.agent] ?? 'agent unknown')
 export const headOf = (r: Row): string =>
-  [r.repo, lookOf(r).word, r.isThis && '(this session)', r.tab === null && 'no tab'].filter(Boolean).join(' · ')
+  [r.repo, lookOf(r).word, agentWordOf(r), r.isThis && '(this session)', r.tab === null && 'no tab'].filter(Boolean).join(' · ')
 export const labelOf = (r: Row): string => `Go to ${r.repo}: ${r.goal} (${r.state}, ${r.age})`
 export const footerText = (bad: number) => `${bad} run record${bad === 1 ? '' : 's'} could not be read`
 export const emptyText = (home: string) => `No runs in ${home}`

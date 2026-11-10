@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { DeskBoard, DeskRow } from '../types'
 import {
   bandText, buildBoard, clean, emptyText, fit, footerText, GROUP_COLOR, headOf, herdrMessage, homeDisplay, isDirName, isHerdrId,
-  isOldFinished, isTerminalApp, labelOf, lookOf, MAX_RECORD_BYTES, parseRecord, reasonOf, runsHome, toast, workspaceOf,
+  isTerminalApp, labelOf, lookOf, MAX_RECORD_BYTES, parseAgentList, parseRecord, reasonOf, runsHome, toast, workspaceOf,
 } from './model.ts'
 import type { Item, Rec } from './model.ts'
 
@@ -13,10 +13,13 @@ const TICK_MS = 5000
 // A tick that has run this long no longer blocks the next one; its late result is dropped.
 const STUCK_MS = 30_000
 const PRESS_TIMEOUT_MS = 5000
+const AGENT_TIMEOUT_MS = 2000
+// The last good agent map is shown for 3 ticks after the read that made it, and a failed read is not retried for 3 ticks.
+const AGENT_HOLD_MS = 3 * TICK_MS
 const HERDR_FALLBACKS = ['/opt/homebrew/bin/herdr', '/usr/local/bin/herdr']
 
 // Change the tag when the view model's fields change: it declines what an earlier version stored.
-const board = atom({ plugin: 'desk-board', key: 'board' } as const, null, { shape: 'board-2' })
+const board = atom({ plugin: 'desk-board', key: 'board' } as const, null, { shape: 'board-3' })
 // A card's round border and its padding take this many columns.
 const CARD_CHROME = 4
 
@@ -26,6 +29,9 @@ const cache = new Map<string, { mtimeMs: number; size: number; outcome: Outcome 
 let timer: { cancel: () => void } | null = null
 let inflight: { at: number } | null = null
 let herdrBin: Promise<string> | null = null
+// Clock times, never in the published view: a tick that changes nothing must write nothing.
+let agentsGood: { map: Map<string, string>; at: number } | null = null
+let agentsFailedAt: number | null = null
 
 const messageOf = (err: unknown) => String((err as { message?: unknown } | null)?.message ?? err)
 const isMissing = (err: unknown) => (err as { code?: unknown } | null)?.code === 'ENOENT' || /ENOENT|no such file/i.test(messageOf(err))
@@ -34,9 +40,8 @@ const isMissing = (err: unknown) => (err as { code?: unknown } | null)?.code ===
 
 // A run dir's record: 'none' when there is no run.json (a dir still being made, or not a run),
 // 'bad' when it cannot be trusted. A failed read is never cached, so a repaired file is read again.
-async function loadRecord($: EngineInterface, home: string, name: string, now: number): Promise<Outcome | 'none'> {
+async function loadRecord($: EngineInterface, home: string, name: string): Promise<Outcome | 'none'> {
   const hit = cache.get(name)
-  if (hit && typeof hit.outcome === 'object' && isOldFinished(hit.outcome.rec, now)) return hit.outcome
   const path = `${home}/${name}/run.json`
   let st
   try { st = await $.fs.stat(path) } catch (err) {
@@ -78,11 +83,25 @@ async function readBoard($: EngineInterface, now: number): Promise<Read> {
   const items: Item[] = []
   let bad = 0
   for (const name of names) {
-    const got = await loadRecord($, home, name, now)
+    const got = await loadRecord($, home, name)
     if (got === 'bad') bad += 1
     else if (got !== 'none') items.push({ dir: name, rec: got.rec })
   }
-  return { board: buildBoard({ items, bad, now, home: shown, thisPane, readAt: now }) }
+  const agents = await readAgents($, now)
+  return { board: buildBoard({ items, bad, now, home: shown, thisPane, readAt: now, agents }) }
+}
+
+// The agent status, one `agent list` per tick while the Desk pane is open (display only; the file pass has already run).
+// A failed read adds nothing: the last good map stays for AGENT_HOLD_MS, and no new read is made for as long.
+async function readAgents($: EngineInterface, now: number): Promise<Map<string, string> | null> {
+  if (!(await isOpen($))) { agentsGood = null; return null }
+  if (agentsFailedAt === null || now - agentsFailedAt > AGENT_HOLD_MS) {
+    const ran = await runHerdr($, [await herdrPath($), 'agent', 'list'], AGENT_TIMEOUT_MS)
+    const map = 'r' in ran && ran.r.exitCode === 0 && !ran.r.isStdoutTruncated ? parseAgentList(ran.r.stdout) : null
+    if (map) { agentsGood = { map, at: now }; agentsFailedAt = null } else agentsFailedAt = now
+  }
+  if (agentsGood && now - agentsGood.at > AGENT_HOLD_MS) agentsGood = null
+  return agentsGood?.map ?? null
 }
 
 // Writes `$.state` only when the view's JSON text changed; `readAt` moves with a change, not with a tick.
@@ -155,15 +174,15 @@ function herdrPath($: EngineInterface): Promise<string> {
   return (herdrBin ??= resolveHerdr($))
 }
 
-type Ran = { r: { exitCode: number; stdout: string; stderr: string } } | { isTimeout: boolean }
+type Ran = { r: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated?: boolean } } | { isTimeout: boolean }
 
 // A rejection at or after the timeout is a hung herdr; an earlier one means the command could not start.
-async function runHerdr($: EngineInterface, argv: string[]): Promise<Ran> {
+async function runHerdr($: EngineInterface, argv: string[], timeoutMs = PRESS_TIMEOUT_MS): Promise<Ran> {
   const t0 = await $.clock.now()
   try {
-    return { r: await $.process.run(argv, { timeoutMs: PRESS_TIMEOUT_MS }) }
+    return { r: await $.process.run(argv, { timeoutMs }) }
   } catch {
-    return { isTimeout: (await $.clock.now()) - t0 >= PRESS_TIMEOUT_MS }
+    return { isTimeout: (await $.clock.now()) - t0 >= timeoutMs }
   }
 }
 
