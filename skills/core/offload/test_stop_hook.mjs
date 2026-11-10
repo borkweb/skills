@@ -6,7 +6,7 @@
 // the architect must act on now, the stop is blocked once with the board as the
 // reason. Sessions without a ledger (builders, unrelated work) are untouched.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,7 @@ const envFor = (session) => {
   const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
   delete env.CLAUDE_CODE_SESSION_ID;
   delete env.HERDR_ENV;
+  delete env.BORK_RUN_DIR;
   if (session) env.CLAUDE_CODE_SESSION_ID = session;
   return env;
 };
@@ -115,3 +116,71 @@ test('a halted run owes nothing: the stop is never refused', () => {
   hoff(['unhalt', REPO]);
   assert.equal(JSON.parse(fire({ session_id: 'arch', cwd: REPO })).decision, 'block', 'unhalt restores the hook');
 });
+
+// --- run.json: a needs-me run is waiting on the user, not on this turn ---------
+//
+// A `do` run that asked the user a question sits at needs-me with its ledger
+// still holding a results-ready slice. Refusing the stop there would trap the
+// architect in a turn that cannot finish. The hook reads run.json directly
+// (it never imports runs.mjs) from BORK_RUN_DIR, else the ledger's run_dir.
+// The fixture carries every spec v2 section 1 field, so the hook is tested
+// against the frozen shape and not a minimal one.
+const runJson = (state, over = {}) => ({
+  schema: 1, id: 'run-1', run_dir: '/x', repo: null, goal: 'g', task: null, state, summary: '', delivery: null,
+  questions: [], architect: { harness: 'claude', session_id: null, frontend: null, tab: null, pane: null },
+  launched_by: 'self', revision: 1, signal_revision: 0, orchestrator_ack: 0,
+  created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T00:00:00Z', history: [], ...over,
+});
+function runDirWith(name, body) {
+  const d = join(BOX, `run-${name}`);
+  mkdirSync(d, { recursive: true });
+  if (body !== undefined) writeFileSync(join(d, 'run.json'), typeof body === 'string' ? body : JSON.stringify(body));
+  return d;
+}
+const fireRun = (input, runDir) => {
+  const env = envFor('arch');
+  if (runDir) env.BORK_RUN_DIR = runDir;
+  return execFileSync(NODE, [HOOK], { encoding: 'utf8', env, input: JSON.stringify(input) });
+};
+function owedRepo(name, ledgerRunDir) {
+  const REPO = repo(name);
+  hoff(['ledger', 'init', REPO, 'g', ...(ledgerRunDir ? ['--run-dir', ledgerRunDir] : [])]);
+  slice(REPO, '1', { state: 'dispatched', docStatus: 'results-ready', pid: 'none' });
+  return REPO;
+}
+
+test('a needs-me run.json in BORK_RUN_DIR allows the stop while a slice is results-ready', () => {
+  const REPO = owedRepo('needs-me-env');
+  const out = fireRun({ session_id: 'arch', cwd: REPO }, runDirWith('needs-me-env', runJson('needs-me')));
+  assert.equal(out, '');
+});
+
+test('with BORK_RUN_DIR unset the hook finds run.json through the ledger run_dir', () => {
+  const dir = runDirWith('needs-me-ledger', runJson('needs-me'));
+  const REPO = owedRepo('needs-me-ledger', dir);
+  assert.equal(fireRun({ session_id: 'arch', cwd: REPO }), '');
+});
+
+for (const state of ['running', 'blocked', 'done']) {
+  test(`a ${state} run.json still blocks the stop once`, () => {
+    const REPO = owedRepo(`run-${state}`);
+    const out = JSON.parse(fireRun({ session_id: 'arch', cwd: REPO }, runDirWith(`state-${state}`, runJson(state))));
+    assert.equal(out.decision, 'block');
+  });
+}
+
+for (const [name, body, schemaNote] of [
+  ['malformed', '{ not json', ''],
+  ['wrong shape: questions not a list', runJson('needs-me', { questions: 'nope' }), ''],
+  ['wrong shape: a field missing', (() => { const r = runJson('needs-me'); delete r.history; return r; })(), ''],
+  ['wrong shape: unknown state', runJson('waiting'), ''],
+  ['newer schema', runJson('needs-me', { schema: 2 }), ''],
+  ['no run.json at all', undefined, ''],
+]) {
+  test(`${name}: the hook falls back to the ledger decision, with no stack trace`, () => {
+    const REPO = owedRepo(`bad-${name.replace(/\W+/g, '-')}`);
+    const dir = runDirWith(`bad-${name.replace(/\W+/g, '-')}`, body);
+    const res = execFileSync(NODE, [HOOK], { encoding: 'utf8', env: { ...envFor('arch'), BORK_RUN_DIR: dir }, input: JSON.stringify({ session_id: 'arch', cwd: REPO }), stdio: ['pipe', 'pipe', 'pipe'] });
+    assert.equal(JSON.parse(res).decision, 'block');
+  });
+}

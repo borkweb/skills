@@ -11,7 +11,7 @@
 #
 # Usage:
 #   dispatch-slice.sh <repo_root> <worktree> <branch> <block_file>
-#                     [--id <slice-id>] [--title <title>] [--base <ref>]
+#                     [--id <slice-id>] [--title <title>] [--base <ref>] [--run-dir <abs>]
 #                     [--harness harness[:model[:effort]]] [--corrective [--verdict V]] [--unattended]
 #
 #   repo_root   the checkout the ledger belongs to ($PWD for the architect)
@@ -19,7 +19,16 @@
 #               HEAD) when absent, reused untouched when present (pre-warm it
 #               there: install dependencies, run the baseline suite)
 #   block_file  the filled builder brief (builder-template.md)
-#   --id        register/update this row in the session's ledger when one exists
+#   --id        register/update this row in the session's ledger. Without it the
+#               script picks the row: a fresh dispatch reuses the newest
+#               non-terminal row for this handoff, else takes max(integer ids)+1
+#               (non-integer ids ignored); a corrective takes the most recently
+#               updated row for this handoff, adding one from the doc status when
+#               a pre-ledger slice has none. A session with no ledger gets one
+#               (goal: --title, else the block's heading).
+#   --run-dir   absolute run directory to link to a ledger this call creates;
+#               BORK_RUN_DIR is the fallback when that directory exists. Never
+#               relinks a ledger that already exists. A relative path exits 2.
 #   --corrective  the slice already has a handoff and a verdict; put the new
 #               block under Next slice and send it into the warm builder's pane
 #               when that builder is still alive, else re-dispatch cold
@@ -27,7 +36,9 @@
 #               results-ready or dispatched is recorded as rejected with it
 #               first, so the run report can count and classify the rejection;
 #               a follow-up after acceptance is not a rejection. Required in
-#               that case; a review-only verdict needs "named C<n>" or "unnamed"
+#               that case; a review-only verdict needs "named C<n>" or "unnamed".
+#               In any other state --verdict exits 2 (naming the state) and
+#               sends nothing: drop it for a follow-up
 #   --past-cap  with --corrective: the user's ruling to continue a slice already
 #               rejected more than OFFLOAD_ROUND_CAP (default 3) times; recorded
 #               as the slice's ledger note. Without it the corrective is refused
@@ -35,6 +46,10 @@
 #               bridge + architect-wake.sh chain that resumes this architect
 #               session headlessly when the bridge fires, so the run continues
 #               after the interactive session is closed (Claude architects only)
+#
+# Known limitations: two calls without --id at the same time can pick the same
+# id (complete always passes --id), and a second run in the same session shares
+# the first run's ledger.
 #
 # Output: dispatch.sh's own lines, a worktree line, a slice line and finally
 #   NEXT (background): WFR_BOARD_CWD="<repo>" bash "<core>/complete/wait-for-ready.sh" "<doc>" builder
@@ -51,17 +66,18 @@ WAKE="$(cd "$SCRIPT_DIR/../complete" 2>/dev/null && pwd)/architect-wake.sh"
 
 usage() {
   printf '%s\n' \
-    'Usage: dispatch-slice.sh <repo_root> <worktree> <branch> <block_file> [--id ID] [--title T] [--base REF] [--harness SPEC] [--corrective [--verdict V] [--past-cap RULING]] [--unattended]' >&2
+    'Usage: dispatch-slice.sh <repo_root> <worktree> <branch> <block_file> [--id ID] [--title T] [--base REF] [--run-dir ABS] [--harness SPEC] [--corrective [--verdict V] [--past-cap RULING]] [--unattended]' >&2
 }
 die() { echo "dispatch-slice: $*" >&2; exit 1; }
 
 POS=()
-ID=""; TITLE=""; BASE=""; HARNESS=""; VERDICT=""; PAST_CAP=""; CORRECTIVE=0; UNATTENDED=0
+ID=""; TITLE=""; BASE=""; RUN_DIR=""; HARNESS=""; VERDICT=""; PAST_CAP=""; CORRECTIVE=0; UNATTENDED=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --id) ID="${2:-}"; shift 2 ;;
     --title) TITLE="${2:-}"; shift 2 ;;
     --base) BASE="${2:-}"; shift 2 ;;
+    --run-dir) RUN_DIR="${2:-}"; shift 2 ;;
     --harness) HARNESS="${2:-}"; shift 2 ;;
     --corrective) CORRECTIVE=1; shift ;;
     --verdict) VERDICT="${2:-}"; shift 2 ;;
@@ -74,6 +90,8 @@ while [ "$#" -gt 0 ]; do
 done
 [ "${#POS[@]}" -eq 4 ] || { usage; exit 2; }
 REPO="${POS[0]}"; WT="${POS[1]}"; BRANCH="${POS[2]}"; BLOCK="${POS[3]}"
+case "$RUN_DIR" in ''|/*) ;; *) echo "dispatch-slice: --run-dir needs an absolute path, got: $RUN_DIR" >&2; usage; exit 2 ;; esac
+[ -n "$RUN_DIR" ] || { [ -n "${BORK_RUN_DIR:-}" ] && [ -d "$BORK_RUN_DIR" ] && RUN_DIR="$BORK_RUN_DIR"; }
 
 [ -d "$REPO" ] || die "repo root not found: $REPO"
 [ -s "$BLOCK" ] || die "block file missing or empty: $BLOCK"
@@ -96,9 +114,49 @@ if [ "$UNATTENDED" -eq 1 ]; then
   [ -f "$WAKE" ] || die "architect-wake.sh not found at $WAKE"
 fi
 
-LEDGER=$(hoff ledger path "$REPO" 2>/dev/null || true)
 HAS_LEDGER=0
-[ -n "$LEDGER" ] && [ -f "$LEDGER" ] && HAS_LEDGER=1
+detect_ledger() {
+  local p
+  p=$(hoff ledger path "$REPO" 2>/dev/null || true)
+  [ -n "$p" ] && [ -f "$p" ] && HAS_LEDGER=1
+  return 0
+}
+detect_ledger
+
+# The ledger goal when the caller gave no --title: the block's first heading,
+# else its first non-empty line, else the branch.
+block_heading() {
+  local h
+  h=$(grep -m1 -E '^#+[[:space:]]+' "$BLOCK" | sed -E 's/^#+[[:space:]]+//')
+  [ -n "$h" ] || h=$(grep -m1 -v '^[[:space:]]*$' "$BLOCK")
+  printf '%s' "${h:-$BRANCH}"
+}
+
+# A session with no ledger gets one, so a one-slice run has a row to judge.
+# HAS_LEDGER is re-evaluated: every ledger_* helper below keys on it.
+ensure_ledger() {
+  [ "$HAS_LEDGER" -eq 1 ] && return 0
+  local -a f=("$REPO" "${TITLE:-$(block_heading)}")
+  [ -n "$RUN_DIR" ] && f+=(--run-dir "$RUN_DIR")
+  hoff ledger init "${f[@]}" >/dev/null || die "could not create the ledger for $REPO"
+  detect_ledger
+  [ "$HAS_LEDGER" -eq 1 ] || die "ledger for $REPO was not created"
+}
+
+# Pick a row id when the caller gave no --id. Modes: open = newest non-terminal
+# row whose handoff is this doc; recent = most recently updated row with this
+# doc, terminal or not; next = max(integer ids) + 1, non-integer ids ignored.
+pick_row() {
+  hoff ledger show "$REPO" 2>/dev/null |
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+      const [mode,doc]=process.argv.slice(1);
+      const rows=JSON.parse(s).slices||[];
+      if(mode==="next"){const n=rows.map(r=>r.id).filter(i=>/^\d+$/.test(i)).map(Number);process.stdout.write(String(Math.max(0,...n)+1));return}
+      const T=["accepted","rejected","merged","abandoned"];
+      const hit=rows.filter(r=>r.handoff===doc&&(mode==="recent"||!T.includes(r.state)))
+        .reduce((b,r)=>b&&String(b.updated)>String(r.updated)?b:r,null);
+      process.stdout.write(hit?hit.id:"")})' "$1" "$DOC" 2>/dev/null || true
+}
 
 ledger_has() { hoff ledger show "$REPO" 2>/dev/null | grep -q "\"id\": \"$1\""; }
 
@@ -151,12 +209,31 @@ round_cap() {
 }
 
 ledger_reject_results() {
-  case "$(ledger_state)" in
+  local st
+  st=$(ledger_state)
+  case "$st" in
     results-ready|dispatched)
       hoff ledger set "$REPO" "$ID" --state rejected --verdict "$VERDICT" >/dev/null ||
         die "--corrective from unjudged results needs a --verdict the ledger accepts (see the refusal above); nothing was sent"
       ;;
+    '') ;;
+    *)
+      [ -z "$VERDICT" ] || {
+        echo "dispatch-slice: --verdict records a rejection, but slice $ID is $st (only results-ready or dispatched can be rejected); drop --verdict for a follow-up. Nothing was sent." >&2
+        exit 2
+      }
+      ;;
   esac
+}
+
+# A corrective with no --id and no row for this handoff is a slice from before
+# the ledger covered one-slice runs: add its row from the doc's own status.
+backfill_row() {
+  local st
+  st=$(grep -m1 '^status:' "$DOC" | sed -E 's/^status:[[:space:]]*//')
+  ID=$(pick_row next)
+  hoff ledger add "$REPO" --id "$ID" --title "${TITLE:-$BRANCH}" --branch "$BRANCH" --slice-cwd "$WT" --handoff "$DOC" --state "${st:-specced}" >/dev/null ||
+    die "could not add a ledger row for $DOC (doc status ${st:-unknown}); nothing was sent"
 }
 
 sidecar() { grep -m1 "^$1=" "$DOC.pane" 2>/dev/null | cut -d= -f2- || true; }
@@ -225,6 +302,11 @@ FORCE_ENV=()
 if [ "$CORRECTIVE" -eq 1 ]; then
   DOC=$(hoff path "$WT" "$SID")
   [ -f "$DOC" ] || die "no handoff for $WT under session $SID; a corrective needs the slice's existing handoff (dispatch the slice first)"
+  if [ -z "$ID" ]; then
+    ensure_ledger
+    ID=$(pick_row recent)
+    [ -n "$ID" ] || backfill_row
+  fi
   # Record the rejection before touching the doc: the ledger refuses one with no
   # verdict (or a review-only one with no provenance tag), and a refused
   # corrective must leave the builder's brief as it was.
@@ -277,6 +359,11 @@ fi
 
 DOC=$(hoff init "$WT" "$SID" "${TITLE:-$BRANCH}") || die "could not create the handoff for $WT"
 hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
+ensure_ledger
+if [ -z "$ID" ]; then
+  ID=$(pick_row open)
+  [ -n "$ID" ] || ID=$(pick_row next)
+fi
 ledger_spec
 launch
 print_next

@@ -303,11 +303,191 @@ test('corrective when the builder is gone: re-dispatch cold and say so', () => {
   const doc = hoff(['path', WT, 'arch']);
   rmSync(`${doc}.builder`, { force: true }); // builder exited
   hoff(['status', doc, 'results-ready']);
-  const { stdout, log } = run([R, WT, 'feat/cold', FIX, '--corrective']);
+  // Declared change (spec v2 section 5): a one-slice run has a ledger row now, so
+  // the corrective carries --verdict and the rejection lands in the row's history.
+  const { stdout, log } = run([R, WT, 'feat/cold', FIX, '--corrective', '--verdict', 'g2 failed 3/5']);
   assert.match(stdout, /dispatch-slice: builder gone .*re-dispatching cold/);
   assert.match(log, /tab create/, 'a fresh builder was launched');
   assert.equal(status(doc), 'dispatched');
   assert.match(readFileSync(doc, 'utf8'), /blocker B1 token leak/);
+  const rejected = JSON.parse(hoff(['ledger', 'show', R])).slices[0].history.find((h) => h.state === 'rejected');
+  assert.equal(rejected?.verdict, 'g2 failed 3/5');
+});
+
+// --- one-slice runs: the ledger is created and the id is picked by the script ---
+
+const ledger = (R) => JSON.parse(hoff(['ledger', 'show', R]));
+const row = (R, id) => ledger(R).slices.find((s) => s.id === id);
+const ledgerExists = (R) => existsSync(hoff(['ledger', 'path', R]));
+
+test('one-slice dispatch with no ledger creates the ledger, the row and the run-dir link', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-one');
+  const runDir = join(BOX, 'run-one');
+  mkdirSync(runDir);
+  run([R, WT, 'feat/one', BLOCK, '--title', 'nav links'], { BORK_RUN_DIR: runDir });
+  const l = ledger(R);
+  assert.equal(l.goal, 'nav links', 'the goal is the --title');
+  assert.equal(l.run_dir, runDir, 'BORK_RUN_DIR is linked when the dir exists');
+  assert.equal(l.slices.length, 1);
+  const s = l.slices[0];
+  assert.equal(s.id, '1');
+  assert.equal(s.state, 'dispatched');
+  assert.equal(s.pane, 'w9:p7');
+  assert.equal(s.handoff, hoff(['path', WT, 'arch']));
+});
+
+test('the ledger goal is the block heading when there is no --title', () => {
+  const R = repo();
+  const headed = join(BOX, 'headed.md');
+  writeFileSync(headed, '\n# Builder brief, slice Z\n\nDo the thing.\n');
+  run([R, join(BOX, 'wt-heading'), 'feat/heading', headed]);
+  assert.equal(ledger(R).goal, 'Builder brief, slice Z');
+});
+
+test('--run-dir wins over BORK_RUN_DIR; a missing BORK_RUN_DIR is ignored', () => {
+  const win = repo();
+  const a = join(BOX, 'run-a'); const b = join(BOX, 'run-b');
+  mkdirSync(a); mkdirSync(b);
+  run([win, join(BOX, 'wt-rd1'), 'feat/rd1', BLOCK, '--title', 't', '--run-dir', a], { BORK_RUN_DIR: b });
+  assert.equal(ledger(win).run_dir, a);
+
+  const env = repo();
+  run([env, join(BOX, 'wt-rd2'), 'feat/rd2', BLOCK, '--title', 't'], { BORK_RUN_DIR: b });
+  assert.equal(ledger(env).run_dir, b, 'BORK_RUN_DIR alone is used when it exists');
+
+  const gone = repo();
+  const r = run([gone, join(BOX, 'wt-rd3'), 'feat/rd3', BLOCK, '--title', 't'], { BORK_RUN_DIR: join(BOX, 'no-such-run') });
+  assert.match(r.stdout, /^NEXT/m, 'the dispatch still succeeds');
+  assert.equal(ledger(gone).run_dir, '', 'a BORK_RUN_DIR that does not exist is not linked');
+});
+
+test('a relative --run-dir is refused with exit 2 before anything is created or sent', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-relrd');
+  const r = runFail([R, WT, 'feat/relrd', BLOCK, '--title', 't', '--run-dir', 'runs/x']);
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /--run-dir/);
+  assert.ok(!existsSync(WT), 'no worktree');
+  assert.ok(!ledgerExists(R), 'no ledger');
+  assert.doesNotMatch(r.log, /tab create/);
+});
+
+test('a reused worktree with a terminal row gets a new id', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-terminal');
+  hoff(['ledger', 'init', R, 'g']);
+  const doc = hoff(['path', WT, 'arch']); // the handoff path is fixed per worktree
+  for (const [id, state] of [['1', 'accepted'], ['1b', 'accepted'], ['3', 'abandoned']]) {
+    hoff(['ledger', 'add', R, '--id', id, '--title', id, '--handoff', doc, '--state', state]);
+  }
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/terminal', WT]);
+  const before = ledger(R).slices.map((s) => ({ id: s.id, state: s.state, history: s.history }));
+  run([R, WT, 'feat/terminal', BLOCK, '--title', 'again']);
+  const after = ledger(R).slices;
+  assert.equal(after.length, 4);
+  assert.equal(after[3].id, '4', 'max(integer ids) + 1, ignoring 1b');
+  assert.equal(after[3].state, 'dispatched');
+  assert.deepEqual(after.slice(0, 3).map((s) => ({ id: s.id, state: s.state, history: s.history })), before, 'terminal rows are untouched');
+});
+
+test('without --id a fresh dispatch reuses the newest non-terminal row for this handoff', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-reuserow');
+  hoff(['ledger', 'init', R, 'g']);
+  const doc = hoff(['path', WT, 'arch']);
+  hoff(['ledger', 'add', R, '--id', '1', '--title', 'old', '--handoff', doc, '--state', 'specced']);
+  hoff(['ledger', 'add', R, '--id', '2', '--title', 'new', '--handoff', doc, '--state', 'specced']);
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/reuserow', WT]);
+  run([R, WT, 'feat/reuserow', BLOCK]);
+  const l = ledger(R);
+  assert.equal(l.slices.length, 2, 'no row was added');
+  assert.equal(l.slices.find((s) => s.id === '2').state, 'dispatched');
+  assert.equal(l.slices.find((s) => s.id === '1').state, 'specced');
+});
+
+// --- one-slice correctives: --verdict without --id ---
+
+// Dispatch once (row 1, dispatched) and mark the builder's results in.
+function reported(branch) {
+  const R = repo();
+  const WT = join(BOX, `wt-${branch.replace('/', '-')}`);
+  run([R, WT, branch, BLOCK, '--title', 'one']);
+  const doc = hoff(['path', WT, 'arch']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  hoff(['status', doc, 'results-ready']);
+  hoff(['ledger', 'set', R, '1', '--state', 'results-ready']);
+  return { R, WT, doc };
+}
+
+test('a one-slice corrective records --verdict', () => {
+  const { R, WT } = reported('feat/c1');
+  run([R, WT, 'feat/c1', FIX, '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
+  const s = row(R, '1');
+  assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3)');
+});
+
+test('a corrective without --id applies to the most recently updated row with this handoff', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-recent');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/x', WT]);
+  hoff(['ledger', 'init', R, 'g']);
+  const doc = hoff(['init', WT, 'arch', 'x']);
+  hoff(['status', doc, 'results-ready']);
+  hoff(['ledger', 'add', R, '--id', '1', '--handoff', doc, '--state', 'results-ready']);
+  hoff(['ledger', 'add', R, '--id', '2', '--handoff', doc, '--state', 'results-ready']);
+  hoff(['ledger', 'set', R, '1', '--note', 'touched last']); // row 1 is the newest by updated
+  run([R, WT, 'feat/x', FIX, '--corrective', '--verdict', 'g2 failed 1/5']);
+  assert.equal(row(R, '1').history.at(-2).state, 'rejected');
+  assert.equal(row(R, '2').state, 'results-ready', 'the other row is untouched');
+});
+
+test('a corrective for a pre-ledger slice adds a row from the doc status, then records the verdict', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-backfill');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/backfill', WT]);
+  const doc = hoff(['init', WT, 'arch', 'old slice']);
+  hoff(['status', doc, 'results-ready']);
+  assert.ok(!ledgerExists(R), 'no ledger yet');
+  run([R, WT, 'feat/backfill', FIX, '--corrective', '--verdict', 'g3 failed 2/4']);
+  const s = row(R, '1');
+  assert.equal(s.handoff, doc);
+  assert.deepEqual(s.history.map((h) => h.state), ['results-ready', 'rejected', 'dispatched']);
+  assert.equal(s.history[1].verdict, 'g3 failed 2/4');
+});
+
+test('an unrecordable verdict exits non-zero and sends nothing', () => {
+  const { R, WT, doc } = reported('feat/c2');
+  const before = hoff(['section', 'get', doc, 'Next slice']);
+  const r = runFail([R, WT, 'feat/c2', FIX, '--corrective', '--verdict', 'review = DO NOT LAND: race']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /provenance tag/);
+  assert.doesNotMatch(r.log, /pane run|tab create/);
+  assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
+  assert.equal(row(R, '1').state, 'results-ready');
+});
+
+for (const state of ['accepted', 'returned', 'rejected', 'specced', 'blocked', 'merged', 'abandoned']) {
+  test(`--verdict on ${state === 'accepted' ? 'an accepted' : `a ${state}`} row exits 2 and sends nothing`, () => {
+    const { R, WT, doc } = reported(`feat/v-${state}`);
+    // `rejected` needs a verdict of its own to be set; the others take no verdict.
+    hoff(['ledger', 'set', R, '1', '--state', state, ...(state === 'rejected' ? ['--verdict', 'g1 failed'] : [])]);
+    const before = hoff(['section', 'get', doc, 'Next slice']);
+    const r = runFail([R, WT, `feat/v-${state}`, FIX, '--corrective', '--verdict', 'g2 failed 3/5']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, new RegExp(`\\b${state}\\b`));
+    assert.doesNotMatch(r.log, /pane run|tab create/);
+    assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
+    assert.equal(row(R, '1').state, state);
+  });
+}
+
+test('the usage line and header document --run-dir and the one-call-without---id limit', () => {
+  const r = runFail([]);
+  assert.match(r.stderr, /--run-dir/);
+  const src = readFileSync(SLICE, 'utf8');
+  assert.match(src, /without --id/);
 });
 
 test('corrective without a prior handoff is refused', () => {
