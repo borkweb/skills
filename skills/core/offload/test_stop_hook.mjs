@@ -174,6 +174,8 @@ for (const [name, body, schemaNote] of [
   ['wrong shape: questions not a list', runJson('needs-me', { questions: 'nope' }), ''],
   ['wrong shape: a field missing', (() => { const r = runJson('needs-me'); delete r.history; return r; })(), ''],
   ['wrong shape: unknown state', runJson('waiting'), ''],
+  ...['repo', 'goal', 'summary', 'delivery', 'created_at', 'updated_at'].map((k) => [
+    `wrong shape: ${k} missing`, (() => { const r = runJson('needs-me'); delete r[k]; return r; })(), '']),
   ['newer schema', runJson('needs-me', { schema: 2 }), ''],
   ['no run.json at all', undefined, ''],
 ]) {

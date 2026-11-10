@@ -37,8 +37,9 @@
 #               first, so the run report can count and classify the rejection;
 #               a follow-up after acceptance is not a rejection. Required in
 #               that case; a review-only verdict needs "named C<n>" or "unnamed".
-#               In any other state --verdict exits 2 (naming the state) and
-#               sends nothing: drop it for a follow-up
+#               On a row already rejected the verdict is kept as a ledger note
+#               (no second rejection). In any other state --verdict exits 2
+#               (naming the state) and sends nothing: drop it for a follow-up
 #   --past-cap  with --corrective: the user's ruling to continue a slice already
 #               rejected more than OFFLOAD_ROUND_CAP (default 3) times; recorded
 #               as the slice's ledger note. Without it the corrective is refused
@@ -70,18 +71,22 @@ usage() {
 }
 die() { echo "dispatch-slice: $*" >&2; exit 1; }
 
+# A value flag as the last argument has nothing to shift: `shift 2` would fail
+# without shifting and the loop below would never end.
+need_value() { [ "$#" -ge 2 ] || { echo "dispatch-slice: $1 needs a value" >&2; usage; exit 2; }; }
+
 POS=()
 ID=""; TITLE=""; BASE=""; RUN_DIR=""; HARNESS=""; VERDICT=""; PAST_CAP=""; CORRECTIVE=0; UNATTENDED=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --id) ID="${2:-}"; shift 2 ;;
-    --title) TITLE="${2:-}"; shift 2 ;;
-    --base) BASE="${2:-}"; shift 2 ;;
-    --run-dir) RUN_DIR="${2:-}"; shift 2 ;;
-    --harness) HARNESS="${2:-}"; shift 2 ;;
+    --id) need_value "$@"; ID="$2"; shift 2 ;;
+    --title) need_value "$@"; TITLE="$2"; shift 2 ;;
+    --base) need_value "$@"; BASE="$2"; shift 2 ;;
+    --run-dir) need_value "$@"; RUN_DIR="$2"; shift 2 ;;
+    --harness) need_value "$@"; HARNESS="$2"; shift 2 ;;
     --corrective) CORRECTIVE=1; shift ;;
-    --verdict) VERDICT="${2:-}"; shift 2 ;;
-    --past-cap) PAST_CAP="${2:-}"; shift 2 ;;
+    --verdict) need_value "$@"; VERDICT="$2"; shift 2 ;;
+    --past-cap) need_value "$@"; PAST_CAP="$2"; shift 2 ;;
     --unattended) UNATTENDED=1; shift ;;
     -h|--help) usage; exit 2 ;;
     -*) echo "dispatch-slice: unknown flag $1" >&2; usage; exit 2 ;;
@@ -91,7 +96,13 @@ done
 [ "${#POS[@]}" -eq 4 ] || { usage; exit 2; }
 REPO="${POS[0]}"; WT="${POS[1]}"; BRANCH="${POS[2]}"; BLOCK="${POS[3]}"
 case "$RUN_DIR" in ''|/*) ;; *) echo "dispatch-slice: --run-dir needs an absolute path, got: $RUN_DIR" >&2; usage; exit 2 ;; esac
-[ -n "$RUN_DIR" ] || { [ -n "${BORK_RUN_DIR:-}" ] && [ -d "$BORK_RUN_DIR" ] && RUN_DIR="$BORK_RUN_DIR"; }
+# BORK_RUN_DIR is the fallback only while it names a live run: an existing dir
+# whose run.json (when there is one) is not done or failed. --run-dir is trusted.
+env_run_dir_live() {
+  [ -n "${BORK_RUN_DIR:-}" ] && [ -d "$BORK_RUN_DIR" ] || return 1
+  node -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1]+"/run.json","utf8")).state;process.exit(s==="done"||s==="failed"?1:0)}catch{}' "$BORK_RUN_DIR"
+}
+[ -n "$RUN_DIR" ] || { env_run_dir_live && RUN_DIR="$BORK_RUN_DIR"; }
 
 [ -d "$REPO" ] || die "repo root not found: $REPO"
 [ -s "$BLOCK" ] || die "block file missing or empty: $BLOCK"
@@ -216,22 +227,30 @@ ledger_reject_results() {
       hoff ledger set "$REPO" "$ID" --state rejected --verdict "$VERDICT" >/dev/null ||
         die "--corrective from unjudged results needs a --verdict the ledger accepts (see the refusal above); nothing was sent"
       ;;
+    rejected)
+      # Already judged (complete sets `rejected` before it sends the corrective,
+      # and a refused round-cap call has rejected the row): keep the verdict as a
+      # note, never a second rejection (decisions.md 10).
+      [ -z "$VERDICT" ] || hoff ledger set "$REPO" "$ID" --note "corrective verdict: $VERDICT" >/dev/null ||
+        die "could not record the verdict note on slice $ID; nothing was sent"
+      ;;
     '') ;;
     *)
       [ -z "$VERDICT" ] || {
-        echo "dispatch-slice: --verdict records a rejection, but slice $ID is $st (only results-ready or dispatched can be rejected); drop --verdict for a follow-up. Nothing was sent." >&2
+        echo "dispatch-slice: --verdict records a rejection, but slice $ID is $st (only results-ready, dispatched or rejected take a verdict); drop --verdict for a follow-up. Nothing was sent." >&2
         exit 2
       }
       ;;
   esac
 }
 
-# A corrective with no --id and no row for this handoff is a slice from before
-# the ledger covered one-slice runs: add its row from the doc's own status.
+# A corrective with no row for this handoff (no ledger yet, or no --id and no
+# match) is a slice from before the ledger covered one-slice runs: add its row,
+# under --id when given, from the doc's own status.
 backfill_row() {
   local st
   st=$(grep -m1 '^status:' "$DOC" | sed -E 's/^status:[[:space:]]*//')
-  ID=$(pick_row next)
+  [ -n "$ID" ] || ID=$(pick_row next)
   hoff ledger add "$REPO" --id "$ID" --title "${TITLE:-$BRANCH}" --branch "$BRANCH" --slice-cwd "$WT" --handoff "$DOC" --state "${st:-specced}" >/dev/null ||
     die "could not add a ledger row for $DOC (doc status ${st:-unknown}); nothing was sent"
 }
@@ -302,8 +321,12 @@ FORCE_ENV=()
 if [ "$CORRECTIVE" -eq 1 ]; then
   DOC=$(hoff path "$WT" "$SID")
   [ -f "$DOC" ] || die "no handoff for $WT under session $SID; a corrective needs the slice's existing handoff (dispatch the slice first)"
-  if [ -z "$ID" ]; then
+  # No ledger (a slice from before one-slice runs had one): open it and add the
+  # row, so a --verdict is recorded and never dropped, with or without --id.
+  if [ "$HAS_LEDGER" -ne 1 ]; then
     ensure_ledger
+    backfill_row
+  elif [ -z "$ID" ]; then
     ID=$(pick_row recent)
     [ -n "$ID" ] || backfill_row
   fi

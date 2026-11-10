@@ -8,7 +8,7 @@
 // command that still has to run in the architect's background. Correctives
 // reuse the warm builder when it is still at its prompt instead of booting a
 // fresh one.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -59,8 +59,10 @@ writeFileSync(BLOCK, 'Execute the nav slice in the worktree.\nAcceptance: 3 crit
 const FIX = join(BOX, 'fix.md');
 writeFileSync(FIX, 'Corrective: blocker B1 token leak; blocker B2 missing test.\n');
 
+// Hermetic: a BORK_RUN_DIR from the architect that runs these tests must not leak in.
+const ambientEnv = () => { const { BORK_RUN_DIR: _drop, ...rest } = process.env; return rest; };
 const env = (extra = {}) => ({
-  ...process.env,
+  ...ambientEnv(),
   AGENT_HANDOFFS_DIR: BOX, CLAUDE_CODE_SESSION_ID: 'arch', BORKWEB_SKILLS_CONFIG: CONFIG,
   HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '', PATH: TEST_PATH, ...extra,
 });
@@ -367,7 +369,7 @@ test('a relative --run-dir is refused with exit 2 before anything is created or 
   const WT = join(BOX, 'wt-relrd');
   const r = runFail([R, WT, 'feat/relrd', BLOCK, '--title', 't', '--run-dir', 'runs/x']);
   assert.equal(r.status, 2);
-  assert.match(r.stderr, /--run-dir/);
+  assert.match(r.stderr, /needs an absolute path/);
   assert.ok(!existsSync(WT), 'no worktree');
   assert.ok(!ledgerExists(R), 'no ledger');
   assert.doesNotMatch(r.log, /tab create/);
@@ -468,20 +470,124 @@ test('an unrecordable verdict exits non-zero and sends nothing', () => {
   assert.equal(row(R, '1').state, 'results-ready');
 });
 
-for (const state of ['accepted', 'returned', 'rejected', 'specced', 'blocked', 'merged', 'abandoned']) {
-  test(`--verdict on ${state === 'accepted' ? 'an accepted' : `a ${state}`} row exits 2 and sends nothing`, () => {
-    const { R, WT, doc } = reported(`feat/v-${state}`);
-    // `rejected` needs a verdict of its own to be set; the others take no verdict.
-    hoff(['ledger', 'set', R, '1', '--state', state, ...(state === 'rejected' ? ['--verdict', 'g1 failed'] : [])]);
-    const before = hoff(['section', 'get', doc, 'Next slice']);
-    const r = runFail([R, WT, `feat/v-${state}`, FIX, '--corrective', '--verdict', 'g2 failed 3/5']);
-    assert.equal(r.status, 2);
-    assert.match(r.stderr, new RegExp(`\\b${state}\\b`));
-    assert.doesNotMatch(r.log, /pane run|tab create/);
-    assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
-    assert.equal(row(R, '1').state, state);
+// Declared change (decisions.md 10): `rejected` left this table. A verdict on an
+// already rejected row is recorded as a note, not refused (see below). The other
+// states exit 2 with or without --id.
+for (const state of ['accepted', 'returned', 'specced', 'blocked', 'merged', 'abandoned']) {
+  for (const idArgs of [[], ['--id', '1']]) {
+    test(`--verdict on ${state === 'accepted' ? 'an accepted' : `a ${state}`} row exits 2 and sends nothing${idArgs.length ? ' (with --id)' : ''}`, () => {
+      const { R, WT, doc } = reported(`feat/v-${state}${idArgs.length ? '-id' : ''}`);
+      hoff(['ledger', 'set', R, '1', '--state', state]);
+      const before = hoff(['section', 'get', doc, 'Next slice']);
+      const r = runFail([R, WT, `feat/v-${state}${idArgs.length ? '-id' : ''}`, FIX, '--corrective', ...idArgs, '--verdict', 'g2 failed 3/5']);
+      assert.equal(r.status, 2);
+      assert.match(r.stderr, new RegExp(`\\b${state}\\b`));
+      assert.doesNotMatch(r.log, /pane run|tab create/);
+      assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
+      assert.equal(row(R, '1').state, state);
+    });
+  }
+}
+
+// --- an already rejected row (decisions.md 10) ---
+//
+// complete's documented sequence sets `rejected` first and then sends the
+// corrective with --verdict; the --past-cap retry repeats the same command on a
+// row the refused first call already rejected. Both must go through, with the
+// verdict kept as a note and no second rejection.
+const rejectedRow = (branch, idArgs) => {
+  const R = repo();
+  const WT = join(BOX, `wt-${branch.replace('/', '-')}`);
+  hoff(['ledger', 'init', R, 'g']);
+  run([R, WT, branch, BLOCK, '--title', 'rj', ...idArgs]);
+  const doc = hoff(['path', WT, 'arch']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  hoff(['status', doc, 'results-ready']);
+  const id = idArgs[1] ?? '1';
+  hoff(['ledger', 'set', R, id, '--state', 'rejected', '--verdict', 'g1 failed 2/5']);
+  return { R, WT, id };
+};
+for (const idArgs of [['--id', '2'], []]) {
+  test(`--verdict on a rejected row is kept as a note and sends, ${idArgs.length ? 'with' : 'without'} --id`, () => {
+    const branch = `feat/rj${idArgs.length ? '-id' : ''}`;
+    const { R, WT, id } = rejectedRow(branch, idArgs);
+    const { log } = run([R, WT, branch, FIX, '--corrective', ...idArgs, '--verdict', 'g2 failed again 3/5']);
+    assert.match(log, /^herdr pane run w9:p7 .*Next slice/m, 'the corrective was sent');
+    const s = row(R, id);
+    assert.equal(s.history.filter((h) => h.state === 'rejected').length, 1, 'no second rejection');
+    assert.match(s.note, /g2 failed again 3\/5/, 'the verdict is kept as the note');
+    assert.equal(s.state, 'dispatched');
   });
 }
+
+test('a round-cap refusal re-run with the same --verdict plus --past-cap succeeds', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-capretry');
+  hoff(['ledger', 'init', R, 'g']);
+  run([R, WT, 'feat/capretry', BLOCK, '--id', '6', '--title', 'cap']);
+  for (let i = 1; i <= 3; i++) {
+    hoff(['ledger', 'set', R, '6', '--state', 'results-ready']);
+    run([R, WT, 'feat/capretry', FIX, '--id', '6', '--corrective', '--verdict', `g${i} failed`]);
+  }
+  hoff(['ledger', 'set', R, '6', '--state', 'results-ready']);
+  const args = [R, WT, 'feat/capretry', FIX, '--id', '6', '--corrective', '--verdict', 'g4 failed'];
+  const refused = runFail(args);
+  assert.match(refused.stderr, /rejected 4 times \(cap 3\)/);
+  assert.equal(row(R, '6').state, 'rejected', 'the refused call already recorded the rejection');
+  run([...args, '--past-cap', 'user: one more round']);
+  const s = row(R, '6');
+  assert.equal(s.state, 'dispatched');
+  assert.equal(s.history.filter((h) => h.state === 'rejected').length, 4, 'the retry adds no fifth rejection');
+});
+
+// --- argument parsing, ledger-less correctives and BORK_RUN_DIR hygiene ---
+
+for (const flag of ['--id', '--title', '--base', '--harness', '--run-dir', '--verdict', '--past-cap']) {
+  test(`${flag} as the last argument exits 2 with a usage line instead of looping`, () => {
+    const r = spawnSync('bash', [SLICE, join(BOX, 'r'), join(BOX, 'w'), 'b', BLOCK, flag], { encoding: 'utf8', env: env(), timeout: 10000 });
+    assert.equal(r.status, 2, `status ${r.status} signal ${r.signal}`);
+    assert.match(r.stderr, new RegExp(`${flag} needs a value`));
+    assert.match(r.stderr, /Usage: dispatch-slice\.sh/);
+  });
+}
+
+test('a corrective with --id and no session ledger opens one and records the verdict', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-idnoledger');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/idnoledger', WT]);
+  const doc = hoff(['init', WT, 'arch', 'old slice']);
+  hoff(['status', doc, 'results-ready']);
+  assert.ok(!ledgerExists(R), 'no ledger yet');
+  run([R, WT, 'feat/idnoledger', FIX, '--corrective', '--id', '5', '--verdict', 'g3 failed 2/4']);
+  const s = row(R, '5');
+  assert.deepEqual(s.history.map((h) => h.state), ['results-ready', 'rejected', 'dispatched']);
+  assert.equal(s.history[1].verdict, 'g3 failed 2/4', 'the verdict was recorded, not dropped');
+});
+
+test('a BORK_RUN_DIR whose run.json is done or failed is not linked; a running one is', () => {
+  const link = (state) => {
+    const d = join(BOX, `run-${state}`);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'run.json'), JSON.stringify({ schema: 1, state }));
+    const R = repo();
+    run([R, join(BOX, `wt-rd-${state}`), `feat/rd-${state}`, BLOCK, '--title', 't'], { BORK_RUN_DIR: d });
+    return [ledger(R).run_dir, d];
+  };
+  for (const state of ['done', 'failed']) assert.equal(link(state)[0], '', `${state} run is skipped`);
+  const [linked, dir] = link('running');
+  assert.equal(linked, dir);
+});
+
+test('the dispatch tests ignore an ambient BORK_RUN_DIR', () => {
+  const d = join(BOX, 'run-ambient');
+  mkdirSync(d, { recursive: true });
+  process.env.BORK_RUN_DIR = d;
+  try {
+    const R = repo();
+    run([R, join(BOX, 'wt-ambient'), 'feat/ambient', BLOCK, '--title', 't']);
+    assert.equal(ledger(R).run_dir, '');
+  } finally { delete process.env.BORK_RUN_DIR; }
+});
 
 test('the usage line and header document --run-dir and the one-call-without---id limit', () => {
   const r = runFail([]);

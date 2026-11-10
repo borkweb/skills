@@ -73,13 +73,14 @@ Every spec review and every acceptance review is written to the run directory,
 never only to a temp path or the scratchpad: `spec-review-<slice>.md` and
 `review-<slice>-r<round>.md` (round 1 is the first judgment; each corrective adds
 one). Use the run directory `do` or `complete` created. When `offload` runs on its
-own, create one with `runs.mjs init` (`skills/core/orchestrate/runs.mjs`, found
+own, create one with `runs.mjs init --repo "$PWD" --goal "<goal>"` (`skills/core/orchestrate/runs.mjs`, found
 beside the loaded `orchestrate` skill): it makes
 `~/.agent-handoffs/runs/<YYYY-MM-DD>-<slug>-<4 random chars>/` (mode 700) and
 writes its `run.json`, so a standalone offload run is a recorded run too. Record
-the path under *Decisions + why*; `dispatch-slice.sh` links it to the ledger it
-creates (via `BORK_RUN_DIR` or `--run-dir`), and `ledger init --run-dir` does the
-same when you open the ledger yourself. These files are what the dreaming
+the path under *Decisions + why* and pass `--run-dir <run dir>` on the first
+`dispatch-slice.sh` call, which links it to the ledger it creates (`ledger init
+--run-dir` does the same when you open the ledger yourself). Without `--run-dir`
+it falls back to `BORK_RUN_DIR`, skipping one whose run is `done` or `failed`. These files are what the dreaming
 pass ([dreaming.md](../do/references/dreaming.md)) reads across runs.
 
 Builders, reviewers and the architect do not curate memory during a run: no
@@ -239,7 +240,8 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
 2. Run, in one call per slice (several slices may share one Bash call):
-   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>] [--run-dir <abs>]`.
+   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>] [--run-dir <abs>]`;
+   pass `--run-dir <run dir>` on the first call of a run.
    It resolves your session key, creates the worktree from `--base` (default
    HEAD) or reuses one you pre-warmed, inits the slice handoff, writes *Next
    slice*, opens the ledger when the session has none (goal: `--title`, else the
@@ -277,8 +279,12 @@ block (the confirmed blockers, the same owned files and gates) and run
 verdict lands on the ledger's rejected entry, so `ledger report` can count it as
 review-only or gate-failed. A one-slice run needs no `--id`: the corrective
 applies to the row for this handoff. From an unjudged state (`results-ready` or
-`dispatched`) it needs `--verdict`; in any other state `--verdict` exits 2, names
-the state and sends nothing, so drop it for a follow-up. Run one call without
+`dispatched`) it needs `--verdict`, which records the rejection. On a row you
+already set `rejected` (the sequence above, or a `--past-cap` retry after a
+round-cap refusal) the same `--verdict` is kept as a ledger note and no second
+rejection is recorded. In any other state (`accepted`, `merged`, `abandoned`,
+`returned`, `blocked`, `specced`) `--verdict` exits 2, names the state and sends
+nothing, so drop it for a follow-up. Run one call without
 `--id` at a time. When the builder that just
 reported is still at its prompt, the brief goes into its pane and it continues
 with the code already in context: no boot, no re-reading the plan. When the

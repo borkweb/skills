@@ -15,7 +15,11 @@ import { join } from 'node:path';
 import { ledgerFor, renderBoard } from './ledger.mjs';
 
 const RUN_STATES = ['running', 'needs-me', 'blocked', 'done', 'failed'];
-const RUN_FIELDS = ['id', 'run_dir', 'state', 'questions', 'revision', 'signal_revision', 'orchestrator_ack', 'launched_by', 'architect', 'history'];
+// Every spec v2 section 1 field (`task` is optional); a record missing one is invalid.
+const RUN_FIELDS = [
+  'id', 'run_dir', 'repo', 'goal', 'state', 'summary', 'delivery', 'questions', 'architect', 'launched_by',
+  'revision', 'signal_revision', 'orchestrator_ack', 'created_at', 'updated_at', 'history',
+];
 function runNeedsMe(dir) {
   if (!dir) return false;
   try {
