@@ -51,20 +51,21 @@ The external bridge supports native Claude and Codex architect identities. `hand
   `$OFFLOAD_HANDOFF` and the architect's id as `$OFFLOAD_SESSION_ID`, while each builder obtains its own native runtime identity. Status and section writes honor the carried id for that one doc only;
   any other doc is still checked against the caller's own session.
 
-## The ledger (when a run has more than one slice)
+## The ledger
 
 A handoff is ONE builder's mailbox. It cannot say what the other slices are
 doing, and it has no terminal state, so a slice whose builder finished and
-exited keeps reading as in-flight. When `/complete` is driving, it owns a
-`ledger` (`handoff.mjs ledger …`) that records every slice and its state, and
-`handoff.mjs board "$PWD"` reconciles that ledger against each doc, builder pid
-and bridge. If a ledger exists for this session, keep it current: set
-`--state dispatched` when you dispatch, and the terminal state
+exited keeps reading as in-flight. Every run has a
+`ledger` (`handoff.mjs ledger …`) that records every slice and its state: when
+`/complete` is driving it opens the ledger, and a one-slice run gets one from
+`dispatch-slice.sh` on its first dispatch. `handoff.mjs board "$PWD"`
+reconciles the ledger against each doc, builder pid and bridge. Keep it
+current: set `--state dispatched` when you dispatch, and the terminal state
 (`accepted`/`rejected`/`merged`/`abandoned`) in the same turn you decide it.
 The Stop hook refuses a turn end once while the ledger still owes a judgment,
-a ruling or an owner. **Builders never write the ledger.**
-
-A single-slice run needs no ledger: the handoff is the whole state.
+a ruling or an owner, and stays quiet while the run's `run.json` is `needs-me`
+(the run waits on the user, not on this turn). **Builders never write the
+ledger.**
 
 ## Run directory
 
@@ -72,9 +73,14 @@ Every spec review and every acceptance review is written to the run directory,
 never only to a temp path or the scratchpad: `spec-review-<slice>.md` and
 `review-<slice>-r<round>.md` (round 1 is the first judgment; each corrective adds
 one). Use the run directory `do` or `complete` created. When `offload` runs on its
-own, create one the same way (`~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4
-random chars>/`, mode 700) and record its path under *Decisions + why*; pass it to
-`ledger init --run-dir` when a ledger exists. These files are what the dreaming
+own, create one with `runs.mjs init --repo "$PWD" --goal "<goal>"` (`skills/core/orchestrate/runs.mjs`, found
+beside the loaded `orchestrate` skill): it makes
+`~/.agent-handoffs/runs/<YYYY-MM-DD>-<slug>-<4 random chars>/` (mode 700) and
+writes its `run.json`, so a standalone offload run is a recorded run too. Record
+the path under *Decisions + why* and pass `--run-dir <run dir>` on the first
+`dispatch-slice.sh` call, which links it to the ledger it creates (`ledger init
+--run-dir` does the same when you open the ledger yourself). Without `--run-dir`
+it falls back to `BORK_RUN_DIR`, skipping one whose run is `done` or `failed`. These files are what the dreaming
 pass ([dreaming.md](../do/references/dreaming.md)) reads across runs.
 
 Builders, reviewers and the architect do not curate memory during a run: no
@@ -234,10 +240,14 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
 2. Run, in one call per slice (several slices may share one Bash call):
-   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>]`.
+   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>] [--run-dir <abs>]`;
+   pass `--run-dir <run dir>` on the first call of a run.
    It resolves your session key, creates the worktree from `--base` (default
    HEAD) or reuses one you pre-warmed, inits the slice handoff, writes *Next
-   slice*, adds or updates the ledger row, launches the builder through
+   slice*, opens the ledger when the session has none (goal: `--title`, else the
+   block's heading; linked to `--run-dir`, else `BORK_RUN_DIR` when that
+   directory exists), adds or updates the ledger row (without `--id` it reuses
+   the newest non-terminal row for this handoff, else takes the next integer id), launches the builder through
    `dispatch.sh` (which resolves the harness chain via harness.mjs and falls
    through on a hard failure; pass `--harness harness[:model[:effort]]` only when
    the user overrides the config), flips the handoff to `dispatched`, records the
@@ -267,7 +277,15 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 block (the confirmed blockers, the same owned files and gates) and run
 `dispatch-slice.sh … "<fix>.md" --id <n> --corrective --verdict "<why>"`. The
 verdict lands on the ledger's rejected entry, so `ledger report` can count it as
-review-only or gate-failed. When the builder that just
+review-only or gate-failed. A one-slice run needs no `--id`: the corrective
+applies to the row for this handoff. From an unjudged state (`results-ready` or
+`dispatched`) it needs `--verdict`, which records the rejection. On a row you
+already set `rejected` (the sequence above, or a `--past-cap` retry after a
+round-cap refusal) the same `--verdict` is kept as a ledger note and no second
+rejection is recorded. In any other state (`accepted`, `merged`, `abandoned`,
+`returned`, `blocked`, `specced`) `--verdict` exits 2, names the state and sends
+nothing, so drop it for a follow-up. Run one call without
+`--id` at a time. When the builder that just
 reported is still at its prompt, the brief goes into its pane and it continues
 with the code already in context: no boot, no re-reading the plan. When the
 builder is gone, the script says so and re-dispatches cold. Either way, run the

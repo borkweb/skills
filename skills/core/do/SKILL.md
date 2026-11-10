@@ -27,7 +27,7 @@ Before launching anything that writes code, size the work and pick the tier. Eac
 | Tier | When | Runs as |
 | --- | --- | --- |
 | **Local** | One file or one function, no new module, no contract change, gates run in under a minute | The host edits directly, or one subagent. **land**'s fixes on a Local change are local; on built work they go back to the builder as an `offload` corrective. |
-| **One slice** | One coherent feature that one builder can finish in one sitting, from a plan or spec, no files shared with other pending work | `offload` directly: one handoff, one builder, one independent review. No ledger and no final integration review; the slice review is the acceptance. |
+| **One slice** | One coherent feature that one builder can finish in one sitting, from a plan or spec, no files shared with other pending work | `offload` directly: one handoff, one builder, one independent review. The ledger holds the one row (`dispatch-slice.sh` creates it); no final integration review, since the slice review is the acceptance. |
 | **Fleet** | Two or more slices, or any slice whose files overlap another's, or the user said "workers", "delegate", "offload", "herdr" or "tabs" | `complete` (its external route, via `offload`): ledger, concurrent dispatch, per-slice review, final integration review. This is **ship**'s default when the plan has more than one slice. |
 
 A slice is one coherent feature, not one PR. Split only where files or contracts separate; a builder on a current model holds a multi-hour feature without losing the thread, and every extra slice costs a spec review, a dispatch, a review and a handoff.
@@ -52,9 +52,14 @@ Design questions inside the agreed scope go to `council` (quick mode unless the 
 
 Always ask the user about scope expansion, changes to frozen gates, missing authority, deletion, deployment, spending, or anything irreversible, even if council has a recommendation. Missing facts call for investigation, not a vote.
 
+Record every question for the user in the run first, with `runs.mjs ask <run> --question "<q>" --options '<json [{label, description}]>' --recommendation "<label>"`; `<run>` is the run dir, and `launched_by` in its `run.json` (`runs.mjs show <run> --json`) says who started the run.
+
+- `launched_by: orchestrator`: end the turn after `ask`. The coordinating session relays the question and its answer comes back as a pane line (`bork run <id>: answered Q<n>`). Continue on that line, or when the user answers in this tab; record an in-tab answer with `runs.mjs answer <run> Q<n> --answer "<text>" --by user --no-nudge`.
+- `launched_by: self`: also ask the user in the session, then record the answer the same way, with `--by user --no-nudge`.
+
 ## Run notes
 
-For **land**, **ship** and **review batch**, create the run directory at `~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4 random chars>/` with mode 700, never under a temp path, so spec reviews, reviewer reports and `decisions.md` outlive the session and later runs can be measured. Keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Write spec reviews and acceptance reviews there too, named as `offload`'s *Run directory* says, and pass the path to `ledger init --run-dir` when a ledger is opened. Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
+Every **land**, **ship** and **review batch** run has a run directory with a `run.json`, so spec reviews, reviewer reports and `decisions.md` outlive the session and later runs can be measured. Take the directory from `BORK_RUN_DIR` only when its `run.json` is not terminal (`done` or `failed` marks a finished run, never to be reused), else from the run directory named in the launch prompt, or in `notes.md` on resume. Otherwise create one with `runs.mjs init --repo "$PWD" --goal "<goal, verbatim>"` (no `--repo` for a review batch, which has no one checkout), which makes `~/.agent-handoffs/runs/<YYYY-MM-DD>-<slug>-<4 random chars>/` (mode 700, never under a temp path) and prints it on line 1; do not create the directory by hand. `runs.mjs` is `skills/core/orchestrate/runs.mjs`, found beside the loaded `orchestrate` skill's `SKILL.md`. Keep `notes.md` there: goal (verbatim), endpoint, authority, frozen gates with commands, a one-line-per-step log, and agent IDs. Write spec reviews and acceptance reviews there too, named as `offload`'s *Run directory* says, and pass the path as `--run-dir <run dir>` on the first `dispatch-slice.sh` call, which opens the ledger and links it (without it the ledger links no run, and `dispatch-slice.sh` skips a `BORK_RUN_DIR` whose run is `done` or `failed`). Report its path. On resume, read it first and check agent liveness before spawning replacements. Pass it to `handoff` when another session will continue.
 
 ## Concurrency
 
@@ -67,3 +72,10 @@ For **land**, **ship** and **review batch**, create the run directory at `~/.age
 ## Finish
 
 Stop at the endpoint or a circuit breaker. Report the verdict, fixes, gate results (pass/fail, count, command), open decisions, and a **delivery line**: uncommitted, committed `<sha>`, pushed, PR `<url>`. Write PR bodies and PR comments to the ASD-STE100 rules in [ste100.md](../writing-plans/ste100.md). Before reporting a delivery blocker, retry the failing command once and show its exact error and the command the user can run to clear it.
+
+Record the final state in the run with `runs.mjs set <run> --state <s> --summary "<line>" --delivery "<delivery line>"`, always passing `--delivery`:
+
+- `done` at the endpoint.
+- `blocked` at a circuit breaker or a delivery blocker the user must clear, with the reason as the summary.
+- `failed` when the run cannot continue.
+- `running` again when the user clears a blocker.

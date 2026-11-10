@@ -43,9 +43,11 @@ namespaced Codex identities. Never export a Codex id as a Claude session id.
 node "<…>/handoff.mjs" ledger init "$PWD" "<the goal, verbatim>" --run-dir "<run dir>"
 ```
 
-`<run dir>` is the run directory `do` created, or one you create the same way
-(`~/.agent-handoffs/runs/<YYYY-MM-DD>-<short-slug>-<4 random chars>/`, mode 700)
-when `complete` runs on its own. Spec reviews and acceptance reviews are written
+`<run dir>` is the run directory `do` created, or one you create with
+`runs.mjs init --repo "$PWD" --goal "<the goal, verbatim>"` (`skills/core/orchestrate/runs.mjs`,
+found beside the loaded `orchestrate` skill; it prints the new directory on line
+1) when `complete` runs on its own. A standalone `complete` run has a `run.json`
+there, like every `do` run. Spec reviews and acceptance reviews are written
 there (see `offload`'s *Run directory*), and the link lets the dreaming pass
 join each verdict to its full review.
 
@@ -276,6 +278,11 @@ however complete it feels.
    WITH CAUTION caveats), all from `board`; the branch name and the exact merge
    command. Add `handoff.mjs ledger report "$PWD"` so the human sees where the time
    went. Leave the handoffs and the ledger in place for follow-up; do not end them.
+   A standalone `complete` run also sets its final state in `run.json` with
+   `runs.mjs set <run> --state <s> --summary "<line>" --delivery "<delivery line>"`:
+   `done` here, `blocked` with the reason as summary when a circuit breaker or a
+   delivery blocker waits on the user, `failed` when the run cannot continue. When
+   `do` drives the run, `do`'s *Finish* sets it instead.
 
 3. **Merge, only if the goal explicitly authorized it (step 1).** Use the existing
    authorization without asking again; integrate via the repo's standard path (the
