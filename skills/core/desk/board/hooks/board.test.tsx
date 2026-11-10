@@ -85,12 +85,15 @@ async function boot($: Engine, on: On, w: World, start: { surface: Surface | nul
   })
   on('fs.list', async (_, e) => {
     w.list.push(e.path)
-    if (w.holdList) await w.holdList
     if (w.listFails) return { deny: w.listFails }
+    // The listing is the world as it stands now, even when this call is held and answered later.
     const entries = [
       ...Object.keys(w.dirs).map((name) => ({ name, kind: 'dir' as const, size: 0, mtimeMs: 0, isLink: false })),
       ...w.extra.map((x) => ({ name: x.name, kind: x.kind, size: 0, mtimeMs: 0, isLink: x.isLink ?? false })),
     ]
+    const hold = w.holdList
+    w.holdList = null
+    if (hold) await hold
     return { value: entries }
   })
   on('fs.stat', (_, e) => {
@@ -230,6 +233,14 @@ for (const surface of SURFACES) {
     all = (await snap($, surface)).all
     expect(all).not.toContain("Can't read")
     expect(all).toContain('skills · running')
+  })
+
+  test(`${surface}: the engine's own lead is dropped from a Can't read reason`, async ($, on) => {
+    await boot($, on, world({}, { listFails: `desk-board: $.fs.list(${RUNS}) failed: EACCES` }))
+    const { all } = await snap($, surface)
+    expect(all).toContain(`Can't read ~/.agent-handoffs/runs: EACCES`)
+    expect(all).not.toContain('desk-board:')
+    expect(all).not.toContain('failed:')
   })
 
   for (const [name, stored] of [['another shape tag', { value: { rows: 1 }, version: 3, shape: 'board-0' }], ['no shape tag', { value: { rows: 1 }, version: 3 }]] as const) {
@@ -567,6 +578,22 @@ test('a tick whose fs.list is pending blocks later periods; after 30 s a new tic
   await clock.settle()
 })
 
+test('the late result of an expired tick is discarded: the newer tick\u2019s view and state stay', async ($, on) => {
+  const w = world({ a: good('a') })
+  let release = () => {}
+  w.holdList = new Promise<void>((r) => { release = r })
+  const clock = await boot($, on, w)
+  // The held tick listed only run a. A run appears; 30 s later a newer tick lists both and publishes.
+  w.dirs.b = good('b', { repo: '/code/b' })
+  await clock.advance(35000)
+  expect((await snap($, 'terminal')).all).toContain('In motion · 2')
+  const writes = w.stateSets
+  release()
+  await clock.settle()
+  expect((await snap($, 'terminal')).all).toContain('In motion · 2')
+  expect(w.stateSets).toBe(writes)
+})
+
 test('session.start then two session.attach polls once per period', async ($, on) => {
   const w = world({ a: good('a') })
   const clock = await boot($, on, w)
@@ -685,6 +712,12 @@ test('the terminal band does not count this session’s own run, but the pane dr
   await boot($, on, w)
   expect((await bandSnap($, 'terminal')).yielded).toBe(true)
   expect((await snap($, 'terminal')).all).toContain('skills · needs-me · 1m · (this session)')
+})
+
+test('with HERDR_PANE_ID unset a run whose architect pane is null is not this session', async ($, on) => {
+  const w = world({ n: asking('n', { architect: { harness: 'claude', session_id: null, frontend: null, tab: null, pane: null } }) }, { env: { HERDR_PANE_ID: undefined } })
+  await boot($, on, w)
+  expect((await bandSnap($, 'terminal')).text).toContain('1 needs you')
 })
 
 test('with HERDR_PANE_ID unset no run is this session', async ($, on) => {

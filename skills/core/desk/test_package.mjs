@@ -1,6 +1,7 @@
 // test_package.mjs — structural checks for the skill, manifests, README and evals
 // (spec v2 section 6; criteria A4, A37-A39).
 import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -54,7 +55,9 @@ test('the board manifest names the plugin, its contract, bork as author and an e
   assert.equal(m.userConfig.terminalApp.type, 'string');
   assert.equal(m.userConfig.terminalApp.default, '');
   assert.deepEqual(JSON.parse(read(`${BOARD}/hooks/hooks.json`)), { modules: ['./register.tsx'] });
-  assert.ok(!existsSync(join(ROOT, BOARD, 'tsconfig.json')), 'the mod ships no tsconfig');
+  // A session that hot-reloads the folder lays a tsconfig.json beside the manifest; it must never be committed.
+  const tracked = spawnSync('git', ['ls-files', `${BOARD}/tsconfig.json`], { cwd: ROOT, encoding: 'utf8' });
+  if (tracked.status === 0) assert.equal(tracked.stdout.trim(), '', 'the mod ships no tsconfig');
 });
 
 test('the SKILL has a Board section: command, keyboard, install, development and terminalApp', () => {

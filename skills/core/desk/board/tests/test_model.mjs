@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   ageText, buildBoard, bandText, clean, fit, herdrMessage, homeDisplay, isDirName, isHerdrId, isOldFinished, isTerminalApp,
-  parseRecord, repoName, runsHome, toast, workspaceOf,
+  parseRecord, reasonOf, repoName, runsHome, toast, workspaceOf,
 } from '../hooks/model.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -268,6 +268,14 @@ test('this session is the run whose architect pane is HERDR_PANE_ID, and the ban
   assert.equal(board([rec('x', { state: 'needs-me', architect: {} })], { thisPane: '' }).needs, 1);
 });
 
+test('an empty HERDR_PANE_ID never matches an empty architect pane', () => {
+  const r = rec('x', { state: 'needs-me', architect: { frontend: null, tab: null, pane: '' } });
+  assert.equal(rowsOf(board([r], { thisPane: '' }))[0].isThis, false);
+  assert.equal(board([r], { thisPane: '' }).needs, 1);
+  const n = rec('y', { state: 'needs-me', architect: { frontend: null, tab: null, pane: null } });
+  assert.equal(board([n], { thisPane: null }).needs, 1);
+});
+
 test('band text: nothing at zero Needs you on the terminal; one needs you; two need you; desktop quiet with rows', () => {
   const b = (n, m) => ({ needs: n, motion: m, rows: n + m });
   assert.equal(bandText(b(0, 3), false), null);
@@ -359,4 +367,16 @@ test('toast texts match the spec', () => {
   assert.equal(toast.timeout('skills'), 'Could not switch to skills: herdr did not answer');
   assert.equal(toast.noWorkspace('skills', 'w66:t7'), 'Could not switch to skills: herdr gave no workspace for w66:t7');
   assert.equal(toast.cannot('w66:t7'), "Can't switch tabs from here: run herdr tab focus w66:t7");
+});
+
+// The engine's own lead on an fs rejection, as seen live with a chmod 000 runs home (architect L1).
+test('reasonOf drops the real engine lead and keeps the file system error', () => {
+  assert.equal(reasonOf('desk-board: $.fs.list(/Users/matt/.agent-handoffs/runs) failed: EACCES'), 'EACCES');
+  assert.equal(reasonOf('desk-board: $.fs.list(/tmp/a (b)/runs) failed: EACCES: permission denied\nsecond'), 'EACCES: permission denied');
+});
+
+test('reasonOf also drops the test kit lead and leaves other text alone', () => {
+  assert.equal(reasonOf('desk-board: $.fs.list: EACCES: permission denied, scandir'), 'EACCES: permission denied, scandir');
+  assert.equal(reasonOf('EACCES: permission denied'), 'EACCES: permission denied');
+  assert.equal(reasonOf('other: not an engine lead: EIO'), 'other: not an engine lead: EIO');
 });

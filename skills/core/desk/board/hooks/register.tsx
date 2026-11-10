@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { DeskBoard } from '../types'
 import {
-  bandText, buildBoard, clean, emptyText, firstLine, fit, footerText, herdrMessage, homeDisplay, isDirName, isHerdrId,
-  isOldFinished, isTerminalApp, labelOf, line1Of, MAX_RECORD_BYTES, parseRecord, runsHome, toast, workspaceOf,
+  bandText, buildBoard, clean, emptyText, fit, footerText, herdrMessage, homeDisplay, isDirName, isHerdrId,
+  isOldFinished, isTerminalApp, labelOf, line1Of, MAX_RECORD_BYTES, parseRecord, reasonOf, runsHome, toast, workspaceOf,
 } from './model.ts'
 import type { Item, Rec } from './model.ts'
 
@@ -26,8 +26,6 @@ let inflight: { at: number } | null = null
 let herdrBin: Promise<string> | null = null
 
 const messageOf = (err: unknown) => String((err as { message?: unknown } | null)?.message ?? err)
-// The engine may lead a rejection with `<plugin>: $.<noun>.<call>: `; the reason is what follows.
-const reasonOf = (err: unknown) => firstLine(messageOf(err).replace(/^[\w-]+: \$\.[\w.]+: /, ''))
 const isMissing = (err: unknown) => (err as { code?: unknown } | null)?.code === 'ENOENT' || /ENOENT|no such file/i.test(messageOf(err))
 
 // ---- reading the runs home -----------------------------------------------------------------------
@@ -69,7 +67,7 @@ async function readBoard($: EngineInterface, now: number): Promise<Read> {
   const shown = homeDisplay(home, userHome)
   let entries
   try { entries = await $.fs.list(home) } catch (err) {
-    if (!isMissing(err)) return { error: `Can't read ${shown}: ${reasonOf(err)}`, home: shown }
+    if (!isMissing(err)) return { error: `Can't read ${shown}: ${reasonOf(messageOf(err))}`, home: shown }
     cache.clear()
     return { board: buildBoard({ items: [], bad: 0, now, home: shown, thisPane, readAt: now }) }
   }

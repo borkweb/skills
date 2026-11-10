@@ -59,6 +59,11 @@ export function clean(text: unknown, cap = TEXT_CAP): string {
   const flat = text.slice(0, cap * 4).replace(/[\t\n\r]+/g, ' ').replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
   return Array.from(flat).slice(0, cap).join('')
 }
+// The first line of an engine error without the engine's own lead (plugin name, then the failed call).
+// Seen live: `desk-board: <dollar>.fs.list(<abs path>) failed: EACCES`; the test kit leads with
+// `desk-board: <dollar>.fs.list: ` instead (and wraps a denied reason in it). Both leads are removed, in that order.
+export const reasonOf = (message: string): string =>
+  firstLine(message.replace(/^[\w-]+: \$\.[\w.]+: /, '').replace(/^[\w-]+: \$\.fs\.\w+\([^\n]*\) failed: /, ''))
 export const firstLine = (text: unknown): string =>
   typeof text === 'string' ? clean(text.split(/[\r\n]+/).find((l) => l.trim() !== '') ?? '') : ''
 export const fit = (text: string, columns: number): string => {
