@@ -46,6 +46,31 @@ paths.each do |path|
 end
 errors << 'duplicate skill names' unless names.uniq == names
 
+# Size ratchet: a manifest skill's SKILL.md stays within SIZE_BUDGET bytes. A file on the allowlist may stay
+# over budget only while it never grows. Once it is within budget its entry must go; when it shrinks, lower it.
+SIZE_BUDGET = 20_000
+SIZE_ALLOWLIST = {
+  'skills/core/offload/SKILL.md' => 26_065,
+  'skills/core/pr-review/SKILL.md' => 42_383
+}.freeze
+notes = []
+skill_files = paths.map { |path| root.join(path, 'SKILL.md').relative_path_from(root).to_s }
+SIZE_ALLOWLIST.each_key { |rel| errors << "#{rel}: allowlist entry is not a manifest skill" unless skill_files.include?(rel) }
+skill_files.each do |rel|
+  next unless root.join(rel).file?
+  size = root.join(rel).size
+  recorded = SIZE_ALLOWLIST[rel]
+  if recorded.nil?
+    errors << "#{rel}: #{size} bytes exceeds the #{SIZE_BUDGET}-byte budget" if size > SIZE_BUDGET
+  elsif size <= SIZE_BUDGET
+    errors << "#{rel}: #{size} bytes is within the #{SIZE_BUDGET}-byte budget; remove from allowlist"
+  elsif size > recorded
+    errors << "#{rel}: grew to #{size} bytes; allowlisted at #{recorded}"
+  elsif size < recorded
+    notes << "note: #{rel} shrank to #{size} bytes; lower its allowlist entry from #{recorded}"
+  end
+end
+
 # Check links in entrypoints and transitively linked local references, not examples.
 pending = paths.map { |path| root.join(path, 'SKILL.md').cleanpath }
 seen = {}
@@ -71,9 +96,9 @@ end
 INVARIANTS = {
   'skills/gstack/review/SKILL.md' => ['Pre-Landing Review: N issues', '**SAFE TO LAND:**', '**LAND WITH CAUTION:**', '**DO NOT LAND:**', 'never infer commit, push, merge or PR permission', 'Gate Integrity'],
   'skills/gstack/review/checklist.md' => ['#### Gate Integrity', '## Sideways sweep', '## Suppressions', 'record which load you assumed'],
-  'hooks/pre-push.md' => ['Gate Integrity'],
+  'commands/pre-push.md' => ['Gate Integrity'],
   'skills/core/do/references/briefs.md' => ['SAFE TO LAND, LAND WITH CAUTION, or DO NOT LAND', '](../../offload/builder-template.md)', 'acceptance criteria, spec-review output'],
-  'skills/core/offload/builder-template.md' => ['Do not grade your own work', 'RED chronology', 'Build the smallest change that fully works', 'never cut validation at trust boundaries', 'Not checked', 'Frozen criteria outrank spec prose', 'Complete the authorized delivery steps before you report', 'Settle a genuinely ambiguous design question with `council`', 'Implement only within the owned files', 'must fail when the behavior it names breaks', 'Add no production export, flag, wrapper or hook that only tests use', 'name the assumption both relied on', 'by its ID exactly as frozen (C5, C5a)', 'it refuses unless Gate results has one line for every frozen criterion ID', 'On an `incomplete:` refusal, add the missing lines and run `ready` again. Do not run `blocked`, use `--steal` or run `status`.', 'Without `$OFFLOAD_HANDOFF` (a Local-tier subagent), write the same Returns to the result file']
+  'skills/core/offload/builder-template.md' => ['Acceptance:', 'Gates:', 'Result file:', 'Do not grade your own work', 'RED chronology', 'Build the smallest change that fully works', 'never cut validation at trust boundaries', 'Not checked', 'Frozen criteria outrank spec prose', 'Complete the authorized delivery steps before you report', 'Settle a genuinely ambiguous design question with `council`', 'Implement only within the owned files', 'must fail when the behavior it names breaks', 'Add no production export, flag, wrapper or hook that only tests use', 'name the assumption both relied on', 'by its ID exactly as frozen (C5, C5a)', 'it refuses unless Gate results has one line for every frozen criterion ID', 'On an `incomplete:` refusal, add the missing lines and run `ready` again. Do not run `blocked`, use `--steal` or run `status`.', 'Without `$OFFLOAD_HANDOFF` (a Local-tier subagent), write the same Returns to the result file']
 }.freeze
 INVARIANTS.each do |rel, phrases|
   text = root.join(rel).read
@@ -81,7 +106,24 @@ INVARIANTS.each do |rel, phrases|
 rescue StandardError => e
   errors << "#{rel}: #{e.message}"
 end
+# The dispatcher and the replay renderer read the brief by label from the one ```text fence, so the three
+# labels must start a line inside it. A substring pin above would stay green if the template mentioned a
+# label elsewhere.
+begin
+  template = 'skills/core/offload/builder-template.md'
+  fences = root.join(template).read.scan(/^```text[ \t]*\r?\n(.*?)^```/m).flatten
+  if fences.length != 1
+    errors << "#{template}: expected exactly one ```text fence, found #{fences.length}"
+  else
+    ['Acceptance:', 'Gates:', 'Result file:'].each do |label|
+      errors << "#{template}: ```text fence has no line starting with #{label.inspect}" unless fences[0].match?(/^#{Regexp.escape(label)}/)
+    end
+  end
+rescue StandardError => e
+  errors << "#{template}: #{e.message}"
+end
 if errors.empty?
+  puts notes
   puts "PASS: #{paths.length} skills, YAML policies, manifests, #{seen.length} linked Markdown files and #{INVARIANTS.values.flatten.length} frozen phrases"
 else
   warn errors.join("\n")
