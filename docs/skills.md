@@ -20,19 +20,18 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 | Command | What it does |
 |---------|-------------|
 | [`/status`](#status) | Read-only progress report. Where you are, what's done, what's next. |
+| [`/pre-push`](#pre-push) | Critical-only review of the diff a push would send. Runs on request and reports; it never stops a push. |
 
 ### Agents
 
 | Agent | What it does |
 |-------|-------------|
-| [workflow-orchestrator](#workflow-orchestrator) | Proactive pipeline navigator. Detects your stage and suggests next steps. |
-| [triage](#triage) | Emergency incident responder. Fast-tracks investigation → fix → ship for production issues. |
+| [workflow-orchestrator](#workflow-orchestrator-agent) | Proactive pipeline navigator. Detects your stage and suggests next steps. |
+| [triage](#triage-agent) | Emergency incident responder. Fast-tracks investigation → fix → ship for production issues. |
 
 ### Hooks
 
-| Hook | What it does |
-|------|-------------|
-| [pre-push](#pre-push) | Critical-only review gate before every push. Catches catastrophic bugs in under 30 seconds. |
+Hooks are wired in [`hooks/hooks.json`](../hooks/hooks.json): `SessionStart`, `Stop` and `UserPromptSubmit`. None of them reviews code.
 
 ---
 
@@ -344,8 +343,8 @@ After the fix lands, outputs a monitoring checklist and recommends follow-up act
 
 ---
 
-## Pre-Push Hook
+## `/pre-push`
 
-A silent safety net. Runs the critical-only review checklist before every `git push` — SQL injection, auth bypasses, race conditions, API contract breaks. Under 30 seconds.
+A manual safety net. Run it when you are about to push. It applies the critical-only `review` checklist to the diff the push would send — SQL injection, auth bypasses, race conditions, API contract breaks, weakened gates. Under 30 seconds.
 
-Smart enough to skip docs-only and test-only changes. Blocks the push if it finds something catastrophic. One line of output when clean.
+It classifies each changed file by what it does at runtime, not by its extension, so a skill or command file gets the same review as code. It only reports: nothing is stopped or changed. One line of output when clean. When it cannot find a base or load the checklist, it says so and never reports a clean result.

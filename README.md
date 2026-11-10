@@ -101,6 +101,7 @@ Skills get an auto-generated invocation from the host agent — these commands a
 | `/offload` | Run one architect turn: judge ready results, spec the next slice, emit and optionally dispatch the builder block to the configured harness. |
 | `/complete` | Drive a goal to **merge-ready** with Codex orchestrating `gpt-5.6-luna` workers and independent reviewers. Tracks slices in a persistent ledger and verifies integration before handing back. Merges only when explicitly authorized; external-session dispatch remains available through the skill route. |
 | `/status` | Read-only branch status and workflow progress report. Shows what's been done, what's left, and suggests the next step. |
+| `/pre-push` | Critical-only review of the diff a push would send. Runs on request and reports SQL injection, auth gaps, race conditions, contract breaks and weakened gates. It never stops a push. |
 
 ## Agents
 
@@ -110,9 +111,7 @@ Skills get an auto-generated invocation from the host agent — these commands a
 
 ## Hooks
 
-| Hook | Event | Description |
-|------|-------|-------------|
-| **pre-push** | Before `git push` | Runs critical-only review (SQL injection, auth gaps, race conditions) before any push. Blocks on critical issues. Under 30 seconds. |
+The plugin wires three events in [`hooks/hooks.json`](hooks/hooks.json): `SessionStart` (session-budget and offload reinit notices), `Stop` (offload refuses to stop while a judgment is owed) and `UserPromptSubmit` (throttled session-budget nudges).
 
 ## Credits
 

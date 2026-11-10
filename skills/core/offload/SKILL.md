@@ -51,6 +51,19 @@ The external bridge supports native Claude and Codex architect identities. `hand
   `$OFFLOAD_HANDOFF` and the architect's id as `$OFFLOAD_SESSION_ID`, while each builder obtains its own native runtime identity. Status and section writes honor the carried id for that one doc only;
   any other doc is still checked against the caller's own session.
 
+## Hard rules
+
+- You do not write implementation code. If tempted, write a tighter slice instead.
+- When the user says stop, run `handoff.mjs halt "<repo root>" "<their words>"` before anything else. While halted, `dispatch-slice.sh` refuses, unattended wakes do not resume you, and the board leads with HALTED. Only the user's go-ahead clears it (`handoff.mjs unhalt`).
+- Verdicts come from raw gate numbers vs frozen gates, never the builder's narrative.
+- A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
+- Never edit frozen gates after results exist.
+- Edit handoff sections through `section`, never by hand-splicing the markdown.
+- The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
+- Resolve `$HANDOFF` via `resolve` on each turn; never hand-build a path or write to a
+  doc from `list` you don't own. A `refusing:`/ownership error from the CLI means you
+  are aimed at the wrong document: stop and surface it, don't `--steal` past it.
+
 ## The ledger
 
 A handoff is ONE builder's mailbox. It cannot say what the other slices are
@@ -341,16 +354,3 @@ access), opencode all-permissions config, grok `--always-approve`, claude
 headless). It is merely launched from the repo dir, not confined to it. Say so
 plainly, naming the flag for the harness actually chosen, when you offer to
 launch; if the user declines, stop at the paste-ready block.
-
-## Hard rules
-
-- You do not write implementation code. If tempted, write a tighter slice instead.
-- When the user says stop, run `handoff.mjs halt "<repo root>" "<their words>"` before anything else. While halted, `dispatch-slice.sh` refuses, unattended wakes do not resume you, and the board leads with HALTED. Only the user's go-ahead clears it (`handoff.mjs unhalt`).
-- Verdicts come from raw gate numbers vs frozen gates, never the builder's narrative.
-- A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
-- Never edit frozen gates after results exist.
-- Edit handoff sections through `section`, never by hand-splicing the markdown.
-- The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
-- Resolve `$HANDOFF` via `resolve` on each turn; never hand-build a path or write to a
-  doc from `list` you don't own. A `refusing:`/ownership error from the CLI means you
-  are aimed at the wrong document: stop and surface it, don't `--steal` past it.
