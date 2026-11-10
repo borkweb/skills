@@ -50,3 +50,12 @@ Report runs by outcome: done (with the delivery line), in progress, blocked (wit
 | `set <run> --state blocked\|failed --summary <t>` | Mark a stuck run. A done or failed run is final. |
 
 A run is a run id or an absolute run dir. The run states are `running`, `needs-me`, `blocked`, `done` and `failed`.
+
+## Board (optional, Claude only)
+
+`desk-board` (`skills/core/desk/board`) is a separate Claude Code plugin: a live board of runs grouped Needs you, In motion and Finished (finished runs show for 24 h). A press on a run with a herdr tab switches herdr to it. It reads the run records itself (`BORK_RUNS_HOME` or `AGENT_HANDOFFS_DIR`, each used only when absolute) and never answers, acks or sets anything. Codex does not load it.
+
+- Open it with `/desk-board` (again to close). A band above the prompt also offers `Open desk` while a run needs you; in the Claude Desktop Code tab the band shows whenever the board has runs.
+- Keyboard (terminal): `ctrl+x tab` to reach the pane, Tab or the arrows to walk runs, Enter to go.
+- Install, after the merge: from a terminal Claude session run `/plugin marketplace update skills`, then `/plugin install desk-board@skills` at user scope; it then also loads in the Desktop Code tab. While developing: `claude --plugin-dir <repo>/skills/core/desk/board`, or `CLAUDE_CODE_PLUGIN_DIRS=<repo>/skills/core/desk/board` for Desktop.
+- A press cannot raise your terminal window by itself. Set the plugin's `terminalApp` option to that app's macOS bundle id and a press also runs `open -b` on it. Ghostty is `com.mitchellh.ghostty`; find an id with `osascript -e 'id of app "Ghostty"'`.

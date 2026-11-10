@@ -8,6 +8,11 @@
     {
       "name": "bork",
       "source": "./"
+    },
+    {
+      "name": "desk-board",
+      "source": "./skills/core/desk/board",
+      "description": "Optional Claude Code add-on for the desk skill: a live board of bork do runs. Press a run to switch herdr to its tab."
     }
   ]
 }
