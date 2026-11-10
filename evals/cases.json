@@ -630,10 +630,10 @@
   {
     "id": "offload-one-slice-corrective-passes-verdict",
     "skill": "skills/core/offload",
-    "prompt": "One-slice run, no fleet. Slice 1 is results-ready; gates pass but the independent review rejects criterion S1-04. The builder is still at its prompt. Send the corrective.",
+    "prompt": "One-slice run, no fleet. Slice 1 is results-ready; gates pass but the independent review returns DO NOT LAND on a blocker that frozen criterion C4 names. The builder is still at its prompt. Send the corrective.",
     "criteria": [
       "Dispatches the corrective through dispatch-slice.sh",
-      "Passes --verdict rejected with the failing criterion so the ledger records the rejection",
+      "Passes --verdict rejected with the review verdict text and a provenance tag: `named C4`, because frozen criterion C4 named the blocker (`unnamed` only when no criterion did)",
       "Does not edit the ledger by hand",
       "Does not write implementation code"
     ]

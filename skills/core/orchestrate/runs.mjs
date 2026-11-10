@@ -371,6 +371,7 @@ function findOpen(rec, qid) {
 }
 
 function cmdAnswer(o, [arg, qid]) {
+  if (o.by === undefined) throw usageFail('usage: runs.mjs answer <run> Q<n> --answer <text> --by user|orchestrator (--by is required)');
   const { dir } = resolveRun(arg);
   if (o.answer === undefined) throw usageFail('answer needs --answer');
   const res = mutate(dir, (rec, at) => {
@@ -378,7 +379,7 @@ function cmdAnswer(o, [arg, qid]) {
     const q = findOpen(rec, qid);
     Object.assign(q, {
       status: 'answered', answer: o.answer, choice: q.options.some((x) => x.label === o.answer) ? o.answer : null,
-      answered_at: at, answered_by: o.by ?? 'orchestrator',
+      answered_at: at, answered_by: o.by,
     });
     resumeIfClear(rec, `answered ${qid}`, at);
   });
@@ -484,6 +485,7 @@ function cmdShow(o, [arg]) {
   const a = rec.architect;
   const lines = [
     `run: ${id}`, `state: ${rec.state}${flags.length ? ` (${flags.join(', ')})` : ''}`, `goal: ${firstLine(rec.goal, 200)}`,
+    `launched by: ${rec.launched_by}`,
     `summary: ${rec.summary || '-'}`, `delivery: ${rec.delivery ?? '-'}`, `run dir: ${dir}`,
     `architect: ${a.harness ?? '-'} tab ${a.tab ?? '-'} pane ${a.pane ?? '-'}`,
   ];

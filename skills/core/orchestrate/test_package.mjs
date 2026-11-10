@@ -67,3 +67,22 @@ test('evals/cases.json gains the three orchestration cases with unique ids and r
   for (const c of cases) assert.ok(existsSync(join(ROOT, c.skill, 'SKILL.md')), c.id);
   for (const id of ['do-orchestrated-asks-and-ends-turn', 'orchestrate-relays-needs-me-question', 'offload-one-slice-corrective-passes-verdict']) assert.ok(ids.includes(id), id);
 });
+
+test('f2/f6/f8: the SKILL covers self-launched questions, an unnudged answer and orchestrator.json', () => {
+  const s = skill();
+  assert.match(s, /launched by: self[^\n]*waiting in that run's own session[^\n]*do not answer it from the coordinator unless the user asks/i);
+  assert.match(s, /could not nudge[^\n]*architect did not get the answer[^\n]*continue in that tab/i);
+  assert.match(s, /orchestrator\.json[^\n]*machine-local[^\n]*ORCHESTRATOR_HOME[^\n]*never commit/i);
+  for (const l of s.split('\n').filter((x) => /runs\.mjs answer|^\| `answer/.test(x))) assert.match(l, /--by/, `every answer example carries --by: ${l}`);
+});
+
+test('f5: the one-slice corrective eval names a C-numbered criterion and requires --verdict with a provenance tag', () => {
+  const c = JSON.parse(read('evals/cases.json')).find((x) => x.id === 'offload-one-slice-corrective-passes-verdict');
+  const n = c.prompt.match(/\bC(\d+)\b/);
+  assert.ok(n, `the prompt names a C<n> criterion: ${c.prompt}`);
+  const crit = c.criteria.join('\n');
+  assert.match(crit, /--verdict/);
+  assert.match(crit, new RegExp(`named C${n[1]}\\b`), 'the tag cites the same criterion');
+  assert.match(crit, /unnamed/);
+  assert.ok(c.criteria.length >= 4);
+});
