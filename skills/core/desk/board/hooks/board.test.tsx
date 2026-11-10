@@ -74,7 +74,8 @@ const world = (dirs: Record<string, Dir> = {}, patch: Partial<World> = {}): Worl
 const good = (name: string, patch: Record<string, unknown> = {}): Dir => ({ rec: rec(name, patch) })
 const textOf = (d: Dir) => d.text ?? JSON.stringify(d.rec)
 
-async function boot($: Engine, on: On, w: World, start: { surface: Surface | null; isInteractive: boolean } = { surface: 'terminal', isInteractive: true }) {
+// `surface: undefined` sends no session.start: the plugin loaded after the session began (an install or update mid-session).
+async function boot($: Engine, on: On, w: World, start: { surface?: Surface | null; isInteractive: boolean } = { surface: 'terminal', isInteractive: true }) {
   const clock = mock.clock(on, { now: NOW })
   mock.env(on, Object.fromEntries(Object.entries({ HOME, HERDR_PANE_ID: 'w9:p9', ...w.env }).filter((kv): kv is [string, string] => kv[1] !== undefined)))
   on('command.register', (_, e) => {
@@ -691,6 +692,31 @@ test('a session with no surface never polls until a surface attaches', async ($,
   await clock.settle()
   expect(w.list.length).toBe(1)
 })
+
+// A plugin installed or updated mid-session never sees that session's session.start.
+for (const surface of SURFACES) {
+  test(`${surface}: loaded mid-session, /desk-board starts polling and the pane draws the runs`, async ($, on) => {
+    const w = world({ a: good('a') })
+    const clock = await boot($, on, w, { surface: undefined, isInteractive: true })
+    expect(w.list).toEqual([])
+    await runDesk($)
+    await clock.settle()
+    expect((await snap($, surface)).all).toContain('In motion · 1')
+    const before = w.list.length
+    await clock.advance(5000)
+    expect(w.list.length).toBe(before + 1)
+  })
+
+  test(`${surface}: loaded mid-session with the pane left open, /desk-board closes it and still starts polling`, async ($, on) => {
+    const w = world({ a: good('a') }, { panes: ['desk-board'] })
+    const clock = await boot($, on, w, { surface: undefined, isInteractive: true })
+    expect((await snap($, surface)).all).toContain('Reading runs…')
+    expect((await runDesk($)).text).toBe('Desk closed.')
+    await clock.settle()
+    expect((await runDesk($)).text).toBe('Desk opened.')
+    expect((await snap($, surface)).all).toContain('In motion · 1')
+  })
+}
 
 test('/desk-board is registered even with no surface', async ($, on) => {
   const w = world()

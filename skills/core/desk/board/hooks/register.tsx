@@ -133,6 +133,8 @@ async function refresh($: EngineInterface): Promise<void> {
   }
 }
 
+// Idempotent. /desk-board calls it too: a plugin installed or updated mid-session never sees that session's
+// start, so polling would otherwise never begin. Renders must not: their `$` ends with the render.
 function startPolling($: EngineInterface): void {
   if (timer) return
   timer = $.clock.every(TICK_MS, () => { void refresh($) })
@@ -234,7 +236,10 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'desk-board' }, async ($) => toggleDesk($))
+  on('command.run', { command: 'desk-board' }, async ($) => {
+    startPolling($)
+    return toggleDesk($)
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const b = await read($, board)
