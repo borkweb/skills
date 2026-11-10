@@ -82,6 +82,8 @@ function invalidReason(rec, dir) {
   for (const q of rec.questions) {
     if (!q || typeof q.id !== 'string' || !/^Q\d+$/.test(q.id) || !['open', 'answered', 'withdrawn'].includes(q.status) || !Array.isArray(q.options)) return 'a question is malformed';
   }
+  // messages may be absent (a run from before tell); present, every element needs id, text and at.
+  if (rec.messages !== undefined && (!Array.isArray(rec.messages) || rec.messages.some((m) => !m || typeof m.id !== 'string' || !/^M\d+$/.test(m.id) || typeof m.text !== 'string' || typeof m.at !== 'string'))) return 'messages is malformed';
   return null;
 }
 
@@ -174,7 +176,10 @@ function mutate(dir, fn, { touch = true } = {}) {
 }
 
 const openQuestions = (rec) => rec.questions.filter((q) => q.status === 'open');
-const refuseTerminal = (rec) => { if (TERMINAL.has(rec.state)) throw new Fail(`run is ${rec.state}; a finished run only accepts ack`); };
+const refuseTerminal = (rec) => {
+  if (rec.state === 'done') throw new Fail(`run is done; to continue it run runs.mjs reopen ${rec.id} (or tell), or start a new run`);
+  if (TERMINAL.has(rec.state)) throw new Fail(`run is ${rec.state}; a finished run only accepts ack`);
+};
 
 function transition(rec, to, note, at) {
   rec.state = to;
@@ -208,8 +213,9 @@ function errorOf(text) {
 }
 
 // A nudge is one fixed-grammar line (words, run id, state token, Q<n>); never record text.
-function nudge(pane, line) {
-  if (typeof pane !== 'string' || !pane || pane.startsWith('-') || !which('herdr')) return;
+// Returns why it could not be delivered, null when herdr took it. The warning is for callers that carry on regardless.
+function nudge(pane, line, { warn = true } = {}) {
+  if (typeof pane !== 'string' || !pane || pane.startsWith('-') || !which('herdr')) return 'herdr unavailable';
   const r = herdr(['agent', 'prompt', pane, clean(line).slice(0, 300)]);
   // herdr 0.9.3 fails with exit 1 and a JSON error body on stderr; older shapes use stdout or exit 0.
   const bodyError = errorOf(r.stdout) ?? errorOf(r.stderr);
@@ -218,7 +224,8 @@ function nudge(pane, line) {
   else if (r.status !== 0) why = bodyError ?? `exit ${r.status}`;
   else if (/agent_blocked/.test(`${r.stdout}${r.stderr}`)) why = 'agent_blocked';
   else if (bodyError) why = bodyError;
-  if (why) process.stderr.write(`warning: could not nudge pane ${clean(pane)} (${clean(why).slice(0, 40)}); the run record is already written\n`);
+  if (why && warn) process.stderr.write(`warning: could not nudge pane ${clean(pane)} (${clean(why).slice(0, 40)}); the run record is already written\n`);
+  return why;
 }
 
 function readOrch() {
@@ -279,7 +286,7 @@ function createRun({ goal, repo = null, slug, runDir, launchedBy = 'self', harne
     const at = nowIso();
     const rec = {
       schema: 1, id: basename(dir), run_dir: dir, repo, goal, task, state: 'running', summary: '', delivery: null,
-      questions: [], architect: { harness, session_id: sessionId, frontend: herdrSelf?.frontend ?? null, tab: herdrSelf?.tab ?? null, pane: herdrSelf?.pane ?? null },
+      questions: [], messages: [], architect: { harness, session_id: sessionId, frontend: herdrSelf?.frontend ?? null, tab: herdrSelf?.tab ?? null, pane: herdrSelf?.pane ?? null },
       launched_by: launchedBy, revision: 1, signal_revision: 0, orchestrator_ack: 0, created_at: at, updated_at: at,
       history: [{ at, state: 'running', note: 'created' }],
     };
@@ -334,6 +341,92 @@ function cmdSet(o, [arg]) {
   });
   if (signalled(res)) nudgeOrchestrator(dir, res.rec);
   out(o.json ? JSON.stringify(res.rec) : `${res.rec.id} ${res.rec.state}`);
+}
+
+// ---- tell and reopen ---------------------------------------------------------------------------------------
+
+const TELL_USAGE = 'usage: runs.mjs tell <run> (--message <text> | --message-file <file>) [--json]';
+const MESSAGE_MAX_BYTES = 65536;
+
+function readMessage(o) {
+  if (o.message !== undefined && o['message-file'] !== undefined) throw usageFail(TELL_USAGE);
+  let text = o.message;
+  if (o['message-file'] !== undefined) {
+    try { text = readFileSync(o['message-file'], 'utf8'); } catch (e) { throw usageFail(`cannot read --message-file (${e.code ?? e.message})\n${TELL_USAGE}`); }
+  }
+  if (text === undefined || !text.trim()) throw usageFail(TELL_USAGE);
+  if (Buffer.byteLength(text) > MESSAGE_MAX_BYTES) throw usageFail(`the message is over 64 KiB (${MESSAGE_MAX_BYTES} bytes)\n${TELL_USAGE}`);
+  return text;
+}
+
+const refusal = (verb, token, why) => new Fail(`${verb} refused (${token}): ${why}`);
+
+// The record-only refusals, in token order. tell and reopen run them before the write and again on the record read under the lock.
+function refuseClosed(rec, verb) {
+  const id = rec.id;
+  if (rec.state === 'failed') throw refusal(verb, 'run_failed', `run ${id} failed and stays final; start a new run and name this run dir (${rec.run_dir}) in its goal`);
+  const open = openQuestions(rec).map((q) => q.id);
+  if (rec.state === 'needs-me' || open.length) throw refusal(verb, 'question_open', `run ${id} has an open question (${open.join(', ') || 'none recorded'}); answer or withdraw ${open.join(', ') || 'it'} first`);
+  if (verb === 'tell' && !Array.isArray(rec.messages)) throw refusal(verb, 'predates_tell', `run ${id} was created before tell existed and has no message list; continue in the run's tab (${rec.architect.tab ?? 'no tab recorded'})`);
+}
+
+// done or blocked becomes running; the old delivery line stays in the history note.
+function reopenRec(rec, note, at) {
+  const previous = rec.delivery;
+  transition(rec, 'running', previous ? `${note}; previous delivery: ${previous}` : note, at);
+  rec.summary = note;
+  rec.delivery = null;
+}
+
+// The herdr half of the preflight: the pane must hold an agent that is not blocked. Reads only agent_status.
+function refuseAgent(rec) {
+  const [id, pane, tab] = [rec.id, rec.architect.pane, rec.architect.tab ?? 'no tab recorded'];
+  if (typeof pane !== 'string' || !HERDR_ID_RE.test(pane)) throw refusal('tell', 'no_pane', `run ${id} has no usable architect pane; tell the session directly`);
+  const unreachable = (why) => refusal('tell', 'herdr_unreachable', `herdr could not be asked about pane ${pane} of run ${id} (${why}); type the work into tab ${tab}`);
+  if (!which('herdr')) throw unreachable('herdr is not on PATH');
+  const r = herdr(['agent', 'get', pane]);
+  if (r.error) throw unreachable(r.error.code || 'spawn failed');
+  let status;
+  if (r.status === 0) {
+    try { status = JSON.parse(r.stdout)?.result?.agent?.agent_status; } catch { /* unusable answer */ }
+    if (typeof status !== 'string') throw unreachable('unreadable answer');
+  } else if ((errorOf(r.stderr) ?? errorOf(r.stdout)) === 'agent_not_found') {
+    throw refusal('tell', 'agent_gone', `the agent in pane ${pane} of run ${id} is gone; start a new run with this work, or set the run failed`);
+  } else throw unreachable(`exit ${r.status}`);
+  if (status === 'blocked') throw refusal('tell', 'agent_blocked', `the agent in pane ${pane} of run ${id} is blocked on a dialog; answer the dialog in tab ${tab}, then run tell again`);
+}
+
+function cmdTell(o, [arg]) {
+  const text = readMessage(o);
+  const { dir } = resolveRun(arg);
+  const before = readRun(dir);
+  refuseClosed(before, 'tell');
+  refuseAgent(before);
+  let msg;
+  // No herdr call inside the lock; the record read under it decides again.
+  const res = mutate(dir, (rec, at) => {
+    refuseClosed(rec, 'tell');
+    msg = { id: `M${rec.messages.length + 1}`, text, by: 'user', at };
+    rec.messages.push(msg);
+    if (rec.state === 'running') rec.history.push({ at, state: 'running', note: `message ${msg.id}` });
+    else reopenRec(rec, `reopened by ${msg.id}`, at);
+  });
+  const why = nudge(before.architect.pane, `bork run ${res.rec.id}: new instruction ${msg.id} from the user; read it with runs.mjs show ${res.rec.id}`, { warn: false });
+  if (o.json) out(JSON.stringify({ message: msg, state: res.rec.state, delivered: !why }));
+  else out(why ? `${msg.id} recorded, not delivered (${clean(why).slice(0, 40)})` : `${msg.id} sent`);
+  return why ? 3 : 0;
+}
+
+function cmdReopen(o, [arg]) {
+  const { dir, id } = resolveRun(arg);
+  let isOpen = false;
+  mutate(dir, (rec, at) => {
+    refuseClosed(rec, 'reopen');
+    if (rec.state === 'running') { isOpen = true; return NOOP; }
+    rec.messages ??= [];
+    reopenRec(rec, o.note || 'reopened', at);
+  });
+  out(`${id} running${isOpen ? ' (already open)' : ''}`);
 }
 
 function parseOptions(text) {
@@ -432,19 +525,30 @@ function cmdAck(o, pos) {
 
 // ---- show and list -------------------------------------------------------------------------
 
-function architectGone(rec) {
-  const pane = rec.architect?.pane;
-  if (!pane || TERMINAL.has(rec.state) || !which('herdr')) return false;
-  const r = herdr(['agent', 'get', pane]);
-  if (r.error) return false;
-  if (r.status !== 0) return true;
-  try { return Boolean(JSON.parse(r.stdout)?.error); } catch { return false; }
+const AGENT_WORD = { working: 'agent working', blocked: 'agent blocked', idle: 'agent idle', done: 'agent turn ended', unknown: 'agent unknown' };
+
+// One `herdr agent list` as a pane -> agent_status map (only those two fields are read; an unknown status is `unknown`).
+// null when herdr is missing, fails, times out or prints anything unusable: no status, never an error and never gone.
+function agentMap() {
+  if (!which('herdr')) return null;
+  const r = herdr(['agent', 'list']);
+  if (r.error || r.status !== 0) return null;
+  let agents;
+  try { agents = JSON.parse(r.stdout)?.result?.agents; } catch { return null; }
+  if (!Array.isArray(agents)) return null;
+  const map = new Map();
+  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, a.agent_status in AGENT_WORD ? a.agent_status : 'unknown');
+  return map;
 }
 
-function flagsOf(rec) {
+const liveRun = (rec) => typeof rec.architect?.pane === 'string' && rec.architect.pane !== '' && !TERMINAL.has(rec.state);
+// The raw status, 'gone' (herdr answered and the pane holds no agent) or undefined (no answer, or nothing to ask).
+const agentOf = (rec, map) => (map && liveRun(rec) ? map.get(rec.architect.pane) ?? 'gone' : undefined);
+
+function flagsOf(rec, agent) {
   const f = [];
+  if (agent === 'gone') f.push('architect gone');
   if (rec.state === 'running' && Date.now() - Date.parse(rec.updated_at) > STALE_RUN_MS) f.push('stale');
-  if (architectGone(rec)) f.push('architect gone');
   return f;
 }
 
@@ -452,13 +556,13 @@ const firstLine = (s, n = 100) => String(s).split('\n')[0].slice(0, n);
 const warnInvalid = (e) => process.stderr.write(`warning: skipping ${e.message}\n`);
 
 // Every readable run under the home; invalid ones are reported through onInvalid and skipped.
-// With a cache (wait), a run.json is re-read only when its mtime, size or inode changed; names in skip are not touched.
-function scanRuns(onInvalid = warnInvalid, { cache, skip } = {}) {
+// With a cache (wait), a run.json is re-read only when its mtime, size or inode changed.
+function scanRuns(onInvalid = warnInvalid, { cache } = {}) {
   const home = realHome();
   if (!home) return [];
   const found = [];
   for (const name of readdirSync(home)) {
-    if (!ID_RE.test(name) || name.includes('..') || skip?.has(name)) continue;
+    if (!ID_RE.test(name) || name.includes('..')) continue;
     const dir = join(home, name);
     let st;
     try { st = lstatSync(dir); } catch { continue; }
@@ -484,19 +588,25 @@ function scanRuns(onInvalid = warnInvalid, { cache, skip } = {}) {
 function cmdShow(o, [arg]) {
   const { id, dir } = resolveRun(arg);
   const rec = readRun(dir);
-  const flags = flagsOf(rec);
+  const agent = agentOf(rec, liveRun(rec) ? agentMap() : null);
+  const flags = flagsOf(rec, agent);
   const moot = (q) => rec.state === 'failed' && q.status === 'open';
   if (o.json) {
-    out(JSON.stringify({ ...rec, flags, questions: rec.questions.map((q) => (moot(q) ? { ...q, moot: true } : q)) }, null, 2));
+    out(JSON.stringify({ ...rec, flags, ...(agent !== undefined && { agent_status: agent }), questions: rec.questions.map((q) => (moot(q) ? { ...q, moot: true } : q)) }, null, 2));
     return;
   }
   const a = rec.architect;
   const lines = [
     `run: ${id}`, `state: ${rec.state}${flags.length ? ` (${flags.join(', ')})` : ''}`, `goal: ${firstLine(rec.goal, 200)}`,
     `launched by: ${rec.launched_by}`,
+    ...(agent && agent !== 'gone' ? [`agent: ${AGENT_WORD[agent].replace(/^agent /, '')}`] : []),
     `summary: ${rec.summary || '-'}`, `delivery: ${rec.delivery ?? '-'}`, `run dir: ${dir}`,
     `architect: ${a.harness ?? '-'} tab ${a.tab ?? '-'} pane ${a.pane ?? '-'}`,
   ];
+  if (rec.messages?.length) {
+    // Newlines stay (a message is an instruction with structure); every other control character goes.
+    lines.push('', 'messages:', ...rec.messages.map((m) => `  ${m.id} (${m.at}): ${m.text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '').replace(/\n/g, '\n    ')}`));
+  }
   for (const q of rec.questions.filter((x) => x.status === 'open')) {
     lines.push('', `${q.id}${moot(q) ? ' (moot: the run failed)' : ''}: ${q.question}`);
     if (q.context) lines.push(`  context: ${q.context}`);
@@ -514,9 +624,14 @@ function cmdList(o) {
   const runs = scanRuns()
     .filter(({ rec }) => !want || want.has(rec.state))
     .sort((x, y) => Date.parse(y.rec.created_at) - Date.parse(x.rec.created_at) || (x.name < y.name ? 1 : -1));
-  const rows = runs.map(({ name, rec }) => ({ name, rec, flags: flagsOf(rec) }));
-  if (o.json) { out(JSON.stringify(rows.map(({ rec, flags }) => ({ ...rec, flags })), null, 2)); return; }
-  for (const { name, rec, flags } of rows) out(`${name}  ${rec.state}${flags.length ? ` [${flags.join(', ')}]` : ''}  ${rec.summary || firstLine(rec.goal)}`);
+  // At most one herdr call, and only when a shown run could be asked about.
+  const map = runs.some(({ rec }) => liveRun(rec)) ? agentMap() : null;
+  const rows = runs.map(({ name, rec }) => { const agent = agentOf(rec, map); return { name, rec, agent, flags: flagsOf(rec, agent) }; });
+  if (o.json) { out(JSON.stringify(rows.map(({ rec, flags, agent }) => ({ ...rec, flags, ...(agent !== undefined && { agent_status: agent }) })), null, 2)); return; }
+  for (const { name, rec, agent, flags } of rows) {
+    const tags = [...(agent && agent !== 'gone' ? [AGENT_WORD[agent]] : []), ...flags];
+    out(`${name}  ${rec.state}${tags.length ? ` [${tags.join(', ')}]` : ''}  ${rec.summary || firstLine(rec.goal)}`);
+  }
 }
 
 // ---- claim, release, wait -------------------------------------------------------------------
@@ -548,10 +663,12 @@ function cmdWait(o) {
   const scan = () => {
     const fired = [];
     const warnOnce = (e) => { if (!warned.has(e.message)) { warned.add(e.message); warnInvalid(e); } };
-    for (const { name, rec } of scanRuns(warnOnce, { cache, skip: settled })) {
+    // A settled run is still scanned (the cache keeps it to one stat): a reopen must wake an armed wait. Settled only limits fs.watch.
+    for (const { name, rec } of scanRuns(warnOnce, { cache })) {
       if (only && !only.has(name)) continue;
       if (rec.signal_revision > rec.orchestrator_ack) fired.push(`RUN ${name} ${rec.state} r${rec.signal_revision}${rec.state === 'needs-me' && lastOpen(rec) ? ` ${lastOpen(rec)}` : ''}`);
       else if (TERMINAL.has(rec.state)) settled.add(name);
+      else settled.delete(name);
     }
     return fired;
   };
@@ -645,6 +762,7 @@ Record state and questions with that CLI:
 - ${cli} set ${id} --state blocked|failed|done --summary "<one line>" --delivery "<delivery line>"
 - A question for the user: ${cli} ask ${id} --question "<q>" --options '[{"label":"A","description":"..."},{"label":"B","description":"..."}]' --recommendation A
   Then end your turn. The answer arrives as a pane line \`bork run ${id}: answered Q<n>\`; read it with ${cli} show ${id}.
+- More work for this run arrives as a pane line \`bork run ${id}: new instruction M<n> from the user; read it with runs.mjs show ${id}\`: run \`show\` with ${cli}, treat M<n>'s text as the user's next instruction for this run, continue under the do skill, and set a final state again when finished.
 `;
 }
 
@@ -739,8 +857,10 @@ const SPEC = {
   ask: { vals: ['question', 'options', 'recommendation', 'context'], pos: 1, run: cmdAsk },
   answer: { vals: ['answer', 'by'], bools: ['no-nudge'], pos: 2, run: cmdAnswer },
   withdraw: { vals: ['note'], pos: 2, run: cmdWithdraw },
+  tell: { vals: ['message', 'message-file'], bools: ['json'], pos: 1, run: cmdTell },
+  reopen: { vals: ['note'], pos: 1, run: cmdReopen },
 };
-const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start']);
+const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen']);
 const USAGE = `usage: runs.mjs <${Object.keys(SPEC).join('|')}> [args]  (spec: skills/core/desk/SKILL.md)`;
 
 // An option takes the next token as its value whatever it looks like: goals may start with "-".

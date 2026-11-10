@@ -232,6 +232,10 @@ test('launch-prompt.md holds the goal byte for byte, the do instruction, the run
   assert.ok(p.includes(join(HERE, 'runs.mjs')));
   assert.match(p, /re-resolve[^\n]*desk skill/i);
   assert.match(p, /runs\.mjs[^\n]*ask|ask[^\n]*runs\.mjs/);
+  // C19: more work arrives as a pane line; the architect reads it, continues under do and finishes again.
+  assert.match(p, /new instruction M<n>[^\n]*`show`[^\n]*treat M<n>'s text as the user's next instruction[^\n]*do skill[^\n]*final state again/);
+  assert.ok(p.includes(`runs.mjs show ${readRec(r.dir).id}`), 'the pane line it describes is the one tell sends');
+  assert.deepEqual(readRec(r.dir).messages, [], 'C11: start writes messages: []');
 });
 
 test('launch.sh works from a bare herdr-spawned env: the architect can ask against the same run.json', () => {
