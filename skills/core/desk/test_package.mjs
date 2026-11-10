@@ -167,7 +167,7 @@ test('C44-C46 the desk SKILL offers tell, new run and the tab in that order, and
   assert.ok(!s.includes('A done or failed run is final'));
   assert.match(s, /Done and blocked runs reopen through `tell` or `reopen`; a failed run is final/);
   for (const cmd of ['tell', 'reopen']) assert.match(s, new RegExp(`^\\| \`${cmd} `, 'm'), `the Commands table has ${cmd}`);
-  assert.match(s, /RUN line whose state is `running` means the run was reopened[^\n]*`show`, `ack`, re-arm/);
+  assert.match(s, /RUN line whose state is `running` means the run moved on before you acked it \(it was reopened, or its question was answered in its tab\): `show`, `ack`, re-arm/);
   assert.match(s, /agent status[^\n]*display only[\s\S]*idle or turn ended has stopped without setting a final state[^\n]*\*\*Tell the run\*\*[^\n]*`set --state blocked`/);
   assert.match(s, /`tell` unchanged/);
   assert.match(s, /started before this release refuse with `predates_tell`/);
@@ -178,6 +178,7 @@ test('C44-C46 the desk SKILL offers tell, new run and the tab in that order, and
 test('C47 the do SKILL reopens before the terminal check, starts a new run for unrelated work and never lets a message answer a question', () => {
   const d = read('skills/core/do/SKILL.md');
   assert.match(d, /reopen the run first[^\n]*`runs\.mjs reopen <run>`[^\n]*terminal check on `BORK_RUN_DIR` passes[^\n]*same run dir/);
+  assert.match(d, /`show` the run anyway and, if it reports the run done or blocked, run `runs\.mjs reopen <run>` first/);
   assert.match(d, /Unrelated new work starts a new run/);
   assert.match(d, /A message never answers an open question/);
 });

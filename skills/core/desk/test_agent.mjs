@@ -24,6 +24,16 @@ test('C20 list words: one row per raw status, the bare word "done" never describ
   }
 });
 
+test('C20 an agent_status that is not a string (an array that coerces to a known word) reads as unknown, in text and JSON', () => {
+  const { b, runs } = world(['w9:p1']);
+  const extra = { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_STATUS: JSON.stringify({ 'w9:p1': ['idle'] }) };
+  const r = run(b, ['list'], extra);
+  ok(r);
+  assert.ok(lineOf(r.out, runs[0].id).includes('running [agent unknown]'), r.out);
+  assert.equal(JSON.parse(run(b, ['list', '--json'], extra).out)[0].agent_status, 'unknown');
+  assert.equal(JSON.parse(run(b, ['show', runs[0].id, '--json'], extra).out).agent_status, 'unknown');
+});
+
 test('C21 a pane missing from a successful list is architect gone, placed before the other flags', () => {
   const { b, runs } = world(['w9:p1', 'w9:p2']);
   writeRec(runs[0].dir, { updated_at: new Date(Date.now() - 30 * 3600e3).toISOString() });

@@ -64,12 +64,14 @@ type World = {
   stateSets: number
   holdList: Promise<void> | null
   stateGetFails: number
+  // A reason makes `$.ui.panes()` reject.
+  panesFails: string | null
 }
 const OK_RUN: World['run'] = (argv) =>
   argv[1] === 'tab' && argv[2] === 'get' ? { exitCode: 0, stdout: TAB_GET } : { exitCode: 0 }
 const world = (dirs: Record<string, Dir> = {}, patch: Partial<World> = {}): World => ({
   dirs, extra: [], listFails: null, env: {}, run: OK_RUN, agent: () => ({ exitCode: 0 }), events: [], panes: [], statExists: [BIN], list: [], read: [], stat: [], process: [],
-  toasts: [], opened: [], registered: [], stateSets: 0, holdList: null, stateGetFails: 0, ...patch,
+  toasts: [], opened: [], registered: [], stateSets: 0, holdList: null, stateGetFails: 0, panesFails: null, ...patch,
 })
 const good = (name: string, patch: Record<string, unknown> = {}): Dir => ({ rec: rec(name, patch) })
 const textOf = (d: Dir) => d.text ?? JSON.stringify(d.rec)
@@ -145,7 +147,7 @@ async function boot($: Engine, on: On, w: World, start: { surface?: Surface | nu
     w.panes = w.panes.filter((p) => p !== e.id)
     return { value: undefined }
   })
-  on('ui.panes', () => ({ value: w.panes.map((id) => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) }))
+  on('ui.panes', () => w.panesFails ? { deny: w.panesFails } : ({ value: w.panes.map((id) => ({ id, title: id, isShown: true, isFocused: false, isPlaced: true })) }))
   on('ui.invalidate', () => ({ value: undefined }))
   on('state.get', (_, e, next) => {
     if (w.stateGetFails > 0) {
@@ -1169,4 +1171,37 @@ test('C41 a stable agent list writes no state; a status change writes once', asy
   w.agent = answers({ 'w66:p8': 'working' })
   await clock.advance(5000)
   expect(w.stateSets).toBe(sets + 1)
+})
+
+// ---- an agent read that throws never costs the tick its file pass -------------------------------------------------------
+
+test('P7 a rejection from ui.panes on the first tick still publishes the rows, without a status', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.panesFails = 'engine: ui.panes is unavailable'
+  w.agent = answers({ 'w66:p8': 'idle' })
+  await boot($, on, w)
+  const { all } = await snap($, 'terminal')
+  expect(all).toContain('In motion · 1')
+  expect(all).toContain('skills · running')
+  expect(all).not.toMatch(/agent|gone/)
+})
+
+test('P7 a rejection mid-run keeps the last good word, redraws the changed rows and the next tick runs', async ($, on) => {
+  const w = open(world({ a: good('a') }))
+  w.agent = answers({ 'w66:p8': 'idle' })
+  const clock = await boot($, on, w)
+  w.panesFails = 'engine: ui.panes is unavailable'
+  w.dirs.a = { rec: rec('a', { goal: 'Ship the board, again' }), mtimeMs: 2 }
+  await clock.advance(5000)
+  let all = (await snap($, 'terminal')).all
+  expect(all).toContain('Ship the board, again')
+  expect(all).toContain('skills · running · agent idle')
+  w.dirs.a = { rec: rec('a', { goal: 'Ship it a third time' }), mtimeMs: 3 }
+  await clock.advance(5000)
+  all = (await snap($, 'terminal')).all
+  expect(all).toContain('Ship it a third time')
+  // The failed read starts the 15 s skip; once it has passed and ui.panes works again, the agent list is read again.
+  w.panesFails = null
+  await clock.advance(20000)
+  expect(agentCalls(w).length).toBeGreaterThan(1)
 })

@@ -70,6 +70,30 @@ test('C1d the 64 KiB cap is bytes: 65536 is accepted, 65537 is not, for --messag
   }
 });
 
+test('P5 --message-file is stat\'ed first: a directory and an over-64-KiB file are refused with exit 2 before any read', () => {
+  const { dir, id } = mk();
+  const before = sha(recPath(dir));
+  resetLog(b);
+  const big = join(b.root, 'big65537.txt');
+  writeFileSync(big, 'a'.repeat(65537));
+  const rows = [[b.root, /--message-file is not a regular file/], [big, /--message-file is over 64 KiB/]];
+  // An unreadable big file: only a stat-first check can name its size (a read-first check says "cannot read").
+  if (process.getuid?.() !== 0) {
+    const locked = join(b.root, 'locked65537.txt');
+    writeFileSync(locked, 'a'.repeat(65537), { mode: 0o000 });
+    rows.push([locked, /--message-file is over 64 KiB/]);
+  }
+  for (const [path, want] of rows) {
+    const r = run(b, ['tell', id, '--message-file', path], LIVE);
+    assert.equal(r.code, 2, `${path}: ${r.err}`);
+    assert.match(r.err, want);
+    assert.match(r.err, /usage: runs\.mjs tell/);
+    assert.equal(r.out, '');
+  }
+  assert.equal(sha(recPath(dir)), before);
+  assert.deepEqual(calls(b), []);
+});
+
 test('C1e --message-file stores the file text byte for byte', () => {
   const { dir, id } = mk();
   const text = '  two lines\n\n  with “quotes”, a tab\t and no final newline';
@@ -374,8 +398,14 @@ test('C10d/e reopen refuses an open question (any state) and a failed run; nothi
   ask(b, needs.id);
   const failed = mk();
   ok(run(b, ['set', failed.id, '--state', 'failed']));
+  // ask, then set --state blocked: the run is blocked and Q1 is still open (C10d's "any state with an open question").
+  const blockedAsk = mk();
+  ask(b, blockedAsk.id);
+  ok(run(b, ['set', blockedAsk.id, '--state', 'blocked']));
+  assert.equal(readRec(blockedAsk.dir).state, 'blocked');
+  assert.equal(readRec(blockedAsk.dir).questions[0].status, 'open');
   resetLog(b);
-  for (const [x, token] of [[needs, 'question_open'], [failed, 'run_failed']]) {
+  for (const [x, token] of [[needs, 'question_open'], [failed, 'run_failed'], [blockedAsk, 'question_open']]) {
     const before = sha(recPath(x.dir));
     const r = run(b, ['reopen', x.id]);
     assert.equal(r.code, 1);

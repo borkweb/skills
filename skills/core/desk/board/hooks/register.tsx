@@ -93,12 +93,18 @@ async function readBoard($: EngineInterface, now: number): Promise<Read> {
 
 // The agent status, one `agent list` per tick while the Desk pane is open (display only; the file pass has already run).
 // A failed read adds nothing: the last good map stays for AGENT_HOLD_MS, and no new read is made for as long.
+// Nothing here may reject: a throw from `$.ui.panes()`, `herdrPath` or the call counts as a failed read, so the tick's
+// file pass is still published with the last good map.
 async function readAgents($: EngineInterface, now: number): Promise<Map<string, string> | null> {
-  if (!(await isOpen($))) { agentsGood = null; return null }
-  if (agentsFailedAt === null || now - agentsFailedAt > AGENT_HOLD_MS) {
-    const ran = await runHerdr($, [await herdrPath($), 'agent', 'list'], AGENT_TIMEOUT_MS)
-    const map = 'r' in ran && ran.r.exitCode === 0 && !ran.r.isStdoutTruncated ? parseAgentList(ran.r.stdout) : null
-    if (map) { agentsGood = { map, at: now }; agentsFailedAt = null } else agentsFailedAt = now
+  try {
+    if (!(await isOpen($))) { agentsGood = null; return null }
+    if (agentsFailedAt === null || now - agentsFailedAt > AGENT_HOLD_MS) {
+      const ran = await runHerdr($, [await herdrPath($), 'agent', 'list'], AGENT_TIMEOUT_MS)
+      const map = 'r' in ran && ran.r.exitCode === 0 && !ran.r.isStdoutTruncated ? parseAgentList(ran.r.stdout) : null
+      if (map) { agentsGood = { map, at: now }; agentsFailedAt = null } else agentsFailedAt = now
+    }
+  } catch {
+    agentsFailedAt = now
   }
   if (agentsGood && now - agentsGood.at > AGENT_HOLD_MS) agentsGood = null
   return agentsGood?.map ?? null

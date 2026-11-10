@@ -352,7 +352,13 @@ function readMessage(o) {
   if (o.message !== undefined && o['message-file'] !== undefined) throw usageFail(TELL_USAGE);
   let text = o.message;
   if (o['message-file'] !== undefined) {
-    try { text = readFileSync(o['message-file'], 'utf8'); } catch (e) { throw usageFail(`cannot read --message-file (${e.code ?? e.message})\n${TELL_USAGE}`); }
+    // Stat first: a directory, a device or a huge file is refused before anything is read.
+    const unreadable = (e) => usageFail(`cannot read --message-file (${e.code ?? e.message})\n${TELL_USAGE}`);
+    let st;
+    try { st = statSync(o['message-file']); } catch (e) { throw unreadable(e); }
+    if (!st.isFile()) throw usageFail(`--message-file is not a regular file\n${TELL_USAGE}`);
+    if (st.size > MESSAGE_MAX_BYTES) throw usageFail(`--message-file is over 64 KiB (${MESSAGE_MAX_BYTES} bytes)\n${TELL_USAGE}`);
+    try { text = readFileSync(o['message-file'], 'utf8'); } catch (e) { throw unreadable(e); }
   }
   if (text === undefined || !text.trim()) throw usageFail(TELL_USAGE);
   if (Buffer.byteLength(text) > MESSAGE_MAX_BYTES) throw usageFail(`the message is over 64 KiB (${MESSAGE_MAX_BYTES} bytes)\n${TELL_USAGE}`);
@@ -537,7 +543,7 @@ function agentMap() {
   try { agents = JSON.parse(r.stdout)?.result?.agents; } catch { return null; }
   if (!Array.isArray(agents)) return null;
   const map = new Map();
-  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, Object.hasOwn(AGENT_WORD, a.agent_status) ? a.agent_status : 'unknown');
+  for (const a of agents) if (typeof a?.pane_id === 'string') map.set(a.pane_id, typeof a.agent_status === 'string' && Object.hasOwn(AGENT_WORD, a.agent_status) ? a.agent_status : 'unknown');
   return map;
 }
 
@@ -762,7 +768,7 @@ Record state and questions with that CLI:
 - ${cli} set ${id} --state blocked|failed|done --summary "<one line>" --delivery "<delivery line>"
 - A question for the user: ${cli} ask ${id} --question "<q>" --options '[{"label":"A","description":"..."},{"label":"B","description":"..."}]' --recommendation A
   Then end your turn. The answer arrives as a pane line \`bork run ${id}: answered Q<n>\`; read it with ${cli} show ${id}.
-- More work for this run arrives as a pane line \`bork run ${id}: new instruction M<n> from the user; read it with runs.mjs show ${id}\`: run \`show\` with ${cli}, treat M<n>'s text as the user's next instruction for this run, continue under the do skill, and set a final state again when finished.
+- More work for this run arrives as a pane line \`bork run ${id}: new instruction M<n> from the user; read it with runs.mjs show ${id}\`: run \`show\` with ${cli}; if \`show\` reports the run done or blocked, run \`runs.mjs reopen ${id}\` first; treat M<n>'s text as the user's next instruction for this run, continue under the do skill, and set a final state again when finished.
 `;
 }
 
