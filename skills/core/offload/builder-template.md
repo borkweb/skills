@@ -23,6 +23,8 @@ While iterating, run the narrowest gate that covers the file you are editing. Be
 
 Preserve the requested prose style; code, commands, errors, commit messages and PR text stay exact or normal as appropriate. Do not enable a persona implicitly.
 
+Complete the authorized delivery steps before you report: commit as the `Authorization:` line allows, and nothing it prohibits. Then update the handoff or the result file.
+
 Returns, in this order:
 - Gate results: pass/fail or NOT RUN, exact counts, command, exit code and path to raw evidence. Then criteria evidence, in the same section: one line per acceptance criterion, by its ID exactly as frozen (C5, C5a), naming the test, command or file:line that proves it and the result, and the break that check would catch, or NOT MET or NOT RUN with the reason. A criterion with no line counts as not met. On a corrective, report every criterion again, not only the blockers, and add one line per blocker with its red command's result before your fix and after it. Then a `Loosened tests:` line: every assertion, expected value, fixture value, golden file or test case this slice removed, skipped or loosened, each with the source of truth that justifies it (spec section, API doc, recorded real response), or `None.` Never change an expectation to match the code without one; an unlisted change counts as a defect.
 - Work summary: changed paths, branch/commit state, remaining work and blockers, then `Not checked:` one or two lines on what was skipped or not verified and any risk the architect must know.
