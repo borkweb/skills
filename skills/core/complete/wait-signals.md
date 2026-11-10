@@ -10,14 +10,28 @@ when `WFR_BOARD_CWD` is set) is the fleet's state. Act on both.
 | --- | --- | --- |
 | `ready` | Builder ran `handoff.mjs ready`. | Run `offload` for one architect turn on that slice: it judges raw gates, runs the acceptance review, writes the verdict. Then set the terminal state. |
 | `builder-blocked …` | Builder flipped the handoff to `blocked` and is waiting for a ruling. | Arbitrate now (below). |
-| `builder-awaiting-input …` | The harness's turn-end hook fired and the builder stayed quiet past the settle window: stopped without flipping the handoff, hit a permission prompt, or finished without `ready`. | Arbitrate now (below). |
+| `builder-awaiting-input …` | The harness's turn-end hook fired and the builder stayed quiet past the settle window: stopped without flipping the handoff, hit a permission prompt, or finished without `ready`. | Run `handoff.mjs coverage` first (below). Exit 4 is bookkeeping. Otherwise arbitrate now (below). |
 | `builder-idle …` | No handoff flip, no turn end, no session-log writes, no CPU for the idle window. The builder is not thinking, streaming or writing. | Arbitrate now (below). Do not relaunch the bridge on a hunch. |
-| `builder-exited-without-ready …` | Builder process gone, no report. | BLOCKER: pause, ask the human. |
+| `builder-exited-without-ready …` | Builder process gone, no report. | Run `handoff.mjs coverage` first (below). Exit 4 is bookkeeping. Otherwise BLOCKER: pause, ask the human. |
 | `timeout …` | Deadline passed. | BLOCKER: pause, ask the human. |
 | `never-started …` | No builder marker ever appeared. | Read the dispatch output for a launch failure, fix the cause, re-dispatch through `offload`. BLOCKER if it repeats. |
 | `handoff-deleted …` | The handoff vanished mid-wait. | STOP. Resolve the handoff path first, then ask the human. Do not re-dispatch blindly. |
 
 A `WAITER:` line means resume the loop at that slice, not start the run over.
+
+## A doc that fails coverage is bookkeeping
+
+`ready` refuses a handoff whose Gate results has no line for a frozen criterion
+ID (`incomplete:`, exit 4), so a builder that hit that refusal may have stopped
+without flipping the doc. Before you escalate a `builder-exited-without-ready` or
+`builder-awaiting-input` line, run `handoff.mjs coverage "$HANDOFF"`. It prints
+the missing IDs, one per line, and exits 4 when there are any.
+
+On exit 4 the work is not judged yet and nothing is wrong with it: like a missing
+`Loosened tests:` line, it is bookkeeping. Run `ledger set … --state returned`,
+then send a corrective without `--verdict` that names the missing IDs and asks for
+one line per ID. It records no rejection and costs no round. On exit 0 follow the
+table row as usual.
 
 ## Arbitrate a stopped builder
 
@@ -32,7 +46,8 @@ For `builder-blocked`, `builder-awaiting-input` and `builder-idle`, in order:
    Genuine judgment calls go through `council` first. Use the `section`
    subcommands, never hand-splice the markdown.
 3. Resume the builder: send the ruling into its pane. If it finished the slice but
-   never ran `handoff.mjs ready`, tell it to report and stop.
+   never ran `handoff.mjs ready`, tell it to report and stop. If `handoff.mjs
+   coverage "$HANDOFF"` exits 4, take the bookkeeping route above instead.
 4. Re-arm the bridge (same command as after a dispatch) and end your turn.
 
 If step 1 finds nothing to rule on (no disagreement, no question, no prompt, pane
