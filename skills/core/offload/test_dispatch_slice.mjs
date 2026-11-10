@@ -795,3 +795,47 @@ test('the header documents the freeze and the no-ID warning', () => {
   assert.match(head, /Frozen gates/);
   assert.match(head, /no criterion IDs|no IDs/);
 });
+
+test('a <!-- inside a criterion line hides no later criterion from the freeze', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-midline');
+  const lines = ['C1: uses `<!--` here', 'C2: second', 'C3: ends with `-->`', 'C4: opener <!-- note', 'x -->C5: not an ID line', 'C6 C7: joined', 'C8: last'];
+  run([R, WT, 'feat/midline', blockFile('midline-block.md', `${lines.join('\n')}\n`)]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.deepEqual(frozenOf(doc).split('\n').filter((l) => /^C\d/.test(l)), ['C1: uses `<!--` here', 'C2: second', 'C3: ends with `-->`', 'C4: opener <!-- note', 'C8: last']);
+  assert.deepEqual(coverage(doc).ids, ['C1', 'C2', 'C3', 'C4', 'C8']);
+});
+
+test('the freeze copy and handoff.mjs return the same IDs for the same text', () => {
+  const text = [
+    'C1: plain', '- C2: bullet', '<!-- C90: one-line comment -->', '<!--', 'C91: in a closed multi-line comment', '', 'C92: after a blank line inside it', '-->',
+    'C3: uses `<!--` here', 'C4: opener <!-- note', 'C5: closes later -->', 'x -->C93: joined onto a closer', 'C6 C7: joined', 'C8; C9: joined', 'C10 to C12: range',
+    'C13-C14: range', 'C15/C16: slash', 'C17 and C18: and', '   <!-- C94: indented comment -->', 'C19: after', '<!-- unclosed', 'C95: hidden by the unclosed comment', '', 'C20: after the blank line', '',
+  ].join('\n');
+  const R = repo();
+  const WT = join(BOX, 'wt-same-ids');
+  run([R, WT, 'feat/same-ids', blockFile('same-ids-block.md', text)]);
+  const frozen = frozenOf(hoff(['path', WT, 'arch'])).split('\n').map((l) => /C\d+[a-z]?/.exec(l)?.[0]).filter(Boolean);
+  const other = join(BOX, 'wt-same-ids-doc');
+  const doc = hoff(['init', other, 'arch', 'same ids']);
+  hoff(['section', 'set', doc, 'Frozen gates', '--text', text]);
+  assert.deepEqual(frozen, coverage(doc).ids, 'shell freeze and handoff.mjs read the same IDs');
+  assert.deepEqual(frozen, ['C1', 'C2', 'C3', 'C4', 'C5', 'C19', 'C20']);
+});
+
+test('--corrective writes nothing when Frozen gates holds no IDs yet', () => {
+  const corrective = blockFile('empty-fix.md', 'Corrective.\nC1: an ID line\nC2: another\n');
+  for (const mode of ['warm', 'cold']) {
+    const R = repo();
+    const WT = join(BOX, `wt-empty-${mode}`);
+    run([R, WT, `feat/empty-${mode}`, BLOCK, '--title', mode]);
+    const doc = hoff(['path', WT, 'arch']);
+    if (mode === 'warm') writeFileSync(`${doc}.builder`, `${process.pid}\n`); else rmSync(`${doc}.builder`, { force: true });
+    hoff(['status', doc, 'returned']);
+    hoff(['ledger', 'set', R, '1', '--state', 'returned']);
+    const before = frozenOf(doc);
+    run([R, WT, `feat/empty-${mode}`, corrective, '--corrective']);
+    assert.equal(frozenOf(doc), before, `${mode}: Frozen gates untouched`);
+    assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*C2: another/);
+  }
+});

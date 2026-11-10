@@ -304,14 +304,20 @@ function setStatus(p, value, steal) {
 // --- criterion coverage ---------------------------------------------------
 // An ID is `C<digits><optional lowercase letter>` and counts only as the first
 // token of a line: after leading space and an optional list marker (`-`, `*`,
-// `1.`), table pipe, `**` or backtick. A token that joins IDs (`C3, C5b`,
-// `C1/C2`, `C1 and C2`, `C1a-C2`, `C1\u2013C3`) counts for none. dispatch-slice.sh
-// freezes with a copy of this regex; test_dispatch_slice.mjs asserts they agree.
-const ID_FIRST = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!\s*(?:[-\u2013\u2014/,&+]|and\b|or\b)\s*C\d)/;
+// `1.`), table pipe, `**` or backtick. A leading ID followed by another ID
+// (separated by space, `,`, `;`, `/`, `&`, `+`, a dash, `and`, `or`, `to` or
+// `through`) counts for none, so a line that lists IDs or a range covers none
+// of them. A comment starts only where `<!--` is the first text on a line and
+// runs to the next `-->`; with no `-->` left it ends at the next blank line, so a
+// stray opener cannot swallow the rest of the doc. A `<!--` in the middle of a
+// line (in a code span, say) is plain text. dispatch-slice.sh freezes with a
+// copy of these two patterns; test_dispatch_slice.mjs asserts they agree.
+const ID_FIRST = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!(?:\s*(?:[-–—/,;&+]|and\b|or\b|to\b|through\b)\s*|\s+)C\d)/;
+const COMMENT = /^[ \t]*<!--(?:[\s\S]*?-->|[^\n]*(?:\n(?![ \t]*(?:\n|$))[^\n]*)*)/gm;
 
-// The IDs that lead a line of `text`, in order, ignoring CRLF and <!-- --> comments.
+// The IDs that lead a line of `text`, in order, ignoring CRLF and comments.
 function leadingIds(text) {
-  const plain = text.replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+  const plain = text.replace(/\r\n?/g, '\n').replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
   return plain.split('\n').map((l) => ID_FIRST.exec(l)?.[1]).filter(Boolean);
 }
 

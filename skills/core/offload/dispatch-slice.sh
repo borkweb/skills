@@ -57,8 +57,8 @@
 # same IDs in the block leave it as it is, different IDs refuse the dispatch
 # (use a new worktree or end the old handoff). A block with no criterion IDs
 # prints one warning line and the dispatch continues. When the freeze or the
-# launch fails the section is put back as it was. The ID parser is a copy of
-# handoff.mjs's; test_dispatch_slice.mjs asserts the two agree.
+# launch fails the section is put back as it was. The ID and comment rules are a
+# copy of handoff.mjs's; test_dispatch_slice.mjs asserts the two agree.
 #
 # Known limitations: two calls without --id at the same time can pick the same
 # id (complete always passes --id), and a second run in the same session shares
@@ -337,16 +337,17 @@ launch() {
 FORCE_ENV=()
 
 # --- frozen gates -------------------------------------------------------------
-# Copy of handoff.mjs's first-token ID rule. Mode `ids` prints the distinct IDs,
-# `lines` the original lines that lead with one. Comments are blanked, not
-# removed, so line numbers still point at the original text.
+# Copy of handoff.mjs's first-token ID rule and comment rule (see the comment
+# above ID_FIRST there). Mode `ids` prints the distinct IDs, `lines` the lines
+# that lead with one, with comments blanked (not removed) so the lines keep their
+# numbers and what is copied is what the parser reads.
 read -r -d '' CRITERIA_JS <<'JS' || true
-const ID = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!\s*(?:[-–—/,&+]|and\b|or\b)\s*C\d)/;
+const ID = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!(?:\s*(?:[-–—/,;&+]|and\b|or\b|to\b|through\b)\s*|\s+)C\d)/;
+const COMMENT = /^[ \t]*<!--(?:[\s\S]*?-->|[^\n]*(?:\n(?![ \t]*(?:\n|$))[^\n]*)*)/gm;
 const text = require("fs").readFileSync(0, "utf8").replace(/\r\n?/g, "\n");
-const bare = text.replace(/<!--[\s\S]*?(?:-->|$)/g, (m) => m.replace(/[^\n]/g, "")).split("\n");
-const orig = text.split("\n");
+const bare = text.replace(COMMENT, (m) => m.replace(/[^\n]/g, "")).split("\n");
 const hit = bare.map((l, i) => (ID.test(l) ? i : -1)).filter((i) => i >= 0);
-const out = process.argv[1] === "lines" ? hit.map((i) => orig[i]) : [...new Set(hit.map((i) => ID.exec(bare[i])[1]))].sort();
+const out = process.argv[1] === "lines" ? hit.map((i) => bare[i]) : [...new Set(hit.map((i) => ID.exec(bare[i])[1]))].sort();
 if (out.length) process.stdout.write(out.join("\n") + "\n");
 JS
 criteria() { node -e "$CRITERIA_JS" "$1"; }

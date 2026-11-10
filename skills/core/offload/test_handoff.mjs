@@ -465,6 +465,20 @@ const COVERAGE_ROWS = [
   ['G4 a multi-ID line freezes nothing on the frozen side', 'C1 and C2: a\nC3: b\n', 'C3: p\n', []],
   ['G4 bold ID with a title still counts', '**C4 Diff scope.**\n', '', ['C4']],
   ['G2 leading whitespace is accepted', '  C1: a\n\t- C2: b\n', '   C1: p\n', ['C2']],
+  // A <!-- opens a comment only at the start of a line. A criterion that quotes it mid-line must not hide the lines after it.
+  ['B1 a <!-- inside a code span hides nothing', 'C1: uses `<!--` here\nC2: b\n', 'C1: p\n', ['C2']],
+  ['B1 a mid-line opener closed on a later line is not a comment', 'C1: a <!-- note\nC2: b\nC3: c -->\n', 'C1: p\n', ['C2', 'C3']],
+  ['B1 a mid-line closer joins nothing onto the next line', 'C1: a <!-- note\nx -->C2: b\n', '', ['C1']],
+  ['B1 an unclosed line-start comment ends at the next blank line', 'C1: a\n<!-- unclosed\nC9: hidden\n\nC2: b\n', '', ['C1', 'C2']],
+  ['B1 a closed multi-line comment hides its own blank lines', 'C1: a\n<!--\nnote\n\nC9: hidden\n-->\nC2: b\n', '', ['C1', 'C2']],
+  ['B1 an indented line-start comment is a comment', 'C1: a\n   <!-- C9: x -->\nC2: b\n', '', ['C1', 'C2']],
+  ['B1 results side: a <!-- in a code span does not hide later lines', 'C1: a\nC2: b\n', 'C1: p `<!--`\nC2: p\n', []],
+  // A leading ID followed by another ID (space, comma, semicolon, slash, dash, and, or, to, through) counts for no ID.
+  ['B2 "C1 C2:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 C2: pass\n', ['C1', 'C2', 'C3']],
+  ['B2 "C1; C2:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1; C2: pass\n', ['C1', 'C2', 'C3']],
+  ['B2 "C1 to C3:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 to C3: pass\n', ['C1', 'C2', 'C3']],
+  ['B2 "C1 through C3:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 through C3: pass\n', ['C1', 'C2', 'C3']],
+  ['B2 a joined first token freezes nothing on the frozen side', 'C1 C2: a\nC3: b\n', 'C3: p\n', []],
 ];
 for (const [name, frozen, results, missing] of COVERAGE_ROWS) {
   test(`coverage: ${name}`, () => {
