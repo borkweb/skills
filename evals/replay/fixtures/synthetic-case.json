@@ -1,0 +1,21 @@
+{
+  "id": "synthetic",
+  "repo": {
+    "identity": "fixture/synthetic",
+    "path": "@REPO@"
+  },
+  "base_commit": "@BASE@",
+  "goal": "add a line to fake-builder.txt",
+  "owned_files": "fake-builder.txt",
+  "criteria": "C1: The builder adds a line to fake-builder.txt.\nC2: The change is committed.\nC3: The gates pass.",
+  "gates_text": "Gates (run once after the last edit):\n- G1 `echo GATE-OK-STRING`\n- G2 `pwd`",
+  "gate_commands": [
+    "echo GATE-OK-STRING",
+    "pwd"
+  ],
+  "gate_commands_reviewed": true,
+  "missed_ids": [
+    "C2"
+  ],
+  "provenance": "synthetic fixture, built at test time"
+}
