@@ -18,3 +18,5 @@ The runner executes the adapter directly (no shell). For every case the adapter 
 The driver records elapsed time, adapter failures and raw results. It does not judge its own output or certify a model from text matching. Compare results blind against the criteria: facts and literals preserved, correct actions/verdicts, actual fixture state, missed/false findings, redundant questions/checks, tools, latency and cache-aware token use. Deterministic fixture assertions should check commits, diffs and exit codes where applicable. For subjective prose, use independent paired judgment.
 
 Start with the core preservation and authorization cases. Expand each pilot skill to 10–20 realistic cases and repeat them before drawing broad conclusions. Small forward tests establish regression evidence, not a cross-model speedup. Keep required contracts when a shorter variant performs worse.
+
+The builder replay eval has its own format, case builder and runner: see [replay/README.md](replay/README.md). Record the source revision of each arm in a replay result as a full SHA, not a ref name.
