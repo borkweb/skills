@@ -1,6 +1,6 @@
 {
   "name": "bork",
-  "version": "3.32.0",
+  "version": "3.33.0",
   "description": "My Original and Collected skills, agents, commands, and hooks. Writing, reviewing, planning, QA, and shipping across the dev cycle.",
   "author": {
     "name": "Matthew Batchelder",
@@ -34,6 +34,7 @@
     "./skills/core/humanize",
     "./skills/core/layman",
     "./skills/core/offload",
+    "./skills/core/orchestrate",
     "./skills/core/pr-review",
     "./skills/core/prototype",
     "./skills/core/red-pen",
