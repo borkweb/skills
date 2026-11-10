@@ -48,6 +48,18 @@
 #               session headlessly when the bridge fires, so the run continues
 #               after the interactive session is closed (Claude architects only)
 #
+# Frozen gates: on a fresh dispatch, before the builder launches, every line of
+# the block whose first token is a criterion ID (`C1: x`, `- C2: x`, `| C3 | x |`,
+# `**C4 x.**`, a backticked ID, `1. C6: x`; leading whitespace allowed, one
+# criterion per line) is copied verbatim into the handoff's `## Frozen gates`, so
+# the builder's `ready` is checked against them (handoff.mjs coverage). It never
+# runs on --corrective. A section that already holds IDs is never rewritten: the
+# same IDs in the block leave it as it is, different IDs refuse the dispatch
+# (use a new worktree or end the old handoff). A block with no criterion IDs
+# prints one warning line and the dispatch continues. When the freeze or the
+# launch fails the section is put back as it was. The ID parser is a copy of
+# handoff.mjs's; test_dispatch_slice.mjs asserts the two agree.
+#
 # Known limitations: two calls without --id at the same time can pick the same
 # id (complete always passes --id), and a second run in the same session shares
 # the first run's ledger.
@@ -315,6 +327,7 @@ launch() {
     echo "dispatch-slice: launch failed (exit $rc); slice stays specced, nothing is running" >&2
     exit "$rc"
   fi
+  FREEZE_DONE=0 # the builder is running: its criteria stay frozen
   printf '%s\n' "$out"
   pane=$(sidecar pane); frontend=$(sidecar frontend)
   hoff status "$DOC" dispatched >/dev/null
@@ -322,6 +335,58 @@ launch() {
   [ -n "$pane" ] || echo "dispatch-slice: no pane recorded for frontend ${frontend:-unknown}; correctives will re-dispatch cold"
 }
 FORCE_ENV=()
+
+# --- frozen gates -------------------------------------------------------------
+# Copy of handoff.mjs's first-token ID rule. Mode `ids` prints the distinct IDs,
+# `lines` the original lines that lead with one. Comments are blanked, not
+# removed, so line numbers still point at the original text.
+read -r -d '' CRITERIA_JS <<'JS' || true
+const ID = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!\s*(?:[-–—/,&+]|and\b|or\b)\s*C\d)/;
+const text = require("fs").readFileSync(0, "utf8").replace(/\r\n?/g, "\n");
+const bare = text.replace(/<!--[\s\S]*?(?:-->|$)/g, (m) => m.replace(/[^\n]/g, "")).split("\n");
+const orig = text.split("\n");
+const hit = bare.map((l, i) => (ID.test(l) ? i : -1)).filter((i) => i >= 0);
+const out = process.argv[1] === "lines" ? hit.map((i) => orig[i]) : [...new Set(hit.map((i) => ID.exec(bare[i])[1]))].sort();
+if (out.length) process.stdout.write(out.join("\n") + "\n");
+JS
+criteria() { node -e "$CRITERIA_JS" "$1"; }
+
+FREEZE_DONE=0; FREEZE_PRIOR=""
+restore_frozen() {
+  [ "$FREEZE_DONE" -eq 1 ] || return 0
+  FREEZE_DONE=0
+  local tmp
+  tmp=$(mktemp) || return 0
+  printf '%s\n' "$FREEZE_PRIOR" > "$tmp"
+  if hoff section set "$DOC" "Frozen gates" --file "$tmp" >/dev/null 2>&1; then
+    echo "dispatch-slice: restored Frozen gates after the failed dispatch" >&2
+  else
+    echo "dispatch-slice: could not restore Frozen gates in $DOC; check them before dispatching again" >&2
+  fi
+  rm -f "$tmp"
+}
+trap restore_frozen EXIT
+
+freeze_gates() {
+  local cur have want tmp
+  cur=$(hoff section get "$DOC" "Frozen gates") || die "could not read Frozen gates from $DOC; nothing was launched"
+  have=$(printf '%s\n' "$cur" | criteria ids) || die "could not read the criteria in Frozen gates; nothing was launched"
+  want=$(criteria ids < "$BLOCK") || die "could not read the criteria in $BLOCK; nothing was launched"
+  if [ -n "$have" ]; then
+    [ "$have" = "$want" ] && return 0
+    die "Frozen gates in $DOC already hold criteria that this block does not match. Frozen gates are never rewritten: use a new worktree for this slice or end the old handoff (node $HANDOFF_MJS end \"$DOC\"). Nothing was launched."
+  fi
+  if [ -z "$want" ]; then
+    echo "dispatch-slice: warning: the block has no criterion IDs (lines that start with C1:, - C2:, **C3 ...), so nothing was frozen and ready will not check coverage"
+    return 0
+  fi
+  tmp=$(mktemp) || die "could not create a temp file for the freeze"
+  { printf '%s\n' "$cur"; criteria lines < "$BLOCK"; } > "$tmp"
+  FREEZE_PRIOR=$cur
+  FREEZE_DONE=1
+  hoff section set "$DOC" "Frozen gates" --file "$tmp" >/dev/null || { rm -f "$tmp"; die "could not freeze the criteria into $DOC; nothing was launched"; }
+  rm -f "$tmp"
+}
 
 if [ "$CORRECTIVE" -eq 1 ]; then
   DOC=$(hoff path "$WT" "$SID")
@@ -386,6 +451,7 @@ else
 fi
 
 DOC=$(hoff init "$WT" "$SID" "${TITLE:-$BRANCH}") || die "could not create the handoff for $WT"
+freeze_gates
 hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
 ensure_ledger
 if [ -z "$ID" ]; then

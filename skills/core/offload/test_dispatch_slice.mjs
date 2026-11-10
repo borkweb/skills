@@ -670,3 +670,128 @@ test('--unattended refuses a Codex architect, which cannot be resumed with claud
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /Codex architect/);
 });
+
+// --- mechanical freeze: ID-first lines of the block land in Frozen gates ---------
+// The freeze runs on a fresh dispatch only, before launch, so a builder that
+// finishes fast and runs `ready` already sees the criteria it owes lines for.
+
+const frozenOf = (doc) => readFileSync(doc, 'utf8').match(/^## Frozen gates\n([\s\S]*?)^## /m)[1];
+const coverage = (doc) => {
+  const r = spawnSync(NODE, [HANDOFF, 'coverage', doc], { encoding: 'utf8', env: env() });
+  return { code: r.status, ids: r.stdout.split('\n').filter(Boolean) };
+};
+const FREEZE_LINES = ['C1: x', '- C2: x', '| C3 | x |', '**C4 x.**', '`C5a`: x', '1. C6: x'];
+const NOT_FROZEN = ['see C9 for details', '<!-- C7: single-line comment -->', 'C8: inside a multi-line comment'];
+const freezeBlock = (lines = FREEZE_LINES) => ['Execute the freeze slice.', 'Acceptance: one criterion per line, ID first.',
+  ...lines, ...NOT_FROZEN.slice(0, 2), '<!--', NOT_FROZEN[2], '-->', 'Gates: none.', ''].join('\n');
+const blockFile = (name, text) => { const f = join(BOX, name); writeFileSync(f, text); return f; };
+
+test('a fresh dispatch freezes every ID-first block line verbatim, and freeze and coverage agree', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze');
+  run([R, WT, 'feat/freeze', blockFile('freeze-block.md', freezeBlock()), '--title', 'freeze']);
+  const doc = hoff(['path', WT, 'arch']);
+  const frozen = frozenOf(doc).split('\n');
+  for (const line of FREEZE_LINES) assert.ok(frozen.includes(line), `frozen verbatim: ${line}`);
+  for (const line of NOT_FROZEN) assert.ok(!frozen.includes(line), `not frozen: ${line}`);
+  assert.ok(!frozenOf(doc).includes('C8'), 'nothing inside a multi-line comment is frozen');
+  assert.equal(status(doc), 'dispatched');
+  // The freeze copy of the parser and handoff.mjs read the same IDs.
+  const cov = coverage(doc);
+  assert.deepEqual(cov.ids, ['C1', 'C2', 'C3', 'C4', 'C5a', 'C6']);
+  assert.equal(cov.code, 4);
+});
+
+test('freeze and coverage agree on joined IDs, ranges, indentation and a CRLF block', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-shapes');
+  const lines = ['C10: a', '  - C11: indented', 'C1a-C2: range', 'C12–C13: en dash range', 'C3, C5b: list', 'C1/C2: slash',
+    'C1 and C2: and', 'c14: lowercase', '**C15 Diff scope.**'];
+  run([R, WT, 'feat/shapes', blockFile('shapes-block.md', `${lines.join('\r\n')}\r\n`)]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.ok(!frozenOf(doc).includes('\r'), 'no carriage returns are frozen');
+  assert.deepEqual(coverage(doc).ids, ['C10', 'C11', 'C15']);
+  assert.deepEqual(frozenOf(doc).split('\n').filter((l) => /C\d/.test(l)), ['C10: a', '  - C11: indented', '**C15 Diff scope.**']);
+});
+
+test('a section that already holds the same IDs is left byte-identical; different IDs refuse the dispatch', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-keep');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/keep', WT]);
+  const doc = hoff(['init', WT, 'arch', 'keep']);
+  hoff(['section', 'set', doc, 'Frozen gates', '--text', 'C1: the architect froze this by hand']);
+  const before = frozenOf(doc);
+  run([R, WT, 'feat/keep', blockFile('keep-block.md', 'Execute it.\nC1: reworded\n')]);
+  assert.equal(frozenOf(doc), before, 'identical IDs: nothing written');
+  assert.equal(status(doc), 'dispatched');
+});
+
+test('a block whose IDs differ from the frozen ones is refused: nothing launched, nothing overwritten', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-differ');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/differ', WT]);
+  const doc = hoff(['init', WT, 'arch', 'differ']);
+  hoff(['section', 'set', doc, 'Frozen gates', '--text', 'C1: first slice']);
+  const frozen = frozenOf(doc);
+  const nextBefore = readFileSync(doc, 'utf8').match(/^## Next slice\n[\s\S]*$/m)[0];
+  for (const text of ['Execute it.\nC2: a different slice\n', 'Execute it with no criteria at all.\n']) {
+    const r = runFail([R, WT, 'feat/differ', blockFile('differ-block.md', text)]);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /new worktree|end the old handoff/);
+    assert.doesNotMatch(r.log, /tab create/, 'no builder launched');
+    assert.equal(frozenOf(doc), frozen, 'Frozen gates are never cleared or rewritten');
+    assert.equal(readFileSync(doc, 'utf8').match(/^## Next slice\n[\s\S]*$/m)[0], nextBefore, 'the old brief was not clobbered');
+    assert.equal(status(doc), 'specced');
+  }
+});
+
+test('--corrective never writes Frozen gates: the warm pane send and the cold re-dispatch', () => {
+  const corrective = blockFile('freeze-fix.md', 'Corrective.\nC1: changed wording\nC9: a new ID\n');
+  for (const mode of ['warm', 'cold']) {
+    const R = repo();
+    const WT = join(BOX, `wt-freeze-${mode}`);
+    run([R, WT, `feat/fz-${mode}`, blockFile(`fz-${mode}.md`, freezeBlock()), '--title', mode]);
+    const doc = hoff(['path', WT, 'arch']);
+    if (mode === 'warm') writeFileSync(`${doc}.builder`, `${process.pid}\n`); else rmSync(`${doc}.builder`, { force: true });
+    hoff(['status', doc, 'returned']); // results-ready is refused until Gate results covers the frozen IDs
+    hoff(['ledger', 'set', R, '1', '--state', 'returned']);
+    const before = frozenOf(doc);
+    assert.ok(before.includes('C1: x'));
+    const { stdout, log } = run([R, WT, `feat/fz-${mode}`, corrective, '--corrective']);
+    assert.equal(frozenOf(doc), before, `${mode}: Frozen gates untouched`);
+    assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*C9: a new ID/);
+    assert.match(mode === 'warm' ? log : stdout, mode === 'warm' ? /pane run w9:p7 .*Next slice/ : /re-dispatching cold/);
+  }
+});
+
+test('a failed launch restores Frozen gates so a revised block can freeze again', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-fail');
+  const r = runFail([R, WT, 'feat/fz-fail', blockFile('fz-fail.md', freezeBlock())], { HERDR_STUB_MODE: 'fail-create' });
+  assert.notEqual(r.status, 0);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(status(doc), 'specced');
+  assert.ok(!/C1: x/.test(frozenOf(doc)), 'the failed dispatch left no criteria behind');
+  assert.match(frozenOf(doc), /Success criteria, frozen BEFORE results exist/, 'the template comment is kept');
+  assert.equal(coverage(doc).code, 0);
+  // A revised block then freezes cleanly.
+  run([R, WT, 'feat/fz-fail', blockFile('fz-fail2.md', 'Execute.\nC1: revised\n')]);
+  assert.match(frozenOf(doc), /^C1: revised$/m);
+});
+
+test('a block with no criterion IDs warns once, still launches, and keeps the bridge line last', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-none');
+  const { stdout } = run([R, WT, 'feat/fz-none', BLOCK]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(stdout.split('\n').filter((l) => /warning/i.test(l)).length, 1, stdout);
+  assert.equal(status(doc), 'dispatched');
+  assert.match(stdout.trim().split('\n').pop(), /^NEXT \(background\):/);
+  assert.equal(coverage(doc).code, 0, 'nothing frozen, so ready behaves as before');
+});
+
+test('the header documents the freeze and the no-ID warning', () => {
+  const head = readFileSync(SLICE, 'utf8').split('\nset -uo pipefail')[0];
+  assert.match(head, /Frozen gates/);
+  assert.match(head, /no criterion IDs|no IDs/);
+});
