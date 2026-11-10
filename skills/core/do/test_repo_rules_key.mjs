@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, sep } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
 import test, { after } from 'node:test';
@@ -55,9 +55,11 @@ const keyOf = (dir) => {
   assert.ok(r.out.endsWith('\n') && r.out.trim() && !r.out.trim().includes('\n'), `one line expected: ${r.out}`);
   return r.out.trim();
 };
+// A missing or crashing script also exits 1 with empty stdout, so require the script's own message.
 const refused = (r) => {
   assert.notStrictEqual(r.code, 0);
   assert.strictEqual(r.out, '');
+  assert.ok(r.err.startsWith('repo-rules-key: '), `refusal must come from the script: ${r.err}`);
 };
 const localKey = (commonDir) => `local/${createHash('sha256').update(realpathSync(commonDir)).digest('hex').slice(0, 16)}`;
 
@@ -89,11 +91,12 @@ test('a token in the remote never reaches stdout or stderr (C4)', () => {
   assert.strictEqual(ok.out, 'github.com/o/r\n');
   const bad = run([repo('https://x-access-token:S2SECRETMARK@github.com/o/../r.git')]);
   refused(bad);
-  for (const text of [ok.out, ok.err, bad.out, bad.err]) assert.ok(!text.includes('S2SECRETMARK'));
+  // The script lowercases the URL, so a leak could be lowercased too.
+  for (const text of [ok.out, ok.err, bad.out, bad.err]) assert.ok(!text.toLowerCase().includes('s2secretmark'));
 });
 
-test('a . or .. segment, an empty segment or a local-path remote is refused', () => {
-  for (const origin of ['https://github.com/o/../r.git', 'https://github.com/o/./r.git', 'https://github.com//r.git', '/srv/git/r.git', 'https://github.com/o/r%2Fx.git']) {
+test('a . or .. segment, an empty segment, a two-segment remote or a local-path remote is refused', () => {
+  for (const origin of ['https://github.com/o/../r.git', 'https://github.com/o/./r.git', 'https://github.com//r.git', '/srv/git/r.git', 'https://github.com/o/r%2Fx.git', 'https://github.com/r.git', 'https://local/0123456789abcdef']) {
     refused(run([repo(origin)]));
   }
 });
@@ -111,7 +114,8 @@ test('no remote: a symlinked path and its realpath give one key (C5d)', () => {
   const link = join(BOX, 'link');
   symlinkSync(d, link);
   assert.strictEqual(keyOf(link), keyOf(d));
-  assert.strictEqual(keyOf(d), keyOf(realpathSync(d)));
+  // BOX is already a realpath; tmpdir() is /var/... where /var is a symlink to /private/var on macOS.
+  assert.strictEqual(keyOf(join(tmpdir(), basename(BOX), basename(d))), keyOf(d));
 });
 
 test('no remote: main checkout and a linked worktree share one key (C5b)', () => {
@@ -156,6 +160,13 @@ test('--dir with BORK_REPO_RULES_DIR unset uses $HOME/.agent-handoffs/repo-rules
   delete env.BORK_REPO_RULES_DIR;
   const d = repo('https://github.com/o/r.git');
   assert.strictEqual(run(['--dir', d], { env }).out, `${join(HOME, '.agent-handoffs', 'repo-rules', 'github.com/o/r')}\n`);
+});
+
+test('an inherited GIT_DIR, GIT_WORK_TREE or GIT_COMMON_DIR cannot override the path argument (P4)', () => {
+  const target = repo('https://github.com/o/target.git');
+  const other = repo('https://github.com/o/other.git');
+  const env = { ...ENV, GIT_DIR: join(other, '.git'), GIT_WORK_TREE: other, GIT_COMMON_DIR: join(other, '.git') };
+  assert.strictEqual(run([target], { env }).out, 'github.com/o/target\n');
 });
 
 test('bad usage exits 2 with empty stdout', () => {
