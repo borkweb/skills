@@ -42,11 +42,11 @@ const orchFile = () => join(orchHome(), 'orchestrator.json');
 const recFile = (dir) => join(dir, 'run.json');
 
 function realHome(create = false) {
-  try { return realpathSync(runsHome()); } catch (e) {
+  try { return realpathSync.native(runsHome()); } catch (e) {
     if (e.code !== 'ENOENT') throw e;
     if (!create) return null;
     mkdirSync(runsHome(), { recursive: true, mode: 0o700 });
-    return realpathSync(runsHome());
+    return realpathSync.native(runsHome());
   }
 }
 
@@ -60,7 +60,7 @@ function resolveRun(arg) {
   if (!home) throw new Fail(`no such run: ${arg} (no runs home at ${runsHome()})`);
   if (!isAbsolute(arg)) checkId(arg);
   let real;
-  try { real = realpathSync(isAbsolute(arg) ? arg : join(home, arg)); } catch { throw new Fail(`no such run: ${arg}`); }
+  try { real = realpathSync.native(isAbsolute(arg) ? arg : join(home, arg)); } catch { throw new Fail(`no such run: ${arg}`); }
   if (dirname(real) !== home || !statSync(real).isDirectory()) throw new Fail(`${arg} is not a direct child of ${home}`);
   checkId(basename(real));
   return { id: basename(real), dir: real };
@@ -136,6 +136,7 @@ function breakStale(lock) {
 function withLock(dir, fn) {
   const lock = join(dir, 'run.json.lock');
   const end = Date.now() + LOCK_WAIT_MS;
+  let stuck = false;
   for (let backoff = 2; ;) {
     try {
       const fd = openSync(lock, 'wx', 0o600);
@@ -144,8 +145,12 @@ function withLock(dir, fn) {
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (lockIsStale(lock) && breakStale(lock)) continue;
-      if (Date.now() > end) throw new Fail(`could not take the run lock ${lock} within 5 s; another writer holds it`);
+      if (lockIsStale(lock)) { if (breakStale(lock)) continue; stuck = true; }
+      if (Date.now() > end) {
+        throw new Fail(stuck
+          ? `could not take the run lock ${lock} within 5 s; it is stale but the run dir is not writable, so it cannot be broken`
+          : `could not take the run lock ${lock} within 5 s; another writer holds it`);
+      }
       sleepMs(backoff + Math.random() * backoff);
       backoff = Math.min(backoff * 2, 50);
     }
@@ -248,9 +253,9 @@ function directChild(home, abs) {
   if (!isAbsolute(abs)) throw new Fail(`--run-dir must be absolute: ${abs}`);
   checkId(basename(abs));
   let real;
-  try { lstatSync(abs); real = realpathSync(abs); } catch (e) {
+  try { lstatSync(abs); real = realpathSync.native(abs); } catch (e) {
     if (e.code !== 'ENOENT') throw e;
-    try { real = join(realpathSync(dirname(abs)), basename(abs)); } catch { throw new Fail(`${abs} is not a direct child of ${home}`); }
+    try { real = join(realpathSync.native(dirname(abs)), basename(abs)); } catch { throw new Fail(`${abs} is not a direct child of ${home}`); }
   }
   if (dirname(real) !== home) throw new Fail(`${abs} is not a direct child of ${home}`);
   return real;
@@ -453,14 +458,14 @@ function scanRuns(onInvalid = warnInvalid, { cache, skip } = {}) {
     if (cache) {
       try { const f = statSync(recFile(dir)); sig = `${f.mtimeMs}:${f.size}:${f.ino}`; } catch { cache.delete(name); }
       const hit = sig && cache.get(name);
-      if (hit?.sig === sig) { if (hit.err) onInvalid(hit.err); else found.push({ name, dir, rec: hit.rec }); continue; }
+      if (hit?.sig === sig) { found.push({ name, dir, rec: hit.rec }); continue; }
     }
     try {
       const rec = readRun(dir);
       cache?.set(name, { sig, rec });
       found.push({ name, dir, rec });
     } catch (e) {
-      if (e.invalid) { cache?.set(name, { sig, err: e }); onInvalid(e); }
+      if (e.invalid) { cache?.delete(name); onInvalid(e); } // never cache a failed read: a chmod repair changes no mtime, size or inode
       else if (!/no run\.json/.test(e.message)) throw e;
     }
   }
@@ -637,7 +642,7 @@ function launchScript({ id, dir, repo, harness, model, sessionId, home }) {
   const prompt = `Read ${dir}/launch-prompt.md and follow it.`;
   const arch = harness === 'claude'
     ? ['claude', ...(model ? ['--model', model] : []), '--session-id', sessionId, prompt]
-    : ['codex', ...(model ? ['-m', model] : []), '--add-dir', home, '--add-dir', join(handoffsDir(), 'offload'), prompt];
+    : ['codex', ...(model ? ['-m', model] : []), '--sandbox', 'workspace-write', '--add-dir', home, '--add-dir', join(handoffsDir(), 'offload'), prompt];
   const exp = [['BORK_RUN_ID', id], ['BORK_RUN_DIR', dir], ['BORK_RUNS_CLI', CLI_PATH], ['BORK_RUNS_HOME', home]];
   for (const k of ['AGENT_HANDOFFS_DIR', 'ORCHESTRATOR_HOME']) if (process.env[k]) exp.push([k, process.env[k]]);
   return `#!/usr/bin/env bash

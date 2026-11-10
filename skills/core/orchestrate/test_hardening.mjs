@@ -4,6 +4,7 @@
 import assert from 'node:assert';
 import test from 'node:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
@@ -26,8 +27,10 @@ function unreadable(box, kind) {
   return dir;
 }
 
-for (const kind of root ? [] : ['eisdir', 'eacces']) {
-  test(`1: a run.json that is ${kind === 'eisdir' ? 'a directory' : 'mode 000'} is skipped with one warning by list, wait and ack --all`, async () => {
+for (const kind of ['eisdir', 'eacces']) {
+  // root reads a mode-000 file; a directory is unreadable for root too.
+  const skip = root && kind === 'eacces';
+  test(`1: a run.json that is ${kind === 'eisdir' ? 'a directory' : 'mode 000'} is skipped with one warning by list, wait and ack --all`, { skip }, async () => {
     const hb = newBox();
     const good = mkRun(hb);
     run(hb, ['set', good.id, '--state', 'done', '--delivery', 'd']);
@@ -52,7 +55,7 @@ for (const kind of root ? [] : ['eisdir', 'eacces']) {
     } finally { if (kind === 'eacces') chmodSync(recPath(bad), 0o600); }
   });
 
-  test(`1: single-run commands name the path of a ${kind} run.json and exit non-zero`, () => {
+  test(`1: single-run commands name the path of a ${kind} run.json and exit non-zero`, { skip }, () => {
     const hb = newBox();
     const bad = unreadable(hb, kind);
     const id = bad.split('/').pop();
@@ -233,4 +236,64 @@ test('10: herdr 0.9.3 failures (exit 1 with a JSON error on stderr) and an exit-
   const { id } = orchestratorRun(hb);
   const calm = run(hb, ['set', id, '--state', 'blocked', '--summary', 's']);
   assert.equal(warnings(calm.err).length, 0, 'a good send stays silent');
+});
+
+// ---- polish follow-up (review-A-r2 findings 1, 3, 4; decisions 13) --------------------------------
+
+test('r2-1: a run.json repaired by chmod while wait runs fires its RUN line before the timeout', { skip: root }, async () => {
+  const hb = newBox();
+  const { dir, id } = mkRun(hb);
+  ask(hb, id);
+  chmodSync(recPath(dir), 0);
+  const child = spawnChild(hb, ['wait', '--run', id, '--timeout', '15']);
+  await sleep(1800);
+  chmodSync(recPath(dir), 0o600); // mtime, size and inode are unchanged
+  const r = await child.done;
+  assert.equal(r.code, 0, `exit ${r.code} after ${r.ms} ms: ${r.err}`);
+  assert.match(r.out, new RegExp(`^RUN ${id} needs-me`, 'm'));
+  assert.ok(r.ms < 9000, `${r.ms} ms`);
+  assert.equal(warnings(r.err).length, 1, `one warning, not one per tick: ${r.err}`);
+});
+
+// A case-insensitive filesystem (APFS default) resolves a different-case name to the same dir.
+const caseInsensitive = (() => {
+  const d = join(tmpdir(), `orch-case-${process.pid}-${Date.now()}`);
+  mkdirSync(d);
+  try { writeFileSync(join(d, 'a'), ''); return existsSync(join(d, 'A')); } finally { rmSync(d, { recursive: true, force: true }); }
+})();
+
+test('r2-3: a different-case run id resolves to the on-disk id, in show and in init --run-dir', { skip: !caseInsensitive }, () => {
+  const hb = newBox();
+  const disk = '2026-01-01-MixedCase-aaaa';
+  const made = run(hb, ['init', '--goal', 'g', '--run-dir', join(hb.runs, disk), '--json']);
+  ok(made, 'init');
+  const lower = disk.toLowerCase();
+  const s = run(hb, ['show', lower, '--json']);
+  ok(s, 'show with a different-case id');
+  assert.equal(JSON.parse(s.out).id, disk);
+  const again = run(hb, ['init', '--goal', 'other', '--run-dir', join(hb.runs, lower), '--json']);
+  ok(again, 'init --run-dir with a different-case path');
+  assert.equal(JSON.parse(again.out).id, disk);
+  assert.equal(JSON.parse(again.out).goal, 'g');
+});
+
+test('r2-4: a stale lock that cannot be broken because the run dir is not writable says so, and names the lock', { skip: root }, async () => {
+  const hb = newBox();
+  const { dir, id } = mkRun(hb);
+  const lock = staleLock(dir, deadPid(), 30);
+  chmodSync(dir, 0o500);
+  try {
+    const r = await spawnChild(hb, ['set', id, '--note', 'x']).done;
+    assert.notEqual(r.code, 0);
+    assert.ok(r.err.includes(lock), r.err);
+    assert.match(r.err, /not writable/, r.err);
+    assert.match(r.err, /stale/, r.err);
+  } finally { chmodSync(dir, 0o700); }
+  const live = mkRun(hb, { slug: 'busy' });
+  // A fresh lock held by a live pid is not stale: the old message stays.
+  writeFileSync(join(live.dir, 'run.json.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
+  const other = await spawnChild(hb, ['set', live.id, '--note', 'x']).done;
+  assert.notEqual(other.code, 0);
+  assert.ok(!/not writable/.test(other.err), `a live writer keeps the old message: ${other.err}`);
+  assert.match(other.err, /another writer/, other.err);
 });

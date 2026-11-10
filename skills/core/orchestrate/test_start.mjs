@@ -4,7 +4,7 @@
 import assert from 'node:assert';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { HERE, NODE_DIR, barePath, calls, mkRepo, newBox, readRec, resetLog, run, sha } from './testkit.mjs';
 
@@ -165,7 +165,7 @@ test('launch.sh passes claude exactly the model, a v4 session id and the fixed p
   assert.ok(read(join(r.dir, 'launch.sh')).includes(rec.architect.session_id));
 });
 
-test('launch.sh passes codex -m, two scoped --add-dir roots and the fixed prompt, and records a null session id', () => {
+test('launch.sh passes codex -m, workspace-write, two scoped --add-dir roots and the fixed prompt, and records a null session id', () => {
   const sb = newBox();
   const r = launchFor(sb, ['--harness', 'codex', '--model', 'gpt-x']);
   assert.equal(readRec(r.dir).architect.session_id, null);
@@ -173,7 +173,7 @@ test('launch.sh passes codex -m, two scoped --add-dir roots and the fixed prompt
   assert.equal(runLaunch(sb, r.dir).status, 0);
   const [call] = argvLog(sb);
   assert.equal(call.bin, 'codex');
-  assert.deepEqual(call.argv, ['-m', 'gpt-x', '--add-dir', sb.runs, '--add-dir', join(sb.handoffs, 'offload'), FIXED(r.dir)]);
+  assert.deepEqual(call.argv, ['-m', 'gpt-x', '--sandbox', 'workspace-write', '--add-dir', sb.runs, '--add-dir', join(sb.handoffs, 'offload'), FIXED(r.dir)]);
 });
 
 test('launch.sh holds no goal bytes and no permission-bypass flags, and never execs the architect', () => {
@@ -182,7 +182,10 @@ test('launch.sh holds no goal bytes and no permission-bypass flags, and never ex
     const r = launchFor(sb, ['--harness', h]);
     const sh = read(join(r.dir, 'launch.sh'));
     assert.ok(!sh.includes('GOALBYTES-unique'));
-    for (const bad of ['--dangerously-skip-permissions', '--permission-mode', '--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '-a never', 'danger-full-access', '--sandbox']) assert.ok(!sh.includes(bad), bad);
+    for (const bad of ['--dangerously-skip-permissions', '--permission-mode', '--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '-a never', 'danger-full-access', 'read-only']) assert.ok(!sh.includes(bad), bad);
+    // Only codex may name a sandbox, and only workspace-write.
+    assert.equal((sh.match(/--sandbox/g) ?? []).length, h === 'codex' ? 1 : 0);
+    assert.deepEqual([...sh.matchAll(/'--sandbox' '([^']*)'/g)].map((m) => m[1]), h === 'codex' ? ['workspace-write'] : []);
     assert.ok(!/\bexec /.test(sh), 'no exec');
   }
 });

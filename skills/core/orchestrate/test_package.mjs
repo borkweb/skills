@@ -53,6 +53,13 @@ test('8: the loop says what to do on exit 124, on several RUN lines, and at a tr
   assert.match(s, /trust dialog[^\n]*blocked[^\n]*(user )?answer/i);
 });
 
+test('6: the SKILL says a Codex architect runs in the workspace-write sandbox and that a live Codex check is pending', () => {
+  const s = skill();
+  assert.match(s, /Codex architect[^\n]*workspace-write[^\n]*sandbox/i);
+  assert.match(s, /repo and the two added roots/i);
+  assert.match(s, /live Codex check is still pending/i);
+});
+
 test('evals/cases.json gains the three orchestration cases with unique ids and resolvable skills', () => {
   const cases = JSON.parse(read('evals/cases.json'));
   const ids = cases.map((c) => c.id);
