@@ -165,29 +165,42 @@ test('launch.sh passes claude exactly the model, a v4 session id and the fixed p
   assert.ok(read(join(r.dir, 'launch.sh')).includes(rec.architect.session_id));
 });
 
-test('launch.sh passes codex -m, workspace-write, two scoped --add-dir roots and the fixed prompt, and records a null session id', () => {
+// Decisions 16 (user ruling 6): herdr is blocked inside Codex's workspace-write sandbox
+// ("herdr pane list" fails with Operation not permitted), so a Codex architect cannot send
+// pane messages. Launching one is refused until that changes; the Codex-only launch line was removed.
+test('start --harness codex exits 2 before any side effect, and says why and what still works', () => {
   const sb = newBox();
-  const r = launchFor(sb, ['--harness', 'codex', '--model', 'gpt-x']);
-  assert.equal(readRec(r.dir).architect.session_id, null);
-  assert.equal(readRec(r.dir).architect.harness, 'codex');
-  assert.equal(runLaunch(sb, r.dir).status, 0);
-  const [call] = argvLog(sb);
-  assert.equal(call.bin, 'codex');
-  assert.deepEqual(call.argv, ['-m', 'gpt-x', '--sandbox', 'workspace-write', '--add-dir', sb.runs, '--add-dir', join(sb.handoffs, 'offload'), FIXED(r.dir)]);
+  const rp = mkRepo(sb, 'codex-target');
+  const before = readdirSync(sb.runs).length;
+  for (const [args, x] of [
+    [['--repo', rp, '--goal', 'g', '--harness', 'codex'], {}],
+    [['--repo', rp, '--goal', 'g', '--harness', 'codex', '--model', 'gpt-x'], {}],
+    [['--repo', rp, '--goal', 'g', '--harness', 'codex'], { HERDR_ENV: undefined }],
+    [['--repo', join(sb.root, 'not-a-repo'), '--goal', 'g', '--harness', 'codex'], {}],
+  ]) {
+    resetLog(sb);
+    const r = start(sb, args, x);
+    assert.equal(r.code, 2, `${args.join(' ')}: exit ${r.code}: ${r.err}`);
+    assert.match(r.err, /Codex architect launch is disabled/, r.err);
+    assert.match(r.err, /herdr is not reachable inside Codex's sandbox/, r.err);
+    assert.match(r.err, /Codex sessions can still coordinate \(claim, wait, show, answer, ack\)/, r.err);
+    assert.equal(readdirSync(sb.runs).length, before, 'no run dir');
+    assert.deepEqual(calls(sb), [], 'no herdr call');
+    assert.ok(!existsSync(sb.argv), 'codex never ran');
+  }
+  // The default harness is unchanged.
+  const ok1 = start(sb, ['--repo', rp, '--goal', 'g']);
+  assert.equal(ok1.code, 0, ok1.err);
+  assert.equal(readRec(ok1.dir).architect.harness, 'claude');
 });
 
-test('launch.sh holds no goal bytes and no permission-bypass flags, and never execs the architect', () => {
+test('launch.sh holds no goal bytes and no permission-bypass or sandbox flags, and never execs the architect', () => {
   const sb = newBox();
-  for (const h of ['claude', 'codex']) {
-    const r = launchFor(sb, ['--harness', h]);
-    const sh = read(join(r.dir, 'launch.sh'));
-    assert.ok(!sh.includes('GOALBYTES-unique'));
-    for (const bad of ['--dangerously-skip-permissions', '--permission-mode', '--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '-a never', 'danger-full-access', 'read-only']) assert.ok(!sh.includes(bad), bad);
-    // Only codex may name a sandbox, and only workspace-write.
-    assert.equal((sh.match(/--sandbox/g) ?? []).length, h === 'codex' ? 1 : 0);
-    assert.deepEqual([...sh.matchAll(/'--sandbox' '([^']*)'/g)].map((m) => m[1]), h === 'codex' ? ['workspace-write'] : []);
-    assert.ok(!/\bexec /.test(sh), 'no exec');
-  }
+  const r = launchFor(sb, ['--harness', 'claude']);
+  const sh = read(join(r.dir, 'launch.sh'));
+  assert.ok(!sh.includes('GOALBYTES-unique'));
+  for (const bad of ['--dangerously-skip-permissions', '--permission-mode', '--dangerously-bypass-approvals-and-sandbox', '--yolo', '--full-auto', '-a never', 'danger-full-access', 'read-only', '--sandbox', 'codex']) assert.ok(!sh.includes(bad), bad);
+  assert.ok(!/\bexec /.test(sh), 'no exec');
 });
 
 test('a repo path with a space and a quote, a home with a space and a hostile --model all reach the stub as exact argv', () => {

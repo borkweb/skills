@@ -43,7 +43,6 @@ test('the SKILL routes do runs, names matt:orchestrator, relays questions verbat
   for (const w of ['start', 'wait', 'answer']) assert.match(desc, new RegExp(w, 'i'));
   assert.match(s, /matt:orchestrator/);
   for (const w of ['verbatim', 'data', '--by user', '--by orchestrator', 'ack --revision', 'one background', 'claim']) assert.ok(s.includes(w), `SKILL mentions ${w}`);
-  assert.match(s, /approval prompts/);
 });
 
 test('8: the loop says what to do on exit 124, on several RUN lines, and at a trust dialog', () => {
@@ -53,11 +52,10 @@ test('8: the loop says what to do on exit 124, on several RUN lines, and at a tr
   assert.match(s, /trust dialog[^\n]*blocked[^\n]*(user )?answer/i);
 });
 
-test('6: the SKILL says a Codex architect runs in the workspace-write sandbox and that a live Codex check is pending', () => {
+test('6: the SKILL says Codex architects cannot be launched yet and a Codex session can still coordinate', () => {
   const s = skill();
-  assert.match(s, /Codex architect[^\n]*workspace-write[^\n]*sandbox/i);
-  assert.match(s, /repo and the two added roots/i);
-  assert.match(s, /live Codex check is still pending/i);
+  assert.match(s, /Codex architects cannot be launched yet \(herdr is blocked in Codex's sandbox\); a Codex session can still coordinate\./);
+  assert.ok(!/workspace-write|live Codex check|--harness claude\|codex|approval prompts/.test(s), 'no stale Codex launch text');
 });
 
 test('evals/cases.json gains the three orchestration cases with unique ids and resolvable skills', () => {
