@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DeskBoard } from '../types'
+import type { DeskBoard, DeskRow } from '../types'
 import {
-  bandText, buildBoard, clean, emptyText, fit, footerText, herdrMessage, homeDisplay, isDirName, isHerdrId,
-  isOldFinished, isTerminalApp, labelOf, line1Of, MAX_RECORD_BYTES, parseRecord, reasonOf, runsHome, toast, workspaceOf,
+  bandText, buildBoard, clean, emptyText, fit, footerText, GROUP_COLOR, headOf, herdrMessage, homeDisplay, isDirName, isHerdrId,
+  isOldFinished, isTerminalApp, labelOf, lookOf, MAX_RECORD_BYTES, parseRecord, reasonOf, runsHome, toast, workspaceOf,
 } from './model.ts'
 import type { Item, Rec } from './model.ts'
 
@@ -16,7 +16,9 @@ const PRESS_TIMEOUT_MS = 5000
 const HERDR_FALLBACKS = ['/opt/homebrew/bin/herdr', '/usr/local/bin/herdr']
 
 // Change the tag when the view model's fields change: it declines what an earlier version stored.
-const board = atom({ plugin: 'desk-board', key: 'board' } as const, null, { shape: 'board-1' })
+const board = atom({ plugin: 'desk-board', key: 'board' } as const, null, { shape: 'board-2' })
+// A card's round border and its padding take this many columns.
+const CARD_CHROME = 4
 
 // Module state: a reload loses it and the next tick rebuilds it from the files.
 type Outcome = { rec: Rec } | 'bad'
@@ -233,36 +235,65 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const b = await read($, board)
     const { Box, Text, Button } = $.ui.resolve(e)
-    const cols = e.props.bodyColumns
     const isDesktop = e.surface === 'desktop'
+    const inner = Math.max(1, e.props.bodyColumns - CARD_CHROME)
+    const pressOf = (row: DeskRow) => () => press($, { tab: row.tab!, repo: row.repo, isDesktop, app })
+    const canPress = (row: DeskRow) => row.tab !== null && isHerdrId(row.tab)
 
     if (b === null) return <Text dimColor>Reading runs…</Text>
 
+    // A run's card: the head (glyph, bold repo, what it is doing) with the age at the right, the goal,
+    // then what needs saying. A head with a herdr tab is the press target.
+    const card = (row: DeskRow) => {
+      const look = lookOf(row)
+      const head = Array.from(fit(`${look.glyph} ${headOf(row)}`, Math.max(1, inner - Array.from(row.age).length - 1)))
+      const after = head.slice(2).join('')
+      const repo = after.startsWith(row.repo) ? row.repo : after
+      const parts = [
+        <Text color={look.color}>{head[0] ?? ''}</Text>,
+        ' ',
+        <Text weight="bold">{repo}</Text>,
+        <Text dimColor>{after.slice(repo.length)}</Text>,
+      ]
+      const needsYou = row.state === 'needs-me' || row.state === 'blocked'
+      return (
+        <Box key={`card-${row.key}`} flexDirection="column" borderStyle="round" borderColor={look.color} borderDimColor={row.isDimRow} paddingX={1} hover={{ borderStyle: 'bold' }}>
+          <Box justifyContent="space-between">
+            {canPress(row)
+              ? <Button key={row.key} plain label={labelOf(row)} dimColor={row.isDimRow} onPress={pressOf(row)}>{parts}</Button>
+              : <Text dimColor={row.isDimRow}>{parts}</Text>}
+            <Text dimColor>{row.age}</Text>
+          </Box>
+          <Text dimColor={row.isDimRow} wrap="truncate-end">{fit(row.goal, inner)}</Text>
+          {needsYou
+            ? <Text color={look.color} wrap="wrap">{row.line2}</Text>
+            : row.line2 !== row.goal && <Text dimColor wrap="truncate-end">{fit(row.line2, inner)}</Text>}
+        </Box>
+      )
+    }
+
+    // Runs that finished 24 to 48 h ago: one entry each on a single wrapping line.
+    const yesterday = (rows: DeskRow[]) => (
+      <Box key="g-earlier" flexWrap="wrap" columnGap={2}>
+        <Text dimColor>Yesterday</Text>
+        {rows.map((row) => {
+          const look = lookOf(row)
+          const parts = [<Text color={look.color}>{look.glyph}</Text>, ` ${fit(`${row.repo} ${row.age}`, Math.max(1, inner - 2))}`]
+          return canPress(row)
+            ? <Button key={row.key} plain label={labelOf(row)} dimColor onPress={pressOf(row)}>{parts}</Button>
+            : <Text dimColor>{parts}</Text>
+        })}
+      </Box>
+    )
+
     return (
-      <Box flexDirection="column">
+      <Box flexDirection="column" gap={1}>
         {b.error !== null && <Text color="error">{clean(b.error, 400)}</Text>}
         {b.error === null && b.rows === 0 && <Text dimColor>{emptyText(b.home)}</Text>}
-        {b.groups.map((g) => (
-          <Box key={g.id} flexDirection="column">
-            <Text weight="bold" color={g.id === 'needs' ? 'warning' : undefined} dimColor={g.id === 'finished'}>{g.title}</Text>
-            {g.rows.map((row) => (
-              <Box key={`row-${row.key}`} flexDirection="column">
-                {row.tab !== null && isHerdrId(row.tab) ? (
-                  <Button
-                    key={row.key}
-                    plain
-                    label={labelOf(row)}
-                    dimColor={row.isDimRow}
-                    onPress={() => press($, { tab: row.tab!, repo: row.repo, isDesktop, app })}
-                  >
-                    {fit(line1Of(row), cols)}
-                  </Button>
-                ) : (
-                  <Text dimColor={row.isDimRow} wrap="truncate-end">{fit(line1Of(row), cols)}</Text>
-                )}
-                {row.line2 !== '' && <Text dimColor={row.isDimLine} wrap="truncate-end">{fit(row.line2, cols)}</Text>}
-              </Box>
-            ))}
+        {b.groups.map((g) => g.id === 'earlier' ? yesterday(g.rows) : (
+          <Box key={`g-${g.id}`} flexDirection="column">
+            <Text weight="bold" color={GROUP_COLOR[g.id]}>{fit(g.title, inner)}</Text>
+            {g.rows.map(card)}
           </Box>
         ))}
         {b.bad > 0 && <Text dimColor>{footerText(b.bad)}</Text>}

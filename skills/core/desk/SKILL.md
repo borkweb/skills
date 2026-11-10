@@ -53,7 +53,7 @@ A run is a run id or an absolute run dir. The run states are `running`, `needs-m
 
 ## Board (optional, Claude only)
 
-`desk-board` (`skills/core/desk/board`) is a separate Claude Code plugin: a live board of runs grouped Needs you, In motion and Finished (finished runs show for 24 h). A press on a run with a herdr tab switches herdr to it. It reads the run records itself (`BORK_RUNS_HOME` or `AGENT_HANDOFFS_DIR`, each used only when absolute) and never answers, acks or sets anything. Codex does not load it.
+`desk-board` (`skills/core/desk/board`) is a separate Claude Code plugin: a live board of runs, one card each, grouped Needs you, In motion and Finished today. A run that finished 24 to 48 h ago shrinks to one entry on a Yesterday line, then leaves the board. A press on a run with a herdr tab switches herdr to it. It reads the run records itself (`BORK_RUNS_HOME` or `AGENT_HANDOFFS_DIR`, each used only when absolute) and never answers, acks or sets anything. Codex does not load it.
 
 - Open it with `/desk-board` (again to close). A band above the prompt also offers `Open desk` while a run needs you; in the Claude Desktop Code tab the band shows whenever the board has runs.
 - Keyboard (terminal): `ctrl+x tab` to reach the pane, Tab or the arrows to walk runs, Enter to go.

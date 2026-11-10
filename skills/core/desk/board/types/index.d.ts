@@ -15,7 +15,8 @@ export type DeskRow = {
   isDimRow: boolean
 }
 
-export type DeskGroup = { id: 'needs' | 'motion' | 'finished'; title: string; rows: DeskRow[] }
+/** `finished` is the last 24 h, drawn as cards; `earlier` is 24 to 48 h, drawn as one Yesterday line. */
+export type DeskGroup = { id: 'needs' | 'motion' | 'finished' | 'earlier'; title: string; rows: DeskRow[] }
 
 /** The whole drawn view: a tick builds it, a drawing only reads it. */
 export type DeskBoard = {
