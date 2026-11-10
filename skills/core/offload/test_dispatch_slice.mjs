@@ -59,8 +59,9 @@ writeFileSync(BLOCK, 'Execute the nav slice in the worktree.\nAcceptance: 3 crit
 const FIX = join(BOX, 'fix.md');
 writeFileSync(FIX, 'Corrective: blocker B1 token leak; blocker B2 missing test.\n');
 
-// Hermetic: a BORK_RUN_DIR from the architect that runs these tests must not leak in.
-const ambientEnv = () => { const { BORK_RUN_DIR: _drop, ...rest } = process.env; return rest; };
+// Hermetic: run-dir and round-cap settings from the architect that runs these tests must not leak in.
+const AMBIENT_DROPPED = ['BORK_RUN_DIR', 'OFFLOAD_UNATTENDED_TURN', 'OFFLOAD_ROUND_CAP'];
+const ambientEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !AMBIENT_DROPPED.includes(k)));
 const env = (extra = {}) => ({
   ...ambientEnv(),
   AGENT_HANDOFFS_DIR: BOX, CLAUDE_CODE_SESSION_ID: 'arch', BORKWEB_SKILLS_CONFIG: CONFIG,
@@ -538,6 +539,33 @@ test('a round-cap refusal re-run with the same --verdict plus --past-cap succeed
   const s = row(R, '6');
   assert.equal(s.state, 'dispatched');
   assert.equal(s.history.filter((h) => h.state === 'rejected').length, 4, 'the retry adds no fifth rejection');
+  assert.match(s.note, /past round cap \(4 > 3\): user: one more round/, 'the ruling is in the note');
+  assert.match(s.note, /corrective verdict: g4 failed/, 'and the verdict is not replaced by it');
+});
+
+test('an ambient OFFLOAD_ROUND_CAP and OFFLOAD_UNATTENDED_TURN do not reach the dispatch tests', () => {
+  const saved = { cap: process.env.OFFLOAD_ROUND_CAP, un: process.env.OFFLOAD_UNATTENDED_TURN };
+  process.env.OFFLOAD_ROUND_CAP = '0';
+  process.env.OFFLOAD_UNATTENDED_TURN = '1';
+  try {
+    const R = repo();
+    const WT = join(BOX, 'wt-ambientcap');
+    hoff(['ledger', 'init', R, 'g']);
+    run([R, WT, 'feat/ambientcap', BLOCK, '--id', '9', '--title', 'cap']);
+    for (let i = 1; i <= 3; i++) { // a leaked cap of 0 would refuse the first of these
+      hoff(['ledger', 'set', R, '9', '--state', 'results-ready']);
+      run([R, WT, 'feat/ambientcap', FIX, '--id', '9', '--corrective', '--verdict', `g${i} failed`]);
+    }
+    hoff(['ledger', 'set', R, '9', '--state', 'results-ready']);
+    const args = [R, WT, 'feat/ambientcap', FIX, '--id', '9', '--corrective', '--verdict', 'g4 failed'];
+    assert.match(runFail(args).stderr, /rejected 4 times \(cap 3\)/);
+    run([...args, '--past-cap', 'user: one more']); // a leaked unattended marker would refuse this
+    assert.equal(row(R, '9').state, 'dispatched');
+  } finally {
+    for (const [k, v] of [['OFFLOAD_ROUND_CAP', saved.cap], ['OFFLOAD_UNATTENDED_TURN', saved.un]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
 });
 
 // --- argument parsing, ledger-less correctives and BORK_RUN_DIR hygiene ---

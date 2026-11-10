@@ -76,6 +76,7 @@ die() { echo "dispatch-slice: $*" >&2; exit 1; }
 need_value() { [ "$#" -ge 2 ] || { echo "dispatch-slice: $1 needs a value" >&2; usage; exit 2; }; }
 
 POS=()
+VERDICT_NOTED=""
 ID=""; TITLE=""; BASE=""; RUN_DIR=""; HARNESS=""; VERDICT=""; PAST_CAP=""; CORRECTIVE=0; UNATTENDED=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -187,9 +188,11 @@ ledger_dispatched() {
   hoff ledger set "$REPO" "$ID" "${f[@]}" >/dev/null
 }
 
-# A corrective sends results back: record that as a rejection (with the
-# verdict, when given) unless the slice was already judged. A follow-up after
-# acceptance, or a second corrective after a recorded rejection, adds nothing.
+# A corrective sends results back. With --verdict it records a rejection from
+# results-ready or dispatched, keeps the verdict as a note on a row already
+# rejected, and exits 2 in any other state. Without --verdict a judged row is
+# left as it is (a follow-up after acceptance, or a second corrective after a
+# recorded rejection, adds nothing).
 ledger_state() {
   [ "$HAS_LEDGER" -eq 1 ] && [ -n "$ID" ] || return 0
   hoff ledger show "$REPO" 2>/dev/null |
@@ -216,7 +219,8 @@ round_cap() {
     die "slice $ID has been rejected $n times (cap $cap) and this is an unattended wake: --past-cap needs the user's own ruling. Append the question to the handoff's Open disagreements and stop. Nothing was sent."
   fi
   [ -n "$PAST_CAP" ] || die "slice $ID has been rejected $n times (cap $cap). Ask the user whether to continue, re-scope or abandon; if they say continue, re-run with --past-cap \"<their ruling>\". Nothing was sent."
-  hoff ledger set "$REPO" "$ID" --note "past round cap ($n > $cap): $PAST_CAP" >/dev/null
+  # One note field: when the verdict was already kept there, keep both.
+  hoff ledger set "$REPO" "$ID" --note "past round cap ($n > $cap): $PAST_CAP${VERDICT_NOTED:+; corrective verdict: $VERDICT}" >/dev/null
 }
 
 ledger_reject_results() {
@@ -233,6 +237,7 @@ ledger_reject_results() {
       # note, never a second rejection (decisions.md 10).
       [ -z "$VERDICT" ] || hoff ledger set "$REPO" "$ID" --note "corrective verdict: $VERDICT" >/dev/null ||
         die "could not record the verdict note on slice $ID; nothing was sent"
+      [ -z "$VERDICT" ] || VERDICT_NOTED=1
       ;;
     '') ;;
     *)
