@@ -24,9 +24,9 @@ test('runs.mjs and helpers import only node builtins and sibling files; no packa
   assert.ok(!existsSync(join(HERE, 'package.json')));
 });
 
-test('all three plugin manifests carry 3.35.0 and the same skill list, including desk', () => {
+test('all three plugin manifests carry 3.35.1 and the same skill list, including desk', () => {
   const m = ['.claude-plugin', '.codex-plugin', '.grok-plugin'].map((d) => JSON.parse(read(`${d}/plugin.json`)));
-  assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.35.0']));
+  assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.35.1']));
   for (const x of m) assert.deepEqual(x.skills, m[0].skills);
   assert.ok(m[0].skills.includes('./skills/core/desk'));
   assert.ok(!m.some((x) => x.skills.includes('./skills/core/orchestrate')), 'the old orchestrate entry is gone');
