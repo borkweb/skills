@@ -73,8 +73,8 @@ Every spec review and every acceptance review is written to the run directory,
 never only to a temp path or the scratchpad: `spec-review-<slice>.md` and
 `review-<slice>-r<round>.md` (round 1 is the first judgment; each corrective adds
 one). Use the run directory `do` or `complete` created. When `offload` runs on its
-own, create one with `runs.mjs init --repo "$PWD" --goal "<goal>"` (`skills/core/orchestrate/runs.mjs`, found
-beside the loaded `orchestrate` skill): it makes
+own, create one with `runs.mjs init --repo "$PWD" --goal "<goal>"` (`skills/core/desk/runs.mjs`, found
+beside the loaded `desk` skill): it makes
 `~/.agent-handoffs/runs/<YYYY-MM-DD>-<slug>-<4 random chars>/` (mode 700) and
 writes its `run.json`, so a standalone offload run is a recorded run too. Record
 the path under *Decisions + why* and pass `--run-dir <run dir>` on the first

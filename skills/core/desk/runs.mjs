@@ -630,7 +630,7 @@ Please use the bork \`do\` skill for this goal.
 
 - Run dir: ${dir} (also in BORK_RUN_DIR). Its run.json is the shared record.
 - Run record CLI: ${cli}
-  If that path is gone, re-resolve runs.mjs beside the loaded orchestrate skill's SKILL.md.
+  If that path is gone, re-resolve runs.mjs beside the loaded desk skill's SKILL.md.
 
 Record state and questions with that CLI:
 
@@ -733,7 +733,7 @@ const SPEC = {
   withdraw: { vals: ['note'], pos: 2, run: cmdWithdraw },
 };
 const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start']);
-const USAGE = `usage: runs.mjs <${Object.keys(SPEC).join('|')}> [args]  (spec: skills/core/orchestrate/SKILL.md)`;
+const USAGE = `usage: runs.mjs <${Object.keys(SPEC).join('|')}> [args]  (spec: skills/core/desk/SKILL.md)`;
 
 // An option takes the next token as its value whatever it looks like: goals may start with "-".
 function parseArgv(spec, argv) {

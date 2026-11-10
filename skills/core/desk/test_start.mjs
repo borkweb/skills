@@ -230,7 +230,7 @@ test('launch-prompt.md holds the goal byte for byte, the do instruction, the run
   assert.ok(p.includes('use the bork `do` skill for this goal'));
   assert.ok(p.includes(r.dir));
   assert.ok(p.includes(join(HERE, 'runs.mjs')));
-  assert.match(p, /re-resolve[^\n]*orchestrate/i);
+  assert.match(p, /re-resolve[^\n]*desk skill/i);
   assert.match(p, /runs\.mjs[^\n]*ask|ask[^\n]*runs\.mjs/);
 });
 

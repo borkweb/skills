@@ -44,8 +44,8 @@ node "<…>/handoff.mjs" ledger init "$PWD" "<the goal, verbatim>" --run-dir "<r
 ```
 
 `<run dir>` is the run directory `do` created, or one you create with
-`runs.mjs init --repo "$PWD" --goal "<the goal, verbatim>"` (`skills/core/orchestrate/runs.mjs`,
-found beside the loaded `orchestrate` skill; it prints the new directory on line
+`runs.mjs init --repo "$PWD" --goal "<the goal, verbatim>"` (`skills/core/desk/runs.mjs`,
+found beside the loaded `desk` skill; it prints the new directory on line
 1) when `complete` runs on its own. A standalone `complete` run has a `run.json`
 there, like every `do` run. Spec reviews and acceptance reviews are written
 there (see `offload`'s *Run directory*), and the link lets the dreaming pass

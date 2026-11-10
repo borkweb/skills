@@ -1,4 +1,4 @@
-// testkit.mjs — shared fixtures for the orchestrate tests (not a test file).
+// testkit.mjs — shared fixtures for the desk tests (not a test file).
 //
 // Every test builds its environment FROM SCRATCH, never from process.env: the
 // builder's own shell carries OFFLOAD_HANDOFF, BORK_RUN_DIR and a live herdr

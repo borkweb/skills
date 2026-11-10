@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..', '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
-const skill = () => read('skills/core/orchestrate/SKILL.md');
+const skill = () => read('skills/core/desk/SKILL.md');
 
 test('runs.mjs and helpers import only node builtins and sibling files; no package.json', () => {
   const files = readdirSync(HERE).filter((f) => f.endsWith('.mjs'));
@@ -23,21 +23,23 @@ test('runs.mjs and helpers import only node builtins and sibling files; no packa
   assert.ok(!existsSync(join(HERE, 'package.json')));
 });
 
-test('all three plugin manifests carry 3.33.0 and the same skill list, including orchestrate', () => {
+test('all three plugin manifests carry 3.33.0 and the same skill list, including desk', () => {
   const m = ['.claude-plugin', '.codex-plugin', '.grok-plugin'].map((d) => JSON.parse(read(`${d}/plugin.json`)));
   assert.deepEqual(new Set(m.map((x) => x.version)), new Set(['3.33.0']));
   for (const x of m) assert.deepEqual(x.skills, m[0].skills);
-  assert.ok(m[0].skills.includes('./skills/core/orchestrate'));
+  assert.ok(m[0].skills.includes('./skills/core/desk'));
+  assert.ok(!m.some((x) => x.skills.includes('./skills/core/orchestrate')), 'the old orchestrate entry is gone');
 });
 
-test('README has an orchestrate row', () => {
-  assert.match(read('README.md'), /^\| \*\*orchestrate\*\* \|/m);
+test('README has a desk row', () => {
+  assert.match(read('README.md'), /^\| \*\*desk\*\* \|/m);
+  assert.ok(!/^\| \*\*orchestrate\*\* \|/m.test(read('README.md')), 'the old orchestrate row is gone');
 });
 
 test('the SKILL routes do runs, names matt:orchestrator, relays questions verbatim and acks by RUN line revision', () => {
   const s = skill();
   const fm = s.match(/^---\n([\s\S]*?)\n---/)[1];
-  assert.match(fm, /^name: orchestrate$/m);
+  assert.match(fm, /^name: desk$/m);
   const desc = fm.match(/^description:\s*(.*)$/m)[1];
   assert.match(desc, /\bdo\b/);
   for (const w of ['start', 'wait', 'answer']) assert.match(desc, new RegExp(w, 'i'));
@@ -69,7 +71,7 @@ test('f10: the SKILL and the README row say exactly what a Claude session and a 
   assert.match(s, CODEX_CANNOT);
   const frontmatter = s.split('---')[1];
   assert.ok(!/Claude or Codex/.test(frontmatter), 'the description no longer says Claude or Codex coordinate alike');
-  const row = read('README.md').split('\n').find((l) => /^\| \*\*orchestrate\*\* \|/.test(l));
+  const row = read('README.md').split('\n').find((l) => /^\| \*\*desk\*\* \|/.test(l));
   assert.match(row, /Claude session[^|]*(start|whole loop)/i);
   assert.match(row, CODEX_CAN);
   assert.match(row, CODEX_CANNOT);
@@ -82,7 +84,7 @@ test('evals/cases.json gains the three orchestration cases with unique ids and r
   const ids = cases.map((c) => c.id);
   assert.equal(new Set(ids).size, ids.length);
   for (const c of cases) assert.ok(existsSync(join(ROOT, c.skill, 'SKILL.md')), c.id);
-  for (const id of ['do-orchestrated-asks-and-ends-turn', 'orchestrate-relays-needs-me-question', 'offload-one-slice-corrective-passes-verdict']) assert.ok(ids.includes(id), id);
+  for (const id of ['do-orchestrated-asks-and-ends-turn', 'desk-relays-needs-me-question', 'offload-one-slice-corrective-passes-verdict']) assert.ok(ids.includes(id), id);
 });
 
 test('f2/f6/f8: the SKILL covers self-launched questions, an unnudged answer and orchestrator.json', () => {

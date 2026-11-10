@@ -1,10 +1,10 @@
 ---
-name: orchestrate
+name: desk
 description: Start, watch and answer bork `do` runs from a coordinating Claude session (in a herdr tab or over Remote Control); a Codex session inside its sandbox can only wait, show, ack and sometimes answer. Use to start a do run in a repo, wait for runs without polling, see which are done, in progress, blocked or need the user, and relay and answer their needs-me questions. Not for the backlog or Crew; matt:orchestrator owns those.
 argument-hint: "start a run | wait | show | answer"
 ---
 
-# Orchestrate bork `do` runs
+# Run desk for bork `do` runs
 
 A run is a directory under `${AGENT_HANDOFFS_DIR:-~/.agent-handoffs}/runs/` holding `run.json`. The file is the center: any session that can run `runs.mjs` can coordinate. A Claude session (in a herdr tab or over Remote Control) can do the whole loop; `start` needs herdr reachable, and nothing here is headless. A Codex session inside its sandbox can `wait`, `show` and `ack`, and can `answer` only where it can write the runs home. It cannot `start` runs, and its `answer` cannot send the architect its pane line, so tell the user to continue in the architect's tab.
 
