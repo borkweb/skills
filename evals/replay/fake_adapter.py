@@ -43,9 +43,13 @@ def builder(request):
     if mode == 'sleep':
         time.sleep(120)
     (Path(worktree) / 'fake-builder.txt').write_text(ADDED_LINE + '\n')
+    if mode == 'lock':
+        git(worktree, 'worktree', 'lock', worktree)  # a real builder may do this; cleanup must still win
     if mode != 'no-commit':
         git(worktree, 'add', 'fake-builder.txt')
         git(worktree, 'commit', '-q', '-m', f'fake change {SENTINEL_COMMIT}')
+    if mode == 'dirty':
+        (Path(worktree) / 'left-over.txt').write_text('uncommitted\n')
     # A work summary and gate results live in the result file and handoff, outside the worktree.
     for name in ('result_file', 'handoff_file'):
         Path(request[name]).write_text(f'## Gate results\n{SENTINEL_SUMMARY}\n\n## Work summary\n{SENTINEL_SUMMARY}\n')
@@ -58,21 +62,19 @@ def grade(seed, ident, criterion):
 
 
 def grader(request, raw):
-    trial = os.environ.get('REPLAY_TRIAL_DIR')
-    if trial:
-        (Path(trial) / 'grader-stdin.json').write_text(raw)
-    # The sealed input names no arm. The runner passes the trial key in the environment, so a test can pick grades.
-    key = os.environ.get('REPLAY_FAKE_KEY', request['id'])
-    table_file = os.environ.get('REPLAY_FAKE_GRADES')
-    table = json.loads(Path(table_file).read_text()) if table_file else {}
-    entry = table.get(key)
+    capture = os.environ.get('REPLAY_FAKE_GRADER_CAPTURE')
+    if capture:
+        Path(capture).write_text(raw)
+    # Only an opaque token and the runner's pre-resolved table entry reach here: no case id, no arm.
+    key = os.environ.get('REPLAY_FAKE_GRADER_TOKEN', request['id'])
+    entry = json.loads(os.environ['REPLAY_FAKE_GRADER_ENTRY']) if 'REPLAY_FAKE_GRADER_ENTRY' in os.environ else None
     if entry == 'exit1':
         sys.exit(1)
     ids = caselib.criteria_ids(request['criteria'])
     if entry == 'ungraded':
         return {'grades': {i: 'maybe' for i in ids}}
     grades = {}
-    seed = os.environ.get('REPLAY_FAKE_SEED', '0')
+    seed = os.environ.get('REPLAY_FAKE_GRADER_SEED', '0')
     for i in ids:
         grades[i] = (entry or {}).get(i) or grade(seed, key, i)
     return {'grades': grades}

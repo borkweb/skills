@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import shutil
 import sys
 import tempfile
@@ -151,7 +150,12 @@ class SkipTests(BuilderCase):
         self.assertEqual(case['criteria'], '\n'.join(CRITERIA_LINES))
         self.assertIn('- **C2.** Second criterion.\n  continuation of the second criterion.', case['criteria'])
         self.assertEqual(case['gates_text'], GATES)
-        self.assertEqual(case['gate_commands'], ['echo GATE-OK-STRING', 'pwd'])
+        # backticked spans are only candidates until a human reviews them
+        self.assertEqual(case['gate_command_candidates'], ['echo GATE-OK-STRING', 'pwd'])
+        self.assertEqual(case['gate_commands'], [])
+        self.assertNotIn('gate_commands_reviewed', case)
+        # the case id must not name the missed criterion
+        self.assertNotRegex(case['id'], r'C\d')
         self.assertEqual(case['missed_ids'], ['C3'])
         self.assertEqual(case['base_commit'], self.fx.base)
         self.assertEqual(case['repo']['path'], str(self.fx.repo))
@@ -234,20 +238,35 @@ class BaseSourceTests(BuilderCase):
             self.assertEqual(len(cases), 1, run.stdout)
 
     def test_head_before_this_round_gives_the_base_only_for_a_later_review_round(self):
-        corrective = f'Corrective round 1 for slice S1 in a worktree. HEAD before this round: {self.fx.base[:7]}. Add commits.\n'
-        self.write_run_file('spec-review-S1.md', SPEC_REVIEW)
-        self.write_run_file('brief-S1.md', BRIEF)
-        self.write_run_file('corrective-S1-r1.md', corrective)
-        run, cases = self.one('DO NOT LAND r1 named C3: x')
+        def with_corrective(verdict):
+            self.setUp()  # a fresh store and fixture repo; the commit ID changes with it
+            self.write_run_file('spec-review-S1.md', SPEC_REVIEW)
+            self.write_run_file('brief-S1.md', BRIEF)
+            self.write_run_file('corrective-S1-r1.md', f'Corrective round 1 for slice S1 in a worktree. HEAD before this round: {self.fx.base[:7]}. Add commits.\n')
+            return self.one(verdict)
+
+        run, cases = with_corrective('DO NOT LAND r1 named C3: x')
         self.assertEqual(cases, [], 'a corrective head is the output a round-1 review rejected, not its base')
         self.assertIn('no base commit', run.stdout)
-        self.setUp()
-        self.write_run_file('spec-review-S1.md', SPEC_REVIEW)
-        self.write_run_file('brief-S1.md', BRIEF)
-        self.write_run_file('corrective-S1-r1.md', corrective)
-        run, cases = self.one('DO NOT LAND r2 named C3: x')
+        run, cases = with_corrective('DO NOT LAND r2 named C3: x')
         self.assertEqual(len(cases), 1, run.stdout)
         self.assertEqual(json.loads(cases[0].read_text())['base_commit'], self.fx.base)
+
+    def test_notes_line_counts_only_when_it_names_the_slice_or_base_and_is_quoted(self):
+        def with_notes(template):
+            self.setUp()  # a fresh store and fixture repo; the commit ID changes with it
+            self.write_run_file('spec-review-S1.md', SPEC_REVIEW)
+            self.write_run_file('brief-S1.md', BRIEF)
+            self.write_run_file('notes.md', template.format(sha=self.fx.base[:8]))
+            return self.one()
+
+        for template in ('S2 merged @ {sha} today\n', 'unrelated note @ {sha}\n'):
+            with self.subTest(notes=template):
+                run, cases = with_notes(template)
+                self.assertEqual(cases, [], run.stdout)
+        run, cases = with_notes('the base for S1 was @ {sha}\n')
+        (path,) = cases
+        self.assertIn(f'the base for S1 was @ {self.fx.base[:8]}', json.loads(path.read_text())['provenance'])
 
     def test_unresolvable_short_sha_is_no_base_commit(self):
         self.write_run_file('spec-review-S1.md', SPEC_REVIEW)

@@ -13,6 +13,7 @@
     "echo GATE-OK-STRING",
     "pwd"
   ],
+  "gate_commands_reviewed": true,
   "missed_ids": [
     "C2"
   ],

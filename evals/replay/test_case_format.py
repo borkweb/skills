@@ -46,7 +46,7 @@ class CaseFormatTests(unittest.TestCase):
                     '--builder-adapter', builder, '--grader-adapter', grader],
                     env={'STUB_MARKER': str(marker)})
                 self.assertNotEqual(run.returncode, 0)
-                self.assertIn(field, run.stderr)
+                self.assertIn(f'missing required field {field}', run.stderr)
                 self.assertFalse(marker.exists())
 
     def test_base_commit_must_be_a_full_hex_object_id(self):

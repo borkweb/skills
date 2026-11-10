@@ -54,7 +54,8 @@ def case_record(out, case_id='synthetic'):
 
 
 def trial_dir(out, arm, trial=1, case_id='synthetic'):
-    return Path(out) / 'trials' / case_id / f'{arm}-{trial}'
+    import caselib
+    return Path(out) / 'trials' / caselib.trial_token(case_id, arm, trial)
 
 
 def write_stub(path, body):
@@ -75,5 +76,23 @@ if os.environ.get('STUB_STDOUT_FILE'):
 open(marker, 'a').write('called\\n' + seen)
 sys.stdin.read()
 '''
+
+def store_snapshot(store):
+    """Recursive (relative path, size, sha256, mtime) of every replay* entry directly under the store."""
+    import hashlib
+    found = {}
+    store = Path(store)
+    if not store.exists():
+        return found
+    for top in store.iterdir():
+        if not top.name.startswith('replay'):
+            continue
+        for path in [top, *top.rglob('*')]:
+            st = path.stat()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ''
+            found[str(path.relative_to(store))] = (st.st_size, digest, st.st_mtime_ns)
+    return found
+
+
 STUB_BUILDER = MARK + 'print(json.dumps({"status": "ok"}))\n'
 STUB_GRADER = MARK + 'print(json.dumps({"grades": {}}))\n'

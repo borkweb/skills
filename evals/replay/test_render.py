@@ -12,7 +12,6 @@ import fixture  # noqa: E402
 import support  # noqa: E402
 
 FENCE = re.compile(r'^```text\n(.*?)^```$', re.S | re.M)
-LABELS = ('Execute <slice goal>', 'Owned files:', 'Acceptance:', 'Gates:', 'Result file:')
 
 
 def fence_lines(template):
@@ -47,11 +46,28 @@ class RenderTests(unittest.TestCase):
         # a: the output is the fence content, not the file around it
         self.assertNotIn('# Builder brief', rendered)
         self.assertFalse(any(line.startswith('```') for line in rendered))
-        # b: every line outside the five labeled ones is byte-identical, in order
-        keep = [line for line in template if not line.startswith(LABELS)]
-        got = [line for line in rendered if line in set(keep)]
-        self.assertEqual(got, keep)
-        self.assertIn('Protected paths: <paths>.', ''.join(rendered))
+        # b: exactly the template fence with the five labeled lines filled, nothing added or dropped
+        self.assertEqual(rendered, self.expected(out, 'current', template))
+
+    def expected(self, out, arm, template):
+        record = support.load(support.trial_dir(out, arm) / 'builder-record.json')
+        result = str(support.trial_dir(out, arm) / 'result.md')
+        expect = []
+        for line in template:
+            if line.startswith('Execute <slice goal>'):
+                expect.append(line.replace('<slice goal>', self.case['goal']).replace('<absolute worktree>', record['cwd'])
+                              .replace('<branch>', record['branch']))
+            elif line.startswith('Owned files: '):
+                expect.append(line.replace('<paths>', self.case['owned_files'], 1))
+            elif line.startswith('Acceptance:'):
+                expect += ['Acceptance:', *self.case['criteria'].split('\n')]
+            elif line.startswith('Gates:'):
+                expect += ['Gates:', *self.case['gates_text'].split('\n')]
+            elif line.startswith('Result file:'):
+                expect.append(line.replace('<path>', result))
+            else:
+                expect.append(line)
+        return expect
 
     def test_acceptance_and_gates_hold_the_case_text_verbatim(self):
         run, out = self.run_fake()
@@ -75,8 +91,7 @@ class RenderTests(unittest.TestCase):
         run, out = self.run_fake()
         template = fence_lines((self.fx.skills_repo / support.TEMPLATE_PATH).read_text())
         rendered = self.brief(out, 'revised').splitlines()
-        keep = [line for line in template if not line.startswith(LABELS)]
-        self.assertEqual([line for line in rendered if line in set(keep)], keep)
+        self.assertEqual(rendered, self.expected(out, 'revised', template))
         self.assertTrue(any('mentions Acceptance: mid-line' in line for line in rendered))
         self.assertIn('\nResult file: ' + str(support.trial_dir(out, 'revised') / 'result.md') + '\n', self.brief(out, 'revised'))
 
@@ -89,7 +104,8 @@ class RenderTests(unittest.TestCase):
             '--cases', fx.cases_dir, '--output', self.tmp / f'out-bad{self.count}', '--current-ref', support.BASE_REF,
             '--revised-ref', 'HEAD', '--revised-skills-repo', fx.skills_repo, '--spend',
             '--builder-adapter', builder, '--fake-grader'], env={'STUB_MARKER': str(marker)})
-        self.assertNotEqual(run.returncode, 0, hint)
+        self.assertEqual(run.returncode, 2, hint + run.stderr)
+        self.assertIn('refusing', run.stderr)
         self.assertFalse(marker.exists(), hint)
         return run
 

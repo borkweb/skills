@@ -1,6 +1,4 @@
 """Fill a builder-template brief for one trial. Only five labeled lines change; every other line stays."""
-import re
-
 FENCE_OPEN = '```text'
 FENCE_CLOSE = '```'
 EXECUTE = 'Execute <slice goal>'

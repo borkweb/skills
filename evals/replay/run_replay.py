@@ -10,7 +10,9 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -56,7 +58,7 @@ def parse_args(argv):
     p.add_argument('--spend', action='store_true', help='allow adapters that are not the built-in fakes')
     p.add_argument('--seed', default='0', help='fake grader seed')
     p.add_argument('--fake-grades', help='JSON {"<case>/<arm>/<trial>": {"C1": "MET"} | "ungraded" | "exit1"}')
-    p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage'])
+    p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage', 'lock', 'dirty'])
     p.add_argument('--inject-fault', choices=['after-worktree'], help='raise in the runner (for cleanup tests)')
     return p.parse_args(argv)
 
@@ -116,8 +118,27 @@ def run_shell(command, cwd, timeout):
     return {'command': command, 'exit_code': run.returncode, 'output': run.stdout[-OUTPUT_CAP:], 'timeout': False}
 
 
-def names_live_path(command, repo):
-    return any(p in command for p in {str(repo), os.path.realpath(repo)})
+def live_paths(repo):
+    """The repo and every worktree it already has: commands must not name any of them."""
+    paths = {str(repo), os.path.realpath(repo)}
+    for line in caselib.git(repo, 'worktree', 'list', '--porcelain', check=False).stdout.splitlines():
+        if line.startswith('worktree '):
+            paths |= {line[len('worktree '):], os.path.realpath(line[len('worktree '):])}
+    return paths
+
+
+def names_live_path(command, paths):
+    """True when `command` names a live path literally, through ~ or $HOME, or by a path that resolves into one."""
+    home = str(Path.home())
+    expanded = re.sub(r'(?<![\w$~])~(?=/|\s|$)', home, command.replace('${HOME}', home).replace('$HOME', home))
+    if any(p in text for p in paths for text in (command, expanded)):
+        return True
+    resolved = {os.path.realpath(p) for p in paths}
+    for token in re.findall(r'/[^\s\'"`;|&<>()]*', expanded):
+        real = os.path.realpath(token)
+        if any(real == p or real.startswith(p + os.sep) for p in resolved):
+            return True
+    return False
 
 
 def case_skip_reason(case):
@@ -125,26 +146,36 @@ def case_skip_reason(case):
     probe = caselib.git(repo, 'cat-file', '-e', case['base_commit'] + '^{commit}', check=False)
     if probe.returncode != 0:
         return 'base commit is not in the repo (never fetched)'
+    paths = live_paths(repo)
     for command in case['gate_commands'] + case.get('setup_commands', []):
-        if names_live_path(command, repo):
+        if names_live_path(command, paths):
             return f'command references the live repo path: {command}'
     return None
 
 
 def worktree_gone(repo, worktree, branch, scratch):
-    caselib.git(repo, 'worktree', 'remove', '--force', str(worktree), check=False)
+    """Idempotent: safe to run twice and on a half-made worktree. A locked worktree needs --force twice."""
+    caselib.git(repo, 'worktree', 'remove', '--force', '--force', str(worktree), check=False)
+    shutil.rmtree(scratch, ignore_errors=True)
     caselib.git(repo, 'worktree', 'prune', check=False)
     caselib.git(repo, 'branch', '-D', branch, check=False)  # only this trial's own, uniquely named branch
-    shutil.rmtree(scratch, ignore_errors=True)
+
+
+def grader_env():
+    """What the grader process may see: nothing of the builder's run, and no arm name."""
+    return {k: v for k, v in os.environ.items() if not k.startswith(('REPLAY_', 'OFFLOAD_')) and k != 'AGENT_HANDOFFS_DIR'}
 
 
 def run_trial(case, arm, trial, ctx):
     args = ctx['args']
     key = f"{case['id']}/{arm['name']}/{trial}"
+    # Everything the builder or grader can see is named by this token: no case id (it may carry a criterion ID)
+    # and no arm. The per-case JSON maps it back.
+    token = caselib.trial_token(case['id'], arm['name'], trial)
     record = {'case': case['id'], 'arm': arm['name'], 'skills_ref': arm['ref'], 'skills_sha': arm['sha'],
-              'trial': trial, 'base_commit': case['base_commit'], 'outcome': None, 'reason': None, 'gates': [],
-              'grades': {}, 'named_miss': None}
-    trial_dir = ctx['out'] / 'trials' / case['id'] / f"{arm['name']}-{trial}"
+              'trial': trial, 'token': token, 'base_commit': case['base_commit'], 'outcome': None, 'reason': None,
+              'gates': [], 'grades': {}, 'named_miss': None}
+    trial_dir = ctx['out'] / 'trials' / token
     (trial_dir / 'handoffs').mkdir(parents=True)
     result_file, handoff_file = trial_dir / 'result.md', trial_dir / 'handoff.md'
     result_file.write_text('')
@@ -152,14 +183,18 @@ def run_trial(case, arm, trial, ctx):
     repo = case['repo']['path']
     scratch = Path(tempfile.mkdtemp(prefix='replay-wt-'))
     worktree = Path(os.path.realpath(scratch)) / 'wt'
-    branch = f"replay/{case['id']}-{arm['name']}-{trial}-{uuid.uuid4().hex[:8]}"
-    made = False
+    branch = f"replay/{token}-{uuid.uuid4().hex[:8]}"
+    made = True  # set before the add: an interrupt or timeout during it must still reach the cleanup
     try:
-        added = caselib.git(repo, 'worktree', 'add', '-q', '-b', branch, str(worktree), case['base_commit'], check=False)
+        try:
+            added = caselib.git(repo, 'worktree', 'add', '-q', '-b', branch, str(worktree), case['base_commit'],
+                                check=False, timeout=args.timeout)
+        except subprocess.TimeoutExpired:
+            record.update(outcome='error', reason=f'worktree add timeout after {args.timeout:g}s')
+            return record
         if added.returncode != 0:
             record.update(outcome='error', reason=f'worktree add failed: {added.stderr.strip()}')
             return record
-        made = True
         if args.inject_fault == 'after-worktree':
             raise RuntimeError('injected fault after the worktree was created')
         for command in case.get('setup_commands', []):
@@ -171,14 +206,12 @@ def run_trial(case, arm, trial, ctx):
                               case['criteria'], case['gates_text'], str(result_file))
         (trial_dir / 'brief.md').write_text(brief)
         env = dict(os.environ, AGENT_HANDOFFS_DIR=str(trial_dir / 'handoffs'), OFFLOAD_HANDOFF=str(handoff_file),
-                   REPLAY_TRIAL_DIR=str(trial_dir), REPLAY_FAKE_KEY=key, REPLAY_FAKE_SEED=args.seed)
-        if args.fake_grades:
-            env['REPLAY_FAKE_GRADES'] = str(Path(args.fake_grades).resolve())
+                   REPLAY_TRIAL_DIR=str(trial_dir))
         # The builder sees the brief, which holds the criteria. It never sees which criterion was missed.
         request = {'brief': brief, 'worktree': str(worktree), 'branch': branch, 'result_file': str(result_file),
-                   'handoff_file': str(handoff_file), 'trial_dir': str(trial_dir),
+                   'handoff_file': str(handoff_file), 'trial_dir': str(trial_dir), 'trial': token,
                    'skills': {'repo': arm['repo'], 'ref': arm['ref'], 'sha': arm['sha']},
-                   'case': {'id': case['id'], 'goal': case['goal'], 'owned_files': case['owned_files'],
+                   'case': {'goal': case['goal'], 'owned_files': case['owned_files'],
                             'repo': {'identity': case['repo']['identity']}}}
         if ctx['builder_fake']:
             request['fake'] = {'mode': args.fake_builder_mode}
@@ -191,6 +224,9 @@ def run_trial(case, arm, trial, ctx):
         if head == case['base_commit']:
             record.update(outcome='error', reason='no-commit: the builder left HEAD at the base commit; only commits are graded')
             return record
+        if caselib.git(worktree, 'status', '--porcelain'):
+            record.update(outcome='error', reason='dirty-tree: the builder left uncommitted changes the grader would not see')
+            return record
         for command in case['gate_commands']:
             step = run_shell(command, worktree, args.timeout)
             record['gates'].append(step)
@@ -199,29 +235,48 @@ def run_trial(case, arm, trial, ctx):
                 return record
         diff = caselib.git(worktree, 'diff', f"{case['base_commit']}..{head}")
         gate_output = ''.join(f"$ {g['command']}\n[exit {g['exit_code']}]\n{g['output']}\n" for g in record['gates'])
-        sealed = {'id': f"{case['id']}/{trial}", 'diff': diff, 'criteria': case['criteria'], 'gate_output': gate_output}
-        try:
-            reply = call_adapter(ctx['grader'], sealed, env, str(trial_dir), args.timeout)
-        except AdapterError as error:
-            record.update(outcome='error', reason=str(error))
-            return record
-        grades = reply.get('grades')
-        if not isinstance(grades, dict):
-            record.update(outcome='error', reason='adapter output lacks a grades object')
-            return record
-        record['grades'] = {i: (v if v in ('MET', 'NOT MET') else 'ungraded') for i, v in grades.items()}
-        missed = case['missed_ids']
-        if all(record['grades'].get(i) in ('MET', 'NOT MET') for i in missed):
-            record['outcome'] = 'graded'
-            record['named_miss'] = any(record['grades'][i] == 'NOT MET' for i in missed)
-        else:
-            record.update(outcome='ungraded', reason='the grader gave no valid grade for a missed ID')
-        return record
+        # The diff is in hand: drop the worktree so the grader process cannot read commit messages from it.
+        worktree_gone(repo, worktree, branch, scratch)
+        made = False
+        return grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output)
     finally:
         if made:
             worktree_gone(repo, worktree, branch, scratch)
-        else:
-            shutil.rmtree(scratch, ignore_errors=True)
+
+
+def grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output):
+    """Call the grader in an empty directory with a stripped environment; fold its reply into the record."""
+    args = ctx['args']
+    sealed = {'id': token, 'diff': diff, 'criteria': case['criteria'], 'gate_output': gate_output}
+    env = grader_env()
+    if ctx['grader_fake']:
+        # Dedicated variables, read only by the built-in fake. They carry the opaque token, never the arm.
+        env.update(REPLAY_FAKE_GRADER_TOKEN=token, REPLAY_FAKE_GRADER_CAPTURE=str(trial_dir / 'grader-stdin.json'),
+                   REPLAY_FAKE_GRADER_SEED=args.seed)
+        if args.fake_grades:
+            entry = json.loads(Path(args.fake_grades).read_text()).get(key)
+            if entry is not None:
+                env['REPLAY_FAKE_GRADER_ENTRY'] = json.dumps(entry)
+    empty = tempfile.mkdtemp(prefix='replay-grader-')
+    try:
+        reply = call_adapter(ctx['grader'], sealed, env, empty, args.timeout)
+    except AdapterError as error:
+        record.update(outcome='error', reason=str(error))
+        return record
+    finally:
+        shutil.rmtree(empty, ignore_errors=True)
+    grades = reply.get('grades')
+    if not isinstance(grades, dict):
+        record.update(outcome='error', reason='adapter output lacks a grades object')
+        return record
+    record['grades'] = {i: (v if v in ('MET', 'NOT MET') else 'ungraded') for i, v in grades.items()}
+    missed = case['missed_ids']
+    if all(record['grades'].get(i) in ('MET', 'NOT MET') for i in missed):
+        record['outcome'] = 'graded'
+        record['named_miss'] = any(record['grades'][i] == 'NOT MET' for i in missed)
+    else:
+        record.update(outcome='ungraded', reason='the grader gave no valid grade for a missed ID')
+    return record
 
 
 def summarize(cases, records, arms):
@@ -244,8 +299,15 @@ def summarize(cases, records, arms):
     return out
 
 
+def interrupt(signum, frame):
+    raise KeyboardInterrupt
+
+
 def main(argv=None):
     args = parse_args(argv)
+    # A closed pane (SIGHUP) or a kill (SIGTERM) must clean up like Ctrl-C does.
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGHUP, interrupt)
     try:
         return execute(args)
     except Refusal as refusal:
@@ -287,12 +349,14 @@ def execute(args):
         raise Refusal(f'the {" and ".join(external)} adapter is not a built-in fake; pass --spend to allow it')
     out = Path(args.output)
     try:
-        out.mkdir()
+        caselib.private_dir(out, must_be_new=True)
     except FileExistsError:
         raise Refusal(f'output exists, results are never overwritten: {out}')
+    except ValueError as error:
+        raise Refusal(str(error))
     (out / 'cases').mkdir()
     ctx = {'args': args, 'out': out, 'builder': adapters['builder'][0], 'grader': adapters['grader'][0],
-           'builder_fake': adapters['builder'][1]}
+           'builder_fake': adapters['builder'][1], 'grader_fake': adapters['grader'][1]}
     records, skipped, status = [], [], {}
     for case in cases:
         reason = case_skip_reason(case)

@@ -1,6 +1,4 @@
-import os
 from pathlib import Path
-import subprocess
 import shutil
 import sys
 import tempfile
@@ -13,9 +11,8 @@ REAL_STORE = Path.home() / '.agent-handoffs'
 
 
 def replay_entries():
-    if not REAL_STORE.exists():
-        return set()
-    return {p.name for p in REAL_STORE.iterdir() if p.name.startswith('replay')}
+    """Every replay* entry in the real store, recursively, with size, hash and mtime."""
+    return support.store_snapshot(REAL_STORE)
 
 
 def demo_args(root):

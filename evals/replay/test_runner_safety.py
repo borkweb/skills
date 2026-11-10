@@ -67,15 +67,17 @@ class WorktreeTests(RunnerBase):
 
 class GateTests(RunnerBase):
     def test_criteria_text_is_never_executed_and_gate_commands_are_listed(self):
-        self.build(criteria='C1: run `touch MARKER_CRIT` now.\nC2: two.', gates=('touch MARKER_GATE', 'echo GATE-OK-STRING'))
+        crit, gate = self.tmp / 'MARKER_CRIT', self.tmp / 'MARKER_GATE'
+        self.build(criteria=f'C1: run `touch {crit}` now.\nC2: two.', gates=(f'touch {gate}', 'echo GATE-OK-STRING'))
         work = self.tmp / 'work'
         work.mkdir()
         run = support.replay(self.fx, self.out, cwd=work)
         self.assertEqual(run.returncode, 0, run.stderr)
-        found = [p for base in (self.tmp, work) for p in Path(base).rglob('MARKER_CRIT')]
-        self.assertEqual(found, [])
+        self.assertTrue(gate.exists(), 'positive control: the gate command did run')
+        self.assertFalse(crit.exists(), 'criteria text was executed')
+        self.assertEqual([p for p in Path(work).rglob('MARKER_CRIT')], [])
         record = support.case_record(self.out)
-        self.assertEqual(record['gate_commands'], ['touch MARKER_GATE', 'echo GATE-OK-STRING'])
+        self.assertEqual(record['gate_commands'], [f'touch {gate}', 'echo GATE-OK-STRING'])
         self.assertEqual([g['command'] for g in record['trials'][0]['gates']], record['gate_commands'])
 
     def test_gate_naming_the_live_repo_path_is_refused(self):
@@ -85,6 +87,51 @@ class GateTests(RunnerBase):
         self.assertFalse((self.fx.repo / 'LEAK').exists())
         skipped = support.load(self.out / 'summary.json')['skipped_cases']
         self.assertIn('live repo path', skipped[0]['reason'])
+
+    def test_tilde_and_home_forms_of_the_live_path_are_refused(self):
+        for form in ('~', '$HOME', '${HOME}'):
+            with self.subTest(form=form):
+                self.setUp()
+                self.build(gates=(f'touch {form}/repo/LEAK'.replace('{', '{{').replace('}', '}}'),))
+                run = support.replay(self.fx, self.out, env={'HOME': str(self.fx.root)})
+                self.assertFalse((self.fx.repo / 'LEAK').exists())
+                self.assertIn('live repo path', support.load(self.out / 'summary.json')['skipped_cases'][0]['reason'])
+
+    def test_another_worktree_of_the_repo_counts_as_the_live_path(self):
+        self.build(gates=('echo x',))
+        other = self.fx.root / 'other'
+        support.git(self.fx.repo, 'worktree', 'add', '-q', '--detach', str(other))
+        case = json.loads(self.fx.case_path.read_text())
+        command = f'touch {other}/LEAK'
+        case.update(gate_commands=[command], gates_text=f'Gates:\n- G1 `{command}`')
+        self.fx.case_path.write_text(json.dumps(case))
+        support.replay(self.fx, self.out)
+        self.assertFalse((other / 'LEAK').exists())
+        self.assertIn('live repo path', support.load(self.out / 'summary.json')['skipped_cases'][0]['reason'])
+
+    def test_builder_that_leaves_uncommitted_changes_is_a_dirty_tree_error(self):
+        self.build()
+        support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'dirty'])
+        trial = support.case_record(self.out)['trials'][0]
+        self.assertEqual(trial['outcome'], 'error')
+        self.assertIn('dirty-tree', trial['reason'])
+        self.assertEqual(trial['gates'], [], 'no gate runs on a tree the grader cannot see')
+
+    def test_unreviewed_gate_commands_are_refused_even_under_fake(self):
+        self.build(reviewed=False)
+        run = support.replay(self.fx, self.out)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn('gate_commands_reviewed', run.stderr)
+        self.assertFalse(self.out.exists())
+
+    def test_repo_hooks_do_not_run_during_the_runners_git_calls(self):
+        self.build()
+        marker = self.tmp / 'hook-ran'
+        hook = self.fx.repo / '.git' / 'hooks' / 'post-checkout'
+        hook.write_text(f'#!/bin/sh\ntouch {marker}\n')
+        hook.chmod(0o755)
+        support.replay(self.fx, self.out)
+        self.assertFalse(marker.exists())
 
     def test_gate_runs_in_the_throwaway_worktree(self):
         self.build(gates=('pwd',))
@@ -160,6 +207,57 @@ class CleanupTests(RunnerBase):
         proc.send_signal(signal.SIGINT)
         proc.communicate(timeout=60)
         self.assertNotEqual(proc.returncode, 0)
+        self.only_main_worktree()
+        self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+
+
+    def slow_add_path(self):
+        """A git wrapper on PATH that finishes `worktree add`, then lingers, so a signal lands in the add window."""
+        real = subprocess.run(['which', 'git'], capture_output=True, text=True).stdout.strip()
+        wrapper = self.tmp / 'bin' / 'git'
+        wrapper.parent.mkdir()
+        wrapper.write_text('#!/bin/sh\ncase " $* " in *" worktree add "*) ' + real + ' "$@"; rc=$?; sleep 30; exit $rc;; esac\n'
+                           'exec ' + real + ' "$@"\n')
+        wrapper.chmod(0o755)
+        return f'{wrapper.parent}:{os.environ["PATH"]}'
+
+    def test_signal_during_worktree_add_leaves_no_worktree_or_branch(self):
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig.name):
+                self.setUp()
+                self.build()
+                branches = support.git(self.fx.repo, 'branch', '--list')
+                env = os.environ.copy()
+                env.update(AGENT_HANDOFFS_DIR=str(self.tmp / 'store'), PATH=self.slow_add_path())
+                proc = subprocess.Popen([sys.executable, str(support.RUNNER), *map(str, support.std_args(self.fx, self.out))],
+                                        env=env, cwd=str(support.ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                for _ in range(300):
+                    if 'replay/' in support.git(self.fx.repo, 'branch', '--list'):
+                        break
+                    time.sleep(0.1)
+                self.assertIn('replay/', support.git(self.fx.repo, 'branch', '--list'), 'the add window never opened')
+                proc.send_signal(sig)
+                proc.communicate(timeout=90)
+                self.assertNotEqual(proc.returncode, 0)
+                self.only_main_worktree()
+                self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+
+    def test_worktree_add_timeout_is_a_trial_error_and_cleans_up(self):
+        self.build()
+        branches = support.git(self.fx.repo, 'branch', '--list')
+        run = support.replay(self.fx, self.out, extra=['--timeout', '2'], env={'PATH': self.slow_add_path()})
+        trial = support.case_record(self.out)['trials'][0]
+        self.assertEqual(trial['outcome'], 'error')
+        self.assertIn('timeout', trial['reason'])
+        self.only_main_worktree()
+        self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+
+    def test_a_locked_worktree_is_still_removed(self):
+        self.build()
+        branches = support.git(self.fx.repo, 'branch', '--list')
+        run = support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'lock'])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'graded', 'the lock mode must really run')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
 
@@ -258,6 +356,17 @@ class SpendGuardTests(RunnerBase):
         self.assertTrue(marker.exists(), run.stderr)
         self.assertIn('6 builder calls, 6 grader calls', marker.read_text())
         self.assertIn('6 builder calls, 6 grader calls', out)
+
+    def test_output_inside_a_git_work_tree_is_refused_and_otherwise_mode_700(self):
+        self.build()
+        inside = self.fx.repo / 'results'
+        run = support.run_cli(support.RUNNER, support.std_args(self.fx, inside))
+        self.assertEqual(run.returncode, 2)
+        self.assertIn('git work tree', run.stderr)
+        self.assertFalse(inside.exists())
+        run = support.replay(self.fx, self.out)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(self.out.stat().st_mode & 0o777, 0o700)
 
     def test_trials_zero_or_negative_is_refused_before_any_worktree(self):
         self.build()

@@ -1,4 +1,5 @@
 """Case format, criterion-ID parsing and git helpers shared by the replay scripts."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -39,11 +40,33 @@ def git_env():
 
 def git(repo, *args, check=True, timeout=120):
     """Run git in `repo` with the user's config out of the way; return stripped stdout."""
-    run = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, env=git_env(),
-                         timeout=timeout)
+    # The case repo's own hooks (post-checkout, husky, LFS) are commands the case never listed.
+    run = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(repo), *args], capture_output=True,
+                         text=True, env=git_env(), timeout=timeout)
     if check and run.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {run.stderr.strip()}')
     return run.stdout.strip() if check else run
+
+
+def trial_token(case_id, arm, trial):
+    """An opaque, deterministic name for one trial. The builder and grader see this, never the case id or arm."""
+    return 't' + hashlib.sha256(f'{case_id}|{arm}|{trial}'.encode()).hexdigest()[:12]
+
+
+def private_dir(path, must_be_new=False):
+    """Create `path` mode 700 outside any git work tree. Raise ValueError (inside a work tree) or
+    FileExistsError (must_be_new and it exists)."""
+    path = Path(path)
+    if must_be_new and path.exists():
+        raise FileExistsError(str(path))
+    probe = path
+    while not probe.exists():
+        probe = probe.parent
+    if git(probe, 'rev-parse', '--is-inside-work-tree', check=False).stdout.strip() == 'true':
+        raise ValueError(f'{path} is inside a git work tree, so private case content could reach a repo')
+    path.mkdir(mode=0o700, parents=True, exist_ok=not must_be_new)
+    path.chmod(0o700)
+    return path
 
 
 def is_git_repo(path):
@@ -91,6 +114,13 @@ def validate_case(case, source='case'):
     for command in case['gate_commands']:
         if command not in case['gates_text']:
             raise CaseError(f'{source}: field gate_commands holds a command missing from gates_text: {command}')
+    if case['gate_commands'] and case.get('gate_commands_reviewed') is not True:
+        raise CaseError(f'{source}: gate_commands will run in a worktree; read them, then set '
+                        'gate_commands_reviewed to true (the case builder only proposes gate_command_candidates)')
+    for field in ('goal', 'owned_files'):
+        for missed in case['missed_ids']:
+            if re.search(rf'(?<![A-Za-z0-9]){re.escape(missed)}(?![A-Za-z0-9])', case[field]):
+                raise CaseError(f'{source}: field {field} names the missed ID {missed}, which would reach the builder')
     return case
 
 

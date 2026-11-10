@@ -7,6 +7,7 @@ block-S<id>.md) and the base commit. A source that lacks a base commit or frozen
 summary says why. Cases go to a mode 700 directory outside any git work tree.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -107,9 +108,23 @@ def owned_files(run_dir, tags):
     return 'not recorded'
 
 
+def sha_lines(text, source, keep=lambda line: True):
+    """(sha, source quoting the matched line) for each `base: <sha>` or `@ <sha>` on a kept line."""
+    for line in (text or '').split('\n'):
+        if keep(line):
+            for m in BASE_SHA.finditer(line):
+                yield m.group(1), f'{source}: "{line.strip()[:160]}"'
+
+
+def names_slice_or_base(line, tags):
+    return (re.search(r'\bbase\b', line, re.I) is not None
+            or any(re.search(rf'(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])', line) for t in tags))
+
+
 def base_candidates(run_dir, tags, item, ledger, review_round):
     """(sha, source) in preference order. A corrective's `HEAD before this round` is the output the previous
-    review rejected, so it can only be the base for a verdict on a later round."""
+    review rejected, so it can only be the base for a verdict on a later round. A notes.md line counts only when
+    it names the slice or the word base: notes cover every slice of the run."""
     if item.get('base'):
         yield str(item['base']), 'ledger row'
     if ledger.get('base'):
@@ -125,17 +140,15 @@ def base_candidates(run_dir, tags, item, ledger, review_round):
         yield str(base), 'run.json'
     for tag in tags:
         for name in (f'brief-{tag}.md', f'block-{tag}.md'):
-            text = read(Path(run_dir) / name)
-            for m in BASE_SHA.finditer(text or ''):
-                yield m.group(1), name
-    for m in BASE_SHA.finditer(read(Path(run_dir) / 'notes.md') or ''):
-        yield m.group(1), 'notes.md'
+            yield from sha_lines(read(Path(run_dir) / name), name)
+    yield from sha_lines(read(Path(run_dir) / 'notes.md'), 'notes.md', lambda line: names_slice_or_base(line, tags))
     if review_round >= 2:
         for tag in tags:
             for name in (f'corrective-{tag}-r{review_round - 1}.md', f'block-{tag}-corrective-r{review_round - 1}.md'):
-                m = HEAD_BEFORE.search(read(Path(run_dir) / name) or '')
-                if m:
-                    yield m.group(1), name
+                for line in (read(Path(run_dir) / name) or '').split('\n'):
+                    m = HEAD_BEFORE.search(line)
+                    if m:
+                        yield m.group(1), f'{name}: "{line.strip()[:160]}"'
 
 
 def resolve_base(repo, shas):
@@ -173,7 +186,12 @@ def build_one(ledger, stem, item, verdict, review_round, out_dir):
     if reasons:
         return None, '; '.join(reasons)
     missed = named_ids(verdict)
-    case_id = re.sub(r'[^A-Za-z0-9._-]', '-', f"{Path(run_dir).name or stem}-{tags[0]}-r{review_round}-{'-'.join(missed)}")
+    # No criterion ID in the id: it reaches file names, and the builder must not learn which ID was missed.
+    prefix = re.sub(r'[^A-Za-z0-9._-]', '-', f"{Path(run_dir).name or stem}-{tags[0]}-r{review_round}")
+    if any(re.search(rf'(?<![A-Za-z0-9]){re.escape(m)}(?![A-Za-z0-9])', prefix) for m in missed):
+        prefix = re.sub(r'[^A-Za-z0-9._-]', '-', f'{tags[0]}-r{review_round}')
+    digest = hashlib.sha256(f"{stem}|{tags[0]}|{review_round}|{','.join(missed)}".encode()).hexdigest()[:8]
+    case_id = f'{prefix}-{digest}'
     case = {
         'id': case_id,
         'repo': {'identity': repo_identity(repo), 'path': repo},
@@ -182,7 +200,9 @@ def build_one(ledger, stem, item, verdict, review_round, out_dir):
         'owned_files': owned_files(run_dir, tags),
         'criteria': criteria,
         'gates_text': gates,
-        'gate_commands': [c for c in BACKTICKED.findall(gates) if c in gates],
+        # Proposed only. The runner runs gate_commands, which a human fills after reading these.
+        'gate_command_candidates': BACKTICKED.findall(gates),
+        'gate_commands': [],
         'missed_ids': missed,
         'provenance': f'ledger {stem}, slice {item.get("id")}, review round {review_round}; run dir '
                       f'{Path(run_dir).name}; base from {source}'}
@@ -194,15 +214,10 @@ def build_one(ledger, stem, item, verdict, review_round, out_dir):
 
 
 def prepare_out(out):
-    out = Path(out)
-    probe = out
-    while not probe.exists():
-        probe = probe.parent
-    if caselib.git(probe, 'rev-parse', '--is-inside-work-tree', check=False).stdout.strip() == 'true':
-        raise SystemExit(f'refusing: {out} is inside a git work tree, so case content could reach a repo')
-    out.mkdir(mode=0o700, parents=True, exist_ok=True)
-    out.chmod(0o700)
-    return out
+    try:
+        return caselib.private_dir(out)
+    except ValueError as error:
+        raise SystemExit(f'refusing: {error}')
 
 
 def main(argv=None):
