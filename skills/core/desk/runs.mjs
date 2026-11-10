@@ -261,7 +261,7 @@ function directChild(home, abs) {
   return real;
 }
 
-function createRun({ goal, repo = null, slug, runDir, launchedBy = 'self', harness = null, sessionId = null, task = null }) {
+function createRun({ goal, repo = null, slug, runDir, launchedBy = 'self', harness = null, sessionId = null, task = null, herdrSelf = null }) {
   const home = realHome(true);
   let dir;
   if (runDir) {
@@ -279,7 +279,7 @@ function createRun({ goal, repo = null, slug, runDir, launchedBy = 'self', harne
     const at = nowIso();
     const rec = {
       schema: 1, id: basename(dir), run_dir: dir, repo, goal, task, state: 'running', summary: '', delivery: null,
-      questions: [], architect: { harness, session_id: sessionId, frontend: null, tab: null, pane: null },
+      questions: [], architect: { harness, session_id: sessionId, frontend: herdrSelf?.frontend ?? null, tab: herdrSelf?.tab ?? null, pane: herdrSelf?.pane ?? null },
       launched_by: launchedBy, revision: 1, signal_revision: 0, orchestrator_ack: 0, created_at: at, updated_at: at,
       history: [{ at, state: 'running', note: 'created' }],
     };
@@ -300,12 +300,20 @@ function readGoal(o) {
 
 const out = (s) => process.stdout.write(`${s}\n`);
 
+// A run started inside a herdr pane records that tab and pane, so the board can take the user back to it.
+// Both ids must be well-formed (they later reach herdr's argv); otherwise the architect stays unrecorded.
+const HERDR_ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]*$/;
+function herdrSelf() {
+  const { HERDR_ENV, HERDR_TAB_ID: tab, HERDR_PANE_ID: pane } = process.env;
+  return HERDR_ENV && HERDR_ID_RE.test(tab ?? '') && HERDR_ID_RE.test(pane ?? '') ? { frontend: 'herdr', tab, pane } : null;
+}
+
 function cmdInit(o) {
   const goal = readGoal(o);
   const repo = o.repo !== undefined ? gitTop(o.repo) : null;
   const slug = o.slug ?? defaultSlug(repo);
   checkId(slug);
-  const { dir, rec } = createRun({ goal, repo, slug, runDir: o['run-dir'] });
+  const { dir, rec } = createRun({ goal, repo, slug, runDir: o['run-dir'], herdrSelf: herdrSelf() });
   out(o.json ? JSON.stringify(rec) : dir);
 }
 
