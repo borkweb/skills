@@ -228,6 +228,13 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    registers the ledger row when a ledger exists, launches through `dispatch.sh`,
    sets `status: dispatched`, records the verified pane and prints the bridge
    command. A failed launch leaves the slice `specced`; nothing is running.
+7. **Report.** When the slice is accepted or the run stops, give the verdict, gate
+   results and a delivery line. A standalone `offload` run also sets its final state
+   in `run.json` with `runs.mjs set <run> --state <s> --summary "<line>" --delivery
+   "<delivery line>"`: `done` once the slice is accepted, `blocked` with the reason as
+   summary when a circuit breaker or a delivery blocker waits on the user, `failed`
+   when the run cannot continue. When `do` or `complete` drives the run, that skill
+   sets the state instead.
 
 ## Builder brief
 
