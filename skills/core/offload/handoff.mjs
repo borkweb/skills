@@ -14,6 +14,12 @@
 //   node handoff.mjs blocked  <path> [--steal]             -> status=blocked + bump updated (ownership-guarded); the
 //                                                             builder calls this before stopping on a mid-slice blocker
 //                                                             so the wait bridge wakes the architect to arbitrate
+//   node handoff.mjs coverage <path>                      -> print the frozen criterion IDs that have no line under
+//                                                             Gate results, one per line; exit 0 when all are covered,
+//                                                             4 when some are missing. Read-only, needs no session.
+//                                                             `ready` and `status results-ready` run the same check
+//                                                             and refuse with `incomplete:` (exit 4), after ownership
+//                                                             and even with --steal; it checks coverage, not freshness
 //   node handoff.mjs end      <path>                      -> delete doc
 //   node handoff.mjs prune                                -> TTL reap + orphaned-sidecar sweep
 //
@@ -66,7 +72,7 @@ function setField(body, key, value) {
   return body.replace(/^---\n/, () => `---\n${key}: ${value}\n`); // insert into frontmatter
 }
 
-function die(msg) { process.stderr.write(msg.replace(/\n*$/, '\n')); process.exit(1); }
+function die(msg, code = 1) { process.stderr.write(msg.replace(/\n*$/, '\n')); process.exit(code); }
 
 function requireDoc(p) {
   if (!p) die('refusing: no handoff path given');
@@ -284,7 +290,63 @@ function setStatus(p, value, steal) {
     'A status write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   assertOwner(p, expected, steal, `set status=${v} on`);
-  updateDoc(p, (b) => setField(setField(b, 'status', v), 'updated', nowIso()));
+  // Coverage runs on the same text the write replaces, so the check and the
+  // write cannot see different docs. --steal reaches only assertOwner above.
+  updateDoc(p, (b) => {
+    if (v === 'results-ready') {
+      const missing = missingCriteria(b);
+      if (missing.length) die(incompleteMessage(missing), 4);
+    }
+    return setField(setField(b, 'status', v), 'updated', nowIso());
+  });
+}
+
+// --- criterion coverage ---------------------------------------------------
+// An ID is `C<digits><optional lowercase letter>` and counts only as the first
+// token of a line: after leading space and an optional list marker (`-`, `*`,
+// `1.`), table pipe, `**` or backtick. A token that joins IDs (`C3, C5b`,
+// `C1/C2`, `C1 and C2`, `C1a-C2`, `C1\u2013C3`) counts for none. dispatch-slice.sh
+// freezes with a copy of this regex; test_dispatch_slice.mjs asserts they agree.
+const ID_FIRST = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!\s*(?:[-\u2013\u2014/,&+]|and\b|or\b)\s*C\d)/;
+
+// The IDs that lead a line of `text`, in order, ignoring CRLF and <!-- --> comments.
+function leadingIds(text) {
+  const plain = text.replace(/\r\n?/g, '\n').replace(/<!--[\s\S]*?(?:-->|$)/g, '');
+  return plain.split('\n').map((l) => ID_FIRST.exec(l)?.[1]).filter(Boolean);
+}
+
+// The body of `## <heading>` in LF text, '' when the heading is absent. The
+// heading must match exactly, so a CRLF doc has to be normalized first or its
+// Frozen gates would silently vanish (a fail-open).
+function sectionText(text, heading) {
+  const lines = text.split('\n');
+  const at = lines.findIndex((l) => l.replace(/[ \t]+$/, '') === `## ${heading}`);
+  if (at === -1) return '';
+  const end = lines.findIndex((l, i) => i > at && l.startsWith('## '));
+  return lines.slice(at + 1, end === -1 ? lines.length : end).join('\n');
+}
+
+// Frozen IDs with no line under Gate results. A parent that has frozen
+// sub-IDs (C1 beside C1a) is covered by them and needs no line of its own.
+function missingCriteria(doc) {
+  const text = doc.replace(/\r\n?/g, '\n');
+  const frozen = [...new Set(leadingIds(sectionText(text, 'Frozen gates')))];
+  const have = new Set(leadingIds(sectionText(text, 'Gate results')));
+  const leaf = (id) => !frozen.some((o) => o !== id && /^C\d+[a-z]$/.test(o) && o.slice(0, -1) === id);
+  return frozen.filter((id) => leaf(id) && !have.has(id));
+}
+
+const incompleteMessage = (missing) =>
+  `incomplete: Gate results has no line for ${missing.join(', ')}.\n` +
+  'add one line per criterion: evidence, NOT MET or NOT RUN with the reason. ' +
+  'One line per ID, the ID first; a line that lists several IDs or a range covers none of them.';
+
+function coverage(p) {
+  requireDoc(p);
+  const missing = missingCriteria(readFileSync(p, 'utf8'));
+  if (!missing.length) return;
+  process.stdout.write(`${missing.join('\n')}\n`);
+  die(incompleteMessage(missing), 4);
 }
 
 // --- sections -------------------------------------------------------------
@@ -478,6 +540,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     case 'status':   setStatus(pos[0], pos[1], steal); break;
     case 'ready':    setStatus(pos[0], 'results-ready', steal); break;
     case 'blocked':  setStatus(pos[0], 'blocked', steal); break;
+    case 'coverage': coverage(pos[0]); break;
     case 'end':      end(pos[0]); break;
     case 'prune':    pruneAll(); break;
     case 'section': {
@@ -528,7 +591,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     default:
       process.stderr.write(
-        'usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|end|prune|section|ledger|board|halt|unhalt|halted} ...\n',
+        'usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|coverage|end|prune|section|ledger|board|halt|unhalt|halted} ...\n',
       );
       process.exit(2);
   }

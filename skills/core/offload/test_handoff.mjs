@@ -1,6 +1,8 @@
 // test_handoff.mjs
 import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -407,4 +409,173 @@ test('updateDoc retries on a concurrent write instead of dropping it, and leaves
   assert.match(out, /corrective/);
   assert.deepEqual(readdirSync(dir), ['doc.md'], 'no temp file left behind');
   rmSync(dir, { recursive: true, force: true });
+});
+
+// --- coverage: every frozen criterion ID needs a line under Gate results ------
+// Everything below drives the CLI; the parser has no export. Each row is a
+// frozen-gates body and a gate-results body, with the IDs `coverage` must print
+// (one per line, in frozen order) and the exit code that follows from them.
+
+// spawnSync keeps the exit code, stdout and stderr together, which runFail() drops.
+const cli = (args, { session, env: extra = {} } = {}) => {
+  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
+  for (const k of ['CLAUDE_CODE_SESSION_ID', 'CODEX_SESSION_ID', 'OFFLOAD_HANDOFF', 'OFFLOAD_SESSION_ID']) delete env[k];
+  if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
+  Object.assign(env, extra);
+  const r = spawnSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env });
+  return { code: r.status, out: r.stdout, err: r.stderr };
+};
+
+let docN = 0;
+// A doc with frontmatter, Frozen gates and Gate results; eol '\r\n' makes a CRLF doc.
+function mkDoc(frozen, results, { eol = '\n', status = 'dispatched', owner = 's' } = {}) {
+  const p = join(BOX, `cov-${++docN}.md`);
+  const head = ['---', `claude_session: ${owner}`, `status: ${status}`, 'updated: x', '---', ''];
+  const body = [...head, '## Frozen gates', frozen, '## Gate results', results, ''];
+  writeFileSync(p, body.join('\n').replace(/\n/g, eol));
+  return p;
+}
+
+const ids = (out) => out.split('\n').filter(Boolean);
+const TEMPLATE_COMMENT = '<!-- Success criteria, frozen BEFORE results exist. Never edit after freezing. -->';
+const COVERAGE_ROWS = [
+  // [name, frozen, results, expected missing IDs]
+  ['C13a a missing ID is printed, a covered one is not', 'C1: a\nC2: b\n', 'C1: pass\n', ['C2']],
+  ['C13b full coverage exits 0 and NOT MET counts as a line', 'C1: a\nC2: b\n', 'C1: pass\nC2: NOT MET because x\n', []],
+  ['C13f comment-only Frozen gates freezes nothing', `${TEMPLATE_COMMENT}\n`, '', []],
+  ['C14a every allowed first-token prefix covers', 'C1: a\nC2: b\nC3: c\nC4: d\nC5: e\nC6: f\n', '- C1: p\n* C2: p\n1. C3: p\n| C4 | p |\n**C5**: p\n`C6`: p\n', []],
+  ['C14b a mid-line mention does not cover', 'C1: a\n', 'Same as C1: pass\n', ['C1']],
+  ['C14c frozen-side IDs count only as first tokens', 'C1: a, same as C2\n', 'C1: p\n', []],
+  ['C14d token boundary: C10 does not cover C1', 'C1: a\nC10: b\n', 'C10: p\n', ['C1']],
+  ['C14e IDs are case-sensitive on the results side', 'C1: a\n', 'c1: p\nCP-01: p\n', ['C1']],
+  ['C14e IDs are case-sensitive on the frozen side', 'CP-01: a\nc2: b\n', '', []],
+  ['C14f a single-line comment does not cover', 'C1: a\n', '<!-- C1: pass -->\n', ['C1']],
+  ['C14g a multi-line comment in Frozen gates freezes nothing', 'C1: a\n<!--\nC9: x\n-->\n', 'C1: p\n', []],
+  ['C14h a multi-line comment in Gate results does not cover', 'C1: a\n', '<!--\nC1: p\n-->\n', ['C1']],
+  ['C14i duplicates are removed', 'C1: a\nC1: again\nC2: b\n', '', ['C1', 'C2']],
+  ['C14l a parent is covered by all its sub-IDs', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1a: p\nC1b: p\n', []],
+  ['C14m one missing sub-ID is reported, not the parent', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1a: p\n', ['C1b']],
+  ['C14n a parent line alone covers no sub-ID', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1: p\n', ['C1a', 'C1b']],
+  ['C14o a sub-ID line does not cover a parent with no frozen sub-IDs', 'C1: a\n', 'C1a: p\n', ['C1']],
+  ['C14p a hyphen range covers nothing', 'C1a: x\nC1b: y\nC2: z\n', 'C1a-C2: pass\n', ['C1a', 'C1b', 'C2']],
+  ['C14q an en-dash range covers nothing', 'C1: a\nC2: b\nC3: c\n', 'C1–C3: pass\n', ['C1', 'C2', 'C3']],
+  ['G4 a comma list covers nothing', 'C3: a\nC5b: b\n', 'C3, C5b: pass\n', ['C3', 'C5b']],
+  ['G4 a slash list covers nothing', 'C1: a\nC2: b\n', 'C1/C2: pass\n', ['C1', 'C2']],
+  ['G4 an "and" list covers nothing', 'C1: a\nC2: b\n', 'C1 and C2: pass\n', ['C1', 'C2']],
+  ['G4 a multi-ID line freezes nothing on the frozen side', 'C1 and C2: a\nC3: b\n', 'C3: p\n', []],
+  ['G4 bold ID with a title still counts', '**C4 Diff scope.**\n', '', ['C4']],
+  ['G2 leading whitespace is accepted', '  C1: a\n\t- C2: b\n', '   C1: p\n', ['C2']],
+];
+for (const [name, frozen, results, missing] of COVERAGE_ROWS) {
+  test(`coverage: ${name}`, () => {
+    const p = mkDoc(frozen, results);
+    const r = cli(['coverage', p]);
+    assert.deepEqual(ids(r.out), missing, 'stdout lists exactly the missing IDs, one per line, in frozen order');
+    assert.equal(r.code, missing.length ? 4 : 0);
+    if (missing.length) assert.match(r.err, /^incomplete:/, 'the message goes to stderr');
+  });
+}
+
+test('coverage: CRLF docs fail closed and pass when covered', () => {
+  const miss = cli(['coverage', mkDoc('C1: a\nC2: b\n', 'C1: p\n', { eol: '\r\n' })]);
+  assert.deepEqual(ids(miss.out), ['C2']);
+  assert.equal(miss.code, 4);
+  const ok = cli(['coverage', mkDoc('C1: a\nC2: b\n', 'C1: p\nC2: p\n', { eol: '\r\n' })]);
+  assert.equal(ok.out, '');
+  assert.equal(ok.code, 0);
+});
+
+test('coverage: no Frozen gates section, or IDs without a Gate results section', () => {
+  const none = join(BOX, 'cov-nofrozen.md');
+  writeFileSync(none, '## Gate results\nC1: pass\n');
+  assert.equal(cli(['coverage', none]).code, 0, 'no Frozen gates section behaves as today');
+  const nores = join(BOX, 'cov-nores.md');
+  writeFileSync(nores, '## Frozen gates\nC1: a\nC2: b\n');
+  const r = cli(['coverage', nores]);
+  assert.deepEqual(ids(r.out), ['C1', 'C2']);
+  assert.equal(r.code, 4);
+});
+
+test('coverage: read-only, needs no session, and a missing path is neither 0 nor 4', () => {
+  const p = mkDoc('C1: a\n', '', { owner: 'someone-else' });
+  const before = readFileSync(p, 'utf8');
+  const r = cli(['coverage', p]);
+  assert.equal(r.code, 4, 'runs with no session and from a foreign owner');
+  assert.equal(readFileSync(p, 'utf8'), before, 'the doc is untouched');
+  const gone = cli(['coverage', '/nonexistent/x.md']);
+  assert.ok(![0, 4].includes(gone.code), `exit ${gone.code}`);
+  assert.match(gone.err, /\/nonexistent\/x\.md/);
+});
+
+test('coverage is listed in the CLI usage', () => {
+  assert.match(cli([]).err, /coverage/);
+});
+
+// --- ready / status results-ready take the same gate ---------------------------
+const incompleteDoc = (opts) => mkDoc('C1: a\n', '', opts);
+const tmpFiles = (p) => readdirSync(dirname(p)).filter((f) => f.startsWith(`${basename(p)}.tmp-`));
+
+test('ready refuses an incomplete doc with exit 4, an incomplete: message and no write', () => {
+  const p = incompleteDoc();
+  const before = readFileSync(p, 'utf8');
+  const r = cli(['ready', p], { session: 's' });
+  assert.equal(r.code, 4);
+  assert.ok(r.err.startsWith('incomplete:'), r.err);
+  assert.doesNotMatch(r.err, /refusing/);
+  assert.match(r.err, /C1/);
+  assert.ok(r.err.includes('add one line per criterion: evidence, NOT MET or NOT RUN with the reason'));
+  assert.match(r.err, /one line per ID/i);
+  assert.equal(readFileSync(p, 'utf8'), before, 'status and updated are not bumped');
+  assert.deepEqual(tmpFiles(p), [], 'no temp file left');
+});
+
+test('status results-ready takes the same gate as ready', () => {
+  const p = incompleteDoc();
+  const before = readFileSync(p, 'utf8');
+  const r = cli(['status', p, 'results-ready'], { session: 's' });
+  assert.equal(r.code, 4);
+  assert.equal(readFileSync(p, 'utf8'), before);
+});
+
+test('--steal skips ownership only, never coverage', () => {
+  const p = incompleteDoc();
+  const r = cli(['ready', p, '--steal'], { session: 'other' });
+  assert.equal(r.code, 4);
+  assert.match(readFileSync(p, 'utf8'), /status: dispatched/);
+});
+
+test('ownership is checked before coverage', () => {
+  const p = incompleteDoc();
+  const r = cli(['ready', p], { session: 'other' });
+  assert.equal(r.code, 1);
+  assert.match(r.err, /^refusing/);
+});
+
+test('a dispatched builder with the carried id gets the coverage refusal', () => {
+  const p = incompleteDoc();
+  const r = cli(['ready', p], { session: 'builder', env: { OFFLOAD_HANDOFF: p, OFFLOAD_SESSION_ID: 's' } });
+  assert.equal(r.code, 4);
+});
+
+test('a covered doc is still marked results-ready', () => {
+  const p = mkDoc('C1: a\n', 'C1: pass\n');
+  assert.equal(cli(['ready', p], { session: 's' }).code, 0);
+  assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
+});
+
+test('only results-ready is gated: blocked and every other status still write', () => {
+  for (const status of ['blocked', 'dispatched', 'returned', 'accepted']) {
+    const p = incompleteDoc();
+    const r = cli(status === 'blocked' ? ['blocked', p] : ['status', p, status], { session: 's' });
+    assert.equal(r.code, 0, `${status}: ${r.err}`);
+    assert.match(readFileSync(p, 'utf8'), new RegExp(`status: ${status}`));
+  }
+});
+
+test('a CRLF doc that is incomplete is refused by ready', () => {
+  const p = incompleteDoc({ eol: '\r\n' });
+  const before = readFileSync(p, 'utf8');
+  const r = cli(['ready', p], { session: 's' });
+  assert.equal(r.code, 4);
+  assert.equal(readFileSync(p, 'utf8'), before);
 });
