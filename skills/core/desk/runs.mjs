@@ -768,7 +768,7 @@ Record state and questions with that CLI:
 - ${cli} set ${id} --state blocked|failed|done --summary "<one line>" --delivery "<delivery line>"
 - A question for the user: ${cli} ask ${id} --question "<q>" --options '[{"label":"A","description":"..."},{"label":"B","description":"..."}]' --recommendation A
   Then end your turn. The answer arrives as a pane line \`bork run ${id}: answered Q<n>\`; read it with ${cli} show ${id}.
-- More work for this run arrives as a pane line \`bork run ${id}: new instruction M<n> from the user; read it with runs.mjs show ${id}\`: run \`show\` with ${cli}; if \`show\` reports the run done or blocked, run \`runs.mjs reopen ${id}\` first; treat M<n>'s text as the user's next instruction for this run, continue under the do skill, and set a final state again when finished.
+- More work for this run arrives as a pane line \`bork run ${id}: new instruction M<n> from the user; read it with runs.mjs show ${id}\`: run \`show\` with ${cli}; if \`show\` reports the run done or blocked, run \`${cli} reopen ${id}\` first; treat M<n>'s text as the user's next instruction for this run, continue under the do skill, and set a final state again when finished.
 `;
 }
 

@@ -179,7 +179,8 @@ async function resolveHerdr($: EngineInterface): Promise<string> {
   return 'herdr'
 }
 function herdrPath($: EngineInterface): Promise<string> {
-  return (herdrBin ??= resolveHerdr($))
+  // A rejected lookup is not kept: the next call asks again.
+  return (herdrBin ??= resolveHerdr($).catch((err) => { herdrBin = null; throw err }))
 }
 
 type Ran = { r: { exitCode: number; stdout: string; stderr: string; isStdoutTruncated?: boolean } } | { isTimeout: boolean }
