@@ -161,6 +161,16 @@ test('with BORK_RUN_DIR unset the hook finds run.json through the ledger run_dir
   assert.equal(fireRun({ session_id: 'arch', cwd: REPO }), '');
 });
 
+// A finished run's BORK_RUN_DIR (done or failed) is never reused, as dispatch-slice.sh
+// treats it, so the hook looks at the ledger's own run_dir instead.
+for (const state of ['done', 'failed']) {
+  test(`a ${state} BORK_RUN_DIR is ignored and the ledger run_dir (needs-me) allows the stop`, () => {
+    const ledgerRun = runDirWith(`ledger-needs-me-${state}`, runJson('needs-me'));
+    const REPO = owedRepo(`env-${state}-ledger-needs-me`, ledgerRun);
+    assert.equal(fireRun({ session_id: 'arch', cwd: REPO }, runDirWith(`env-${state}`, runJson(state))), '');
+  });
+}
+
 for (const state of ['running', 'blocked', 'done']) {
   test(`a ${state} run.json still blocks the stop once`, () => {
     const REPO = owedRepo(`run-${state}`);

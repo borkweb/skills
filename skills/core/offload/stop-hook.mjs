@@ -20,10 +20,21 @@ const RUN_FIELDS = [
   'id', 'run_dir', 'repo', 'goal', 'state', 'summary', 'delivery', 'questions', 'architect', 'launched_by',
   'revision', 'signal_revision', 'orchestrator_ack', 'created_at', 'updated_at', 'history',
 ];
+function readRun(dir) {
+  try { return JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')); } catch { return null; }
+}
+// A BORK_RUN_DIR whose run is done or failed is a finished run, never reused
+// (dispatch-slice.sh skips it the same way), so the ledger's run_dir decides.
+function envRunDir() {
+  const d = process.env.BORK_RUN_DIR;
+  if (!d) return '';
+  const s = readRun(d)?.state;
+  return s === 'done' || s === 'failed' ? '' : d;
+}
 function runNeedsMe(dir) {
   if (!dir) return false;
   try {
-    const r = JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8'));
+    const r = readRun(dir);
     return r?.schema === 1 && RUN_FIELDS.every((k) => k in r) && RUN_STATES.includes(r.state) &&
       Array.isArray(r.questions) && Array.isArray(r.history) && r.state === 'needs-me';
   } catch { return false; }
@@ -57,9 +68,9 @@ const owed = out.slices.filter((s) => !s.terminal && s.flags.some((f) => OWED.te
 if (!owed.length) process.exit(0);
 // A run waiting on the user's answer (run.json needs-me) cannot be finished by
 // this turn, so refusing the stop would trap the architect. The run is found
-// from BORK_RUN_DIR, else the ledger's run_dir. Only a valid schema-1 record
+// from BORK_RUN_DIR (unless that run is done or failed), else the ledger's run_dir. Only a valid schema-1 record
 // counts (spec v2 section 1: anything else is invalid and ignored).
-if (runNeedsMe(process.env.BORK_RUN_DIR || out.run_dir)) process.exit(0);
+if (runNeedsMe(envRunDir() || out.run_dir)) process.exit(0);
 
 let board = '';
 try { board = renderBoard(cwd, session, { withGit: false, withPane: false }); } catch { /* reason without board */ }
