@@ -2,7 +2,7 @@
 
 Measures whether a change to `skills/core/offload/builder-template.md` makes a builder less likely to miss a criterion that a past run missed. A **case** is a past slice: a repo at a base commit, the frozen criteria and gates, and the criterion ID(s) the builder missed. The runner replays each case under two skill revisions (**current** and **revised**), grades the builder's diff, and reports the named-miss rate per arm.
 
-This slice (S3a) ships the format, the case builder, the runner and a deterministic fake builder and grader. It makes no model calls. Real adapters come later and must pass `--spend`.
+The format, the case builder, the runner and a deterministic fake builder and grader make no model calls. The real builder and grader adapters (`claude` or `codex`, see [Real adapters](#real-adapters)) make paid calls and refuse without `--spend`.
 
 Everything here is Python standard library. Run the tests with `python3 -m unittest discover -s evals -p 'test_*.py'`.
 
@@ -26,7 +26,7 @@ One JSON file per case, `<case id>.json`.
 | `gate_command_candidates` | optional. The backticked spans of `gates_text` that the case builder proposes. Read them, copy the ones you trust into `gate_commands` and set `gate_commands_reviewed` |
 | `missed_ids` | missed criterion ID(s). Each must lead a line of `criteria` (so `C1` never matches inside `C10`) |
 | `provenance` | where the case came from: run dir or session citation, and which source supplied the base commit |
-| `setup_commands` | optional list, run in the worktree before the builder starts. A failure gives the trial outcome `env-unavailable` |
+| `setup_commands` | optional list, run in the trial clone before the builder starts. A failure gives the trial outcome `env-unavailable` |
 
 `fixtures/synthetic-case.json` is the one committed case. `fixture.py` builds its tiny repo and a tiny skills repo at test time; no repo or archive is committed.
 
@@ -68,7 +68,7 @@ Builder subagent transcripts under `~/.claude/projects/<proj>/<session>/subagent
 1. Find a `subagents/` transcript whose parent session rejected the work and named a criterion ID.
 2. Copy the frozen criteria and the gates from the brief in the transcript's first message. Keep them verbatim.
 3. Take the base commit from the repo history: the commit the builder started from. Use the full ID.
-4. Write `<case id>.json` by hand in `~/.agent-handoffs/replay-cases/` (mode 700), with `provenance` set to the session and subagent IDs.
+4. Write `<case id>.json` by hand in `~/.agent-handoffs/replay-cases/` (mode 700), with `provenance` set to the session and subagent IDs. Put the commands you will run in `gate_commands` and set `gate_commands_reviewed` to `true` (the runner and `--check` refuse a case whose `gate_commands` or `gate_command_candidates` are not marked reviewed).
 5. Check it: `python3 evals/replay/run_replay.py --check --cases ~/.agent-handoffs/replay-cases`.
 
 ## Runner
@@ -81,12 +81,12 @@ python3 evals/replay/run_replay.py --cases DIR --output NEW_DIR --current-ref RE
 Per case, trial and arm it:
 
 1. Skips the case, with the reason, when its base commit is missing from the repo (it never fetches) or when a gate or setup command names a live path: the repo or any of its worktrees, literally, through `~` or `$HOME`, or by a path that resolves into one.
-2. Creates a throwaway worktree at the base commit on a uniquely named trial branch under `replay/`, and removes both on every exit: success, adapter failure, a crash, a timeout during the `worktree add` itself, SIGINT, SIGTERM and SIGHUP. The cleanup is idempotent and uses `worktree remove --force --force`, so a locked worktree goes too. Every runner git call runs with `core.hooksPath=/dev/null`, so the case repo's hooks never run.
-3. Runs `setup_commands`, then renders the arm's `builder-template.md` (`git show <resolved sha>:skills/core/offload/builder-template.md` in the arm's skills repo) and calls the builder adapter in the worktree.
-4. Checks that the builder committed (`no-commit` otherwise) and left no uncommitted changes (`dirty-tree` error, no stash), then runs the case's `gate_commands` in the worktree only, each as a `sh -c` command line. It runs nothing that is not in `gates_text`, and never executes criteria text. It refuses cases whose `gate_commands` are not marked `gate_commands_reviewed`.
-5. Captures the diff, removes the worktree, then calls the grader adapter with the sealed input.
+2. Makes a disposable local clone of the case repo (`git clone --local --no-checkout`), removes the `origin` remote, turns reflogs off for the clone, and checks out the base commit on a uniquely named trial branch under `replay/`. The builder's commits, the sealed diff and the gates all live in that clone, and nothing in the brief, the env or the clone's `.git` points at the live repo. The live repo's worktree and branch lists are unchanged by construction. The clone directory is removed on every exit: success, adapter failure, a crash, a timeout during the clone itself, SIGINT, SIGTERM and SIGHUP. The cleanup is idempotent and also removes a clone the builder left read-only. Every runner git call runs with `core.hooksPath=/dev/null`, `core.fsmonitor=false`, `GIT_NO_LAZY_FETCH=1` and `GIT_LFS_SKIP_SMUDGE=1`, so the case repo's hooks, fsmonitor and LFS never run and a partial clone never fetches. A local filter driver in the live repo's config is not copied into the clone, so it never runs; a test proves this with a slow smudge filter.
+3. Runs `setup_commands`, then renders the arm's `builder-template.md` (`git show <resolved sha>:skills/core/offload/builder-template.md` in the arm's skills repo) and calls the builder adapter in the clone. The request key for that directory is still `worktree`.
+4. Restores the clone's `.git/config` to the copy taken before the builder ran (the builder controls that config), checks that the builder committed (`no-commit` otherwise) and left no uncommitted changes (`dirty-tree` error, no stash), then runs the case's `gate_commands` in the clone only, each as a `sh -c` command line. It runs nothing that is not in `gates_text`, and never executes criteria text. It refuses cases whose `gate_commands` or `gate_command_candidates` are not marked `gate_commands_reviewed`.
+5. Captures the diff, removes the clone, then calls the grader adapter with the sealed input.
 
-Both adapters are exec'd directly, never through a shell, with one JSON object on stdin and one on stdout (the `evals/run.py` protocol). Each adapter call, setup command and gate has a timeout (`--timeout`, default 600 s); a timeout gives the trial outcome `error` with reason `timeout`. The builder's brief holds the criteria but never says which ID was missed: every name the builder can see (branch, trial directory, result path, request, environment) uses an opaque per-trial token (`t` plus 12 hex digits from a hash of case id, arm and trial) instead of the case id or the arm, and the per-case JSON maps the token back (`token`). The builder's environment points `AGENT_HANDOFFS_DIR` at the trial directory.
+Both adapters are exec'd directly, never through a shell, with one JSON object on stdin and one on stdout (the `evals/run.py` protocol). Each adapter call, setup command and gate has a timeout (`--timeout`, default 600 s) and runs in its own process group; on a timeout, SIGINT, SIGTERM or SIGHUP the whole group is killed, so a gate that starts a server leaves nothing running. A timeout gives the trial outcome `error` with reason `timeout`. The runner removes `BORK_RUNS_HOME`, `BORK_RUN_DIR`, `BORK_RUN_ID`, `BORK_RUNS_CLI`, `ORCHESTRATOR_HOME`, `HERDR_*`, `CLAUDE_CODE_SESSION_ID` and `CODEX_SESSION_ID` from every adapter's environment, and scrubs credential values from the text it records. The builder's brief holds the criteria but never says which ID was missed: every name the builder can see (branch, trial directory, result path, request, environment) uses an opaque per-trial token (`t` plus 12 hex digits from a hash of case id, arm and trial) instead of the case id or the arm, and the per-case JSON maps the token back (`token`). The builder's environment points `AGENT_HANDOFFS_DIR` at the trial directory.
 
 ### Brief rendering
 
@@ -94,7 +94,7 @@ Only the lines inside the template's single ```` ```text ```` fence are used, an
 
 | Line | Filled with |
 | --- | --- |
-| `Execute <slice goal> in <absolute worktree> on <branch>.` | case `goal`, the trial worktree, the trial branch |
+| `Execute <slice goal> in <absolute worktree> on <branch>.` | case `goal`, the trial clone, the trial branch |
 | `Owned files: <paths>.` | case `owned_files` (`Protected paths: <paths>` stays) |
 | `Acceptance:` | the label alone, then the case criteria verbatim, one per line |
 | `Gates:` | the label alone, then `gates_text` verbatim |
@@ -104,9 +104,9 @@ Everything after `Acceptance:` and `Gates:` on those two lines is replaced. A te
 
 ### Sealed grader input
 
-Exactly `{id, diff, criteria, gate_output}`: `diff` is `git diff <base>..<head>`, `criteria` is the case text, `gate_output` is each gate command, its exit code and its output, and `id` is the opaque trial token. There are no commit messages, no result file or handoff text, and no arm name. The trial's result file and handoff live in the trial directory, outside the worktree.
+Exactly `{id, diff, criteria, gate_output}`: `diff` is `git diff-tree -p --no-ext-diff --no-textconv --no-color --no-renames <base> <head>` (plumbing, so no repo-local diff config, external diff program or textconv can change it), `criteria` is the case text, `gate_output` is each gate command, its exit code and its output, and `id` is the opaque trial token. There are no commit messages, no result file or handoff text, and no arm name. The trial's result file and handoff live in the trial directory, outside the clone.
 
-The grader process is sealed too, not only its stdin. It runs after the worktree is gone, in a fresh empty temporary directory, with `OFFLOAD_*`, `REPLAY_*` and `AGENT_HANDOFFS_DIR` removed from its environment. The built-in fake grader gets its capture path, grade table entry, seed and token through dedicated `REPLAY_FAKE_GRADER_*` variables that the runner sets only for it; none holds an arm name.
+The grader process is sealed too, not only its stdin. It runs after the clone is gone, in a fresh empty temporary directory, with `OFFLOAD_*`, `REPLAY_*` and `AGENT_HANDOFFS_DIR` removed from its environment. The built-in fake grader gets its capture path, grade table entry, seed and token through dedicated `REPLAY_FAKE_GRADER_*` variables that the runner sets only for it; none holds an arm name.
 
 A builder that leaves HEAD at the base commit (edits without committing) is recorded as `error` with reason `no-commit`; only commits are graded.
 
@@ -116,7 +116,7 @@ A builder that leaves HEAD at the base commit (edits without committing) is reco
 
 ### Output
 
-`--output` must not exist, must not be inside a git work tree (it holds briefs, diffs and criteria of real cases) and is created mode 700; nothing is overwritten. It holds `summary.json`, `cases/<case id>.json` and `trials/<case id>/<arm>-<n>/` (brief, result file, handoff, builder record, grader input).
+`--output` must not exist, must not be inside a git work tree (it holds briefs, diffs and criteria of real cases) and is created mode 700; nothing is overwritten. It holds `summary.json`, `cases/<case id>.json` and `trials/<token>/` (brief, result file, handoff, builder record, builder and grader replies, grader input). The trial directory is named by the opaque trial token, never by the case id or arm, so the builder and grader cannot read the missed ID from a path; `cases/<case id>.json` maps each token back (`token` on every trial record).
 
 Each trial record has: case id, arm, skills ref and its resolved full SHA, trial index, trial token, base commit, gates with exit codes and output, per-criterion grades, outcome and reason. Outcomes:
 
@@ -132,7 +132,7 @@ A trial is a **named miss** when any missed ID is graded NOT MET. Per arm, the r
 
 ### Fake adapters
 
-`--fake-builder-mode` is `commit` (default), `fail`, `no-commit`, `dirty` (commits, then leaves an untracked file), `lock` (locks its own worktree), `sleep` or `garbage`. `--fake-grades FILE` maps `<case>/<arm>/<trial>` to fixed grades, `"ungraded"` or `"exit1"`; unlisted criteria are graded from `--seed`, so a seed reproduces its grades. `--inject-fault after-worktree` raises inside the runner, for cleanup tests.
+`--fake-builder-mode` is `commit` (default), `fail`, `no-commit`, `dirty` (commits, then leaves an untracked file), `readonly` (commits, then removes write permission from the clone), `plant` (plants a diff program, textconv and color in the clone's config), `inspect` (records whether anything in the clone's `.git` names `$FAKE_LIVE_PATH`), `sleep` or `garbage`. `--fake-grades FILE` maps `<case>/<arm>/<trial>` to fixed grades, `"ungraded"` or `"exit1"`; unlisted criteria are graded from `--seed`, so a seed reproduces its grades. `--inject-fault after-worktree` raises inside the runner just after the clone is made, for cleanup tests.
 
 ### Try it
 
@@ -142,4 +142,20 @@ One command, from the repository root, builds the synthetic fixture and runs bot
 DIR=$(mktemp -d); python3 evals/replay/run_replay.py --demo "$DIR/fx" --fake --trials 2 --current-ref 94bdb26 --output "$DIR/out"
 ```
 
-Do not run a spend trial from here. The real builder and grader adapters are a later slice.
+Do not run a spend trial from here; the demo uses the built-in fakes only.
+
+## Real adapters
+
+`real_adapter.py builder|grader` is one paid, headless model call per request, for the harness `claude` or `codex` (`--builder-harness` and `--grader-harness`). The runner, not the adapter, decides which; every real path refuses without `--spend`. The command to run is in [../README.md](../README.md#real-builder-replay-run-paid). It starts with a one-case, one-trial smoke step.
+
+**Refusals, in this order, before any process starts:** the request's `spend` is not exactly JSON `true` (absent, `false`, `"false"`, `"0"`, `"yes"`, `1` are all refused); the harness is not exactly `claude` or `codex` (`Claude`, `opencode` and the empty string are refused, with no default); the harness binary is not on PATH (the message names it; there is no fallback to another harness or a fake); the credential variable is unset (`ANTHROPIC_API_KEY` for `claude`; `OPENAI_API_KEY` or `CODEX_API_KEY` for `codex`; the message names it). The runner records a refusal as an adapter `error` and never calls the grader after a failed builder.
+
+**Isolation.** The model process gets an allowlisted environment (PATH, locale, proxy and CA variables, and the one credential), a temp HOME under the trial directory, and, for the builder, `AGENT_HANDOFFS_DIR` and `BORK_REPO_RULES_DIR` under the trial directory and a git identity with signing off. It gets no `BORK_*` or `HERDR_*` variable, no session ID, no `OFFLOAD_*` or `REPLAY_*` variable and no token or agent socket. `codex` also gets a temp `CODEX_HOME`. No keychain, config or auth file is copied, so a real run needs the API key variable. `claude` runs with `--bare --no-session-persistence` (no CLAUDE.md, plugins, hooks, auto-memory or saved transcript); `codex` runs with `--ephemeral`. The arm is therefore **template only**: only the brief comes from the arm's ref, and the builder loads no installed bork plugin. Trials run in Local mode: the builder writes its Returns to the trial result file, with no `$OFFLOAD_HANDOFF` and no handoff CLI.
+
+**Builder.** The rendered brief goes in on stdin, byte for byte. `claude -p --bare --output-format json --max-budget-usd N --permission-mode acceptEdits --settings <sandbox> --add-dir <trial dir>` with the clone as the working directory; the sandbox settings turn the sandbox on, allow sandboxed Bash and allow writes only under the trial directory. `codex exec -C <clone> --sandbox workspace-write --add-dir <trial dir> --ephemeral -`. The cap is `--max-budget-usd` (default 2) for `claude`; `codex` has no per-call cap, so only the wall-clock timeout bounds it.
+
+**Grader.** A fresh call per trial, in an empty temp directory that is removed afterwards, with no worktree, result file or git log within reach. `claude -p --bare --tools '' --output-format json --json-schema ... --no-session-persistence`; `codex exec --sandbox read-only --ephemeral --skip-git-repo-check --output-schema ... -o <file>`. It gets only the sealed input. The reply must be `{"grades": {"<ID>": "MET" | "NOT MET"}}`, read from `claude`'s `.result` (or `.structured_output`) or from `codex`'s `-o` file; a fenced json block is parsed. Each frozen ID is recorded exactly as given, and anything else is `ungraded`: non-JSON text, a JSON array, an empty reply, a missing ID, `met`, `PARTIAL`, `true`, a nonzero exit, a timeout. An ID outside the frozen set is dropped. A failed or timed-out grader call gives all-`ungraded` with exit 0, so the trial counts as `ungraded` (never `error`, never MET) and the reason is recorded.
+
+**Timeouts and cost.** Every model call is killed, with its whole process group, after a wall-clock limit just under `--timeout`. A failed call is never retried. SIGINT kills the model process and the runner still removes the clone.
+
+**Not verified without a real run.** The `claude` sandbox settings keys, `codex` authentication from an API key variable, and whether `codex`'s `workspace-write` sandbox lets the builder commit into the clone's `.git` (if it does not, every `codex` trial ends as `no-commit`). A temp HOME hides `~`, but a process running as the same user can still read an absolute path such as the case store; the brief, the environment and the clone never name it. The smoke step is where these show up.

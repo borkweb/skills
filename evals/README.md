@@ -20,3 +20,22 @@ The driver records elapsed time, adapter failures and raw results. It does not j
 Start with the core preservation and authorization cases. Expand each pilot skill to 10–20 realistic cases and repeat them before drawing broad conclusions. Small forward tests establish regression evidence, not a cross-model speedup. Keep required contracts when a shorter variant performs worse.
 
 The builder replay eval has its own format, case builder and runner: see [replay/README.md](replay/README.md). Record the source revision of each arm in a replay result as a full SHA, not a ref name.
+
+## Real builder replay run (paid)
+
+The replay runner can drive a real builder and a real grader, `claude` or `codex`, headless. **Every real call is a paid model call.** No real run was made in the slice that added these adapters; the commands below have only been exercised against stub executables. Each real call needs an API key in the environment (`ANTHROPIC_API_KEY` for `claude`; `OPENAI_API_KEY` or `CODEX_API_KEY` for `codex`), because the model process gets a temp HOME and no keychain, config or auth file is copied. Without `--spend` the runner prints the planned call counts and stops.
+
+Build the case dir first (`python3 evals/replay/run_replay.py --check --cases "$CASES"`), then run one case for one trial as a smoke step. It checks the real CLI envelope, your credentials and the sandbox before you pay for the full run:
+
+```sh
+python3 evals/replay/run_replay.py --cases "$CASES/ONE-CASE.json" --output "$OUT/smoke" --current-ref "$A" --revised-ref "$B" --builder-harness claude --grader-harness claude --trials 1 --spend
+```
+
+Read `$OUT/smoke/summary.json` and `$OUT/smoke/cases/*.json`. If the trial is `error` or `ungraded`, read its reason before going on. Then the full run:
+
+```sh
+python3 evals/replay/run_replay.py --cases "$CASES" --output "$OUT/run-1" --current-ref "$A" --revised-ref "$B" --builder-harness claude --grader-harness claude --trials 5 --spend
+```
+
+`$CASES` is `~/.agent-handoffs/replay-cases`, `$OUT` is a new directory outside any git work tree, and `$A` and `$B` are the two skills revisions (`--skills-repo` defaults to this repo). Use `codex` for either harness if you prefer. Details, limits and the cost cap are in [replay/README.md](replay/README.md#real-adapters).
+

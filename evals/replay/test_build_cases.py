@@ -161,7 +161,12 @@ class SkipTests(BuilderCase):
         self.assertEqual(case['repo']['path'], str(self.fx.repo))
         self.assertEqual(case['owned_files'], 'src/a.py, src/b.py')
         self.assertTrue(case['provenance'])
-        # the case the builder writes must pass the runner's parser
+        # the runner refuses the case until a human has read the candidates and set gate_commands_reviewed
+        check = support.run_cli(support.RUNNER, ['--check', '--cases', out])
+        self.assertEqual(check.returncode, 2, check.stderr)
+        self.assertIn('gate_commands_reviewed', check.stderr)
+        case['gate_commands_reviewed'] = True
+        path.write_text(json.dumps(case))
         check = support.run_cli(support.RUNNER, ['--check', '--cases', out])
         self.assertEqual(check.returncode, 0, check.stderr)
 

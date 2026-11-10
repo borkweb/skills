@@ -21,7 +21,7 @@ ADDED_LINE = 'FAKE-BUILDER-ADDED-LINE'
 
 
 def git(cwd, *args):
-    env = dict(os.environ, GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1',
+    env = dict(os.environ, GIT_NO_LAZY_FETCH='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1',
                GIT_AUTHOR_NAME='fake', GIT_AUTHOR_EMAIL='fake@example.invalid',
                GIT_COMMITTER_NAME='fake', GIT_COMMITTER_EMAIL='fake@example.invalid')
     return subprocess.run(['git', '-C', cwd, *args], capture_output=True, text=True, env=env, check=True).stdout.strip()
@@ -34,6 +34,15 @@ def builder(request):
     (trial / 'builder-record.json').write_text(json.dumps({
         'head_at_start': git(worktree, 'rev-parse', 'HEAD'), 'cwd': worktree, 'branch': request['branch'],
         'mode': mode}))
+    if mode == 'inspect':
+        live = os.environ['FAKE_LIVE_PATH']
+        needles = [live.encode(), os.path.realpath(live).encode()]
+        hits = [str(p) for p in Path(worktree, '.git').rglob('*') if p.is_file() and not p.is_symlink()
+                and any(n in p.read_bytes() for n in needles)]
+        record = json.loads((trial / 'builder-record.json').read_text())
+        record.update(live_path_hits=hits, remotes=git(worktree, 'remote').split(),
+                      dot_git_is_file=Path(worktree, '.git').is_file())
+        (trial / 'builder-record.json').write_text(json.dumps(record))
     (trial / 'started').write_text('started\n')
     if mode == 'fail':
         sys.exit(3)
@@ -43,13 +52,23 @@ def builder(request):
     if mode == 'sleep':
         time.sleep(120)
     (Path(worktree) / 'fake-builder.txt').write_text(ADDED_LINE + '\n')
-    if mode == 'lock':
-        git(worktree, 'worktree', 'lock', worktree)  # a real builder may do this; cleanup must still win
     if mode != 'no-commit':
         git(worktree, 'add', 'fake-builder.txt')
         git(worktree, 'commit', '-q', '-m', f'fake change {SENTINEL_COMMIT}')
+    if mode == 'readonly':
+        for base, dirs, files in os.walk(worktree):  # leave the clone without write permission, files and directories
+            for name in dirs + [base]:
+                os.chmod(base if name == base else os.path.join(base, name), 0o555)
     if mode == 'dirty':
         (Path(worktree) / 'left-over.txt').write_text('uncommitted\n')
+    if mode == 'plant':
+        # A builder controls the trial repo's config and attributes: plant a diff program, a textconv and color.
+        ext = os.environ['FAKE_PLANT_EXTERNAL']
+        Path(worktree, '.gitattributes').write_text('*.txt diff=evil\n')
+        with open(Path(worktree, '.git', 'config'), 'a') as handle:
+            handle.write(f'[diff]\n\texternal = {ext}\n\tnoprefix = true\n[diff "evil"]\n\ttextconv = {ext}\n[color]\n\tdiff = always\n')
+        git(worktree, 'add', '.gitattributes')
+        git(worktree, 'commit', '-q', '-m', 'attributes')
     # A work summary and gate results live in the result file and handoff, outside the worktree.
     for name in ('result_file', 'handoff_file'):
         Path(request[name]).write_text(f'## Gate results\n{SENTINEL_SUMMARY}\n\n## Work summary\n{SENTINEL_SUMMARY}\n')

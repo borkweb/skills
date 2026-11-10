@@ -207,7 +207,8 @@ def build_one(ledger, stem, item, verdict, review_round, out_dir):
         'provenance': f'ledger {stem}, slice {item.get("id")}, review round {review_round}; run dir '
                       f'{Path(run_dir).name}; base from {source}'}
     try:
-        caselib.validate_case(case, case_id)
+        # The case is written unreviewed on purpose; validate everything else as if a human had signed off.
+        caselib.validate_case(dict(case, gate_commands_reviewed=True), case_id)
     except caselib.CaseError as error:
         return None, str(error).split(': ', 1)[-1]
     return case, None

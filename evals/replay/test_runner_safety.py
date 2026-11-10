@@ -211,55 +211,56 @@ class CleanupTests(RunnerBase):
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
 
 
-    def slow_add_path(self):
-        """A git wrapper on PATH that finishes `worktree add`, then lingers, so a signal lands in the add window."""
+    def slow_clone_path(self):
+        """A git wrapper on PATH that finishes `clone`, writes a marker, then lingers, so a signal lands in the clone window."""
         real = subprocess.run(['which', 'git'], capture_output=True, text=True).stdout.strip()
         wrapper = self.tmp / 'bin' / 'git'
         wrapper.parent.mkdir()
-        wrapper.write_text('#!/bin/sh\ncase " $* " in *" worktree add "*) ' + real + ' "$@"; rc=$?; sleep 30; exit $rc;; esac\n'
-                           'exec ' + real + ' "$@"\n')
+        self.window = self.tmp / 'window-open'
+        wrapper.write_text('#!/bin/sh\ncase " $* " in *" clone "*) ' + real + ' "$@"; rc=$?; touch ' + str(self.window)
+                           + '; sleep 30; exit $rc;; esac\nexec ' + real + ' "$@"\n')
         wrapper.chmod(0o755)
         return f'{wrapper.parent}:{os.environ["PATH"]}'
 
-    def test_signal_during_worktree_add_leaves_no_worktree_or_branch(self):
+    def scratch_left(self):
+        return [p.name for p in (self.tmp / 'tmpdir').glob('replay-*')]
+
+    def test_signal_during_the_clone_leaves_no_scratch_clone_or_branch(self):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             with self.subTest(signal=sig.name):
                 self.setUp()
                 self.build()
+                (self.tmp / 'tmpdir').mkdir()
                 branches = support.git(self.fx.repo, 'branch', '--list')
                 env = os.environ.copy()
-                env.update(AGENT_HANDOFFS_DIR=str(self.tmp / 'store'), PATH=self.slow_add_path())
+                env.update(AGENT_HANDOFFS_DIR=str(self.tmp / 'store'), PATH=self.slow_clone_path(),
+                           TMPDIR=str(self.tmp / 'tmpdir'))
                 proc = subprocess.Popen([sys.executable, str(support.RUNNER), *map(str, support.std_args(self.fx, self.out))],
                                         env=env, cwd=str(support.ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 for _ in range(300):
-                    if 'replay/' in support.git(self.fx.repo, 'branch', '--list'):
+                    if self.window.exists():
                         break
                     time.sleep(0.1)
-                self.assertIn('replay/', support.git(self.fx.repo, 'branch', '--list'), 'the add window never opened')
+                self.assertTrue(self.window.exists(), 'the clone window never opened')
                 proc.send_signal(sig)
                 proc.communicate(timeout=90)
                 self.assertNotEqual(proc.returncode, 0)
                 self.only_main_worktree()
                 self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+                self.assertEqual(self.scratch_left(), [])
 
-    def test_worktree_add_timeout_is_a_trial_error_and_cleans_up(self):
+    def test_clone_timeout_is_a_trial_error_and_cleans_up(self):
         self.build()
+        (self.tmp / 'tmpdir').mkdir()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        run = support.replay(self.fx, self.out, extra=['--timeout', '2'], env={'PATH': self.slow_add_path()})
+        run = support.replay(self.fx, self.out, extra=['--timeout', '2'],
+                             env={'PATH': self.slow_clone_path(), 'TMPDIR': str(self.tmp / 'tmpdir')})
         trial = support.case_record(self.out)['trials'][0]
         self.assertEqual(trial['outcome'], 'error')
         self.assertIn('timeout', trial['reason'])
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
-
-    def test_a_locked_worktree_is_still_removed(self):
-        self.build()
-        branches = support.git(self.fx.repo, 'branch', '--list')
-        run = support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'lock'])
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'graded', 'the lock mode must really run')
-        self.only_main_worktree()
-        self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+        self.assertEqual(self.scratch_left(), [])
 
 
 class AdapterTests(RunnerBase):
