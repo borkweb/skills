@@ -13,6 +13,8 @@ const init = (extra, args = []) => {
   return r.out.split('\n')[0];
 };
 const HERDR = { HERDR_TAB_ID: 'tw:t1' };
+// Every null case below pairs with this control, so a runs.mjs that never records a tab cannot pass it.
+const recordsWhenValid = () => assert.deepEqual(archOf(init(HERDR)), { frontend: 'herdr', tab: 'tw:t1', pane: 'tw:p1' });
 
 test('B6 init records herdr, tab and pane from the herdr env on a new run', () => {
   assert.deepEqual(archOf(init(HERDR)), { frontend: 'herdr', tab: 'tw:t1', pane: 'tw:p1' });
@@ -30,6 +32,7 @@ test('B6 init records null with HERDR_ENV removed', () => {
 });
 
 test('B6 init records null with HERDR_ENV empty', () => {
+  recordsWhenValid();
   assert.deepEqual(archOf(init({ ...HERDR, HERDR_ENV: '' })), NONE);
 });
 
@@ -38,14 +41,17 @@ test('B6 init records null with the testkit default env (pane set, tab unset)', 
 });
 
 test('B6 init records null with the tab set and the pane removed', () => {
+  recordsWhenValid();
   assert.deepEqual(archOf(init({ ...HERDR, HERDR_PANE_ID: undefined })), NONE);
 });
 
 for (const bad of ['-x', 'w1 t2', 'w1:t2\n', '']) {
   test(`B6 init records null for HERDR_TAB_ID ${JSON.stringify(bad)}`, () => {
+    recordsWhenValid();
     assert.deepEqual(archOf(init({ HERDR_TAB_ID: bad })), NONE);
   });
   test(`B6 init records null for HERDR_PANE_ID ${JSON.stringify(bad)}`, () => {
+    recordsWhenValid();
     assert.deepEqual(archOf(init({ ...HERDR, HERDR_PANE_ID: bad })), NONE);
   });
 }

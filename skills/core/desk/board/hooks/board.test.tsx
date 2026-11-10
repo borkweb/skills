@@ -211,7 +211,7 @@ for (const surface of SURFACES) {
   test(`${surface}: a home that cannot be listed on the first read shows Can't read, never No runs in`, async ($, on) => {
     await boot($, on, world({}, { listFails: 'EACCES: permission denied, scandir\nsecond line' }))
     const { all } = await snap($, surface)
-    expect(all).toMatch(/Can't read ~\/\.agent-handoffs\/runs: .*EACCES: permission denied, scandir/)
+    expect(all).toContain("Can't read ~/.agent-handoffs/runs: EACCES: permission denied, scandir")
     expect(all).not.toContain('second line')
     expect(all).not.toContain('No runs in')
   })
@@ -222,7 +222,7 @@ for (const surface of SURFACES) {
     w.listFails = 'EACCES: permission denied'
     await clock.advance(5000)
     let all = (await snap($, surface)).all
-    expect(all).toMatch(/Can't read ~\/\.agent-handoffs\/runs: .*EACCES/)
+    expect(all).toContain("Can't read ~/.agent-handoffs/runs: EACCES: permission denied")
     expect(all).toContain('skills · running')
     expect(all).not.toContain('No runs in')
     w.listFails = null
@@ -232,10 +232,12 @@ for (const surface of SURFACES) {
     expect(all).toContain('skills · running')
   })
 
-  test(`${surface}: a value stored under another shape draws Reading runs…`, async ($, on) => {
-    on('state.get', () => ({ value: { value: { rows: 1 }, version: 3, shape: 'board-0' } }))
-    expect((await snap($, surface)).all).toContain('Reading runs…')
-  })
+  for (const [name, stored] of [['another shape tag', { value: { rows: 1 }, version: 3, shape: 'board-0' }], ['no shape tag', { value: { rows: 1 }, version: 3 }]] as const) {
+    test(`${surface}: a value stored with ${name} draws Reading runs…`, async ($, on) => {
+      on('state.get', () => ({ value: stored }))
+      expect((await snap($, surface)).all).toContain('Reading runs…')
+    })
+  }
 }
 
 const HOMES: [string, Record<string, string>, string][] = [
@@ -763,7 +765,7 @@ for (const surface of SURFACES) {
     expect(w.toasts).toEqual(['Could not switch to skills: herdr did not answer'])
   })
 
-  test(`${surface}: workspace focus failing stops before tab focus and open`, async ($, on) => {
+  test(`${surface}: workspace focus failing stops before tab focus and open`, { options: { terminalApp: 'com.mitchellh.ghostty' } }, async ($, on) => {
     const w = tabbed(world())
     w.run = (argv) => (argv[1] === 'workspace' ? { exitCode: 1, stderr: '{"error":{"message":"workspace w66 not found"}}' } : OK_RUN(argv))
     await boot($, on, w)
