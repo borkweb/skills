@@ -28,12 +28,14 @@ if [ -z "$BASE" ]; then
   done
 fi
 [ -n "$BASE" ] && git fetch origin "$BASE" --quiet 2>/dev/null
+if [ "$BRANCH" = "$BASE" ]; then
+  FROM=$(git merge-base '@{u}' HEAD 2>/dev/null)
+else
+  FROM=$(git merge-base "origin/$BASE" HEAD 2>/dev/null)
+fi
 ```
 
-Pick the commit the diff starts from:
-
-- On a feature branch: `FROM=$(git merge-base "origin/$BASE" HEAD)`.
-- On the base branch itself: `FROM=$(git rev-parse --verify --quiet '@{u}')`. This reviews the commits that are not pushed yet.
+The diff starts at `FROM`. On a feature branch that is the merge-base with the base branch. On the base branch itself it is the merge-base with the upstream, so it reviews the commits that are not pushed yet. Work another person pushed, which the fetch just brought in, is never part of the diff.
 
 Stop and print `pre-push: cannot determine base (<reason>). Nothing was reviewed.` when `BRANCH` is empty (detached HEAD), `BASE` is empty, `origin/$BASE` does not exist, `FROM` is empty, or the base branch has no upstream. This is never a clean result.
 
