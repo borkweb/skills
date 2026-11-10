@@ -36,18 +36,8 @@ The architect folds the criteria into the frozen gates and the builder brief, so
 
 ## Builder (lane)
 
-1. Before any code, reply with a plan and every disagreement with the brief, citing real files. Silent compliance and silent scope additions both count as failures.
-2. Settle a genuinely ambiguous design question with `council`, and record the ruling in the result. If it needs a change to scope or a gate, stop and report it as a blocker.
-3. Build the smallest change that fully works, in this order: does it need to exist at all (skip and name anything nobody asked for); a helper, component or pattern already in this codebase, used the way the surrounding code uses it; the standard library or platform; an installed dependency; one line a reader gets at a glance; otherwise the minimum code that works. Never add a dependency for a few lines, and never cut validation at trust boundaries, error handling that prevents data loss, security, accessibility or anything the spec asks for. Be lazy about the solution, never about the change: finish every caller, test, fixture, config and export the change touches or breaks.
-4. Implement only within **Owns**. Don't edit frozen gates or contracts, and don't grade your own work.
-5. While iterating, run the narrowest gate that covers the file being edited (one test file, one linter target). Run the full frozen gate set once, after the last edit and before reporting; that run is the one whose numbers go in the result. A frozen gate you cannot run here (no access, no sandbox, wrong runtime version) is `NOT RUN` with the reason, never a pass. New logic with a branch, loop, parser, money or security leaves one small test that fails when it breaks; trivial changes need none.
-
-Returns:
-- **Gate results**: one line per gate, with pass/fail or `NOT RUN`, the count and the command that reproduces it. No logs. Then **criteria evidence**: one line per acceptance criterion, by its number, naming the test, command or file:line that proves it and the result, or `NOT MET` or `NOT RUN` with the reason. A criterion with no line counts as not met. On a corrective, report every criterion again, not only the blockers.
-- **Work summary**: changed paths, commit SHAs, what's done, stubbed or deferred, and blockers.
-- **Not checked**: one or two lines on what was skipped or not verified and any risk the architect must know, or `None.`
-- **Open disagreements**: one line each, or `None.`
+A Local-tier subagent builder follows [builder-template.md](../../offload/builder-template.md): the brief you send it is that template, filled for the slice. It has no `$OFFLOAD_HANDOFF`, so it writes the template's Returns to its result file under the run directory.
 
 ## Compression
 
-Agent-to-agent prose may use `caveman` compression. Keep code, commands, error strings, gate lines, commit messages and user-facing reports in normal prose.
+Agent-to-agent prose may use `caveman` compression. Keep code, commands, error strings, gate lines, acceptance criteria, spec-review output, commit messages and user-facing reports in normal prose.

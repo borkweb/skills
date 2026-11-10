@@ -131,10 +131,14 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only; ignore *Work summary* and any narrative when grading. Then read the
    criteria evidence under *Gate results*: every frozen criterion needs a line, and a
-   missing line or `NOT MET` fails the slice without a review. A missing `Loosened tests:`
-   line alone is bookkeeping, not a verdict against the work: `ledger set … --state
-   returned`, then send the builder a `--corrective` without `--verdict` asking for
-   the line, so it costs no rejection and no round. Before any review,
+   `NOT MET` line fails the slice without a review. A missing line is not a verdict:
+   `ready` refuses a doc without one, and `handoff.mjs coverage "$HANDOFF"` prints the
+   frozen IDs that have none (exit 4). A missing criterion line and a missing
+   `Loosened tests:` line are bookkeeping, not a verdict against the work: `ledger set
+   … --state returned`, then send the builder a `--corrective` without `--verdict` that
+   names the missing IDs or the missing line, so it costs no rejection and no round.
+   Coverage is not freshness: a line from an earlier round satisfies it, so read the
+   evidence itself. Before any review,
    run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway
    detached worktree at the slice HEAD, removed afterward, never the builder's
    worktree) and each real-runtime run a criterion names; a failure there sends the
@@ -179,7 +183,9 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    refuses `rejected` without a verdict, and a review-only one without the tag.
 4. **Write the next slice spec** under *Next slice*: one coherent feature (see Slice
    size), hard acceptance criteria, explicit out-of-scope, and a mandate that the
-   builder verify APIs/formats against reality BEFORE coding. For a **corrective**,
+   builder verify APIs/formats against reality BEFORE coding. Frozen criteria
+   outrank the spec prose, so the spec cites a criterion by its ID instead of
+   restating its condition. For a **corrective**,
    the spec is the confirmed blockers with the mechanism behind each (see
    [review-criteria.md](../do/references/review-criteria.md) §7) and, for each
    blocker, one command that goes red on it. Run each command once in a throwaway
@@ -218,16 +224,23 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    record `base: red`, `green` or `n/a` beside it (mutation checks and file:line
    conditions are `n/a`). A criterion for new or changed behavior that is already
    green at the base cannot fail, so it proves nothing: rewrite its check, or return
-   it to the spec reviewer, before it freezes. Freeze the gates under
-   *Frozen gates* with the spec reviewer's criteria, numbered, folded in (never
-   edit them after results exist). The builder brief carries the
-   same criteria, so the builder and the acceptance reviewer hold one bar.
+   it to the spec reviewer, before it freezes. Freeze the spec reviewer's criteria
+   with their IDs, folded in (never edit them after results exist). The freeze is
+   mechanical: the builder block's `Acceptance:` copies the criteria verbatim from
+   the spec review, one per line, ID first (`C1: …`), and on a fresh dispatch
+   `dispatch-slice.sh` copies every ID-first line of the block into *Frozen gates*
+   before the builder launches. It never writes on a `--corrective`, never rewrites
+   a section that already holds IDs (a block with different IDs is refused; use a new
+   worktree or end the old handoff), and warns when the block has no IDs. Freezing
+   by hand first is allowed when the IDs match. The builder brief carries the same
+   criteria, so the builder and the acceptance reviewer hold one bar.
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
 6. **Emit the builder block** (below) to a file and run `dispatch-slice.sh`
-   (Dispatch, below). It writes *Next slice*, creates or reuses the worktree,
-   registers the ledger row when a ledger exists, launches through `dispatch.sh`,
-   sets `status: dispatched`, records the verified pane and prints the bridge
-   command. A failed launch leaves the slice `specced`; nothing is running.
+   (Dispatch, below). It writes *Next slice*, freezes the block's criterion lines
+   into *Frozen gates*, creates or reuses the worktree, registers the ledger row
+   when a ledger exists, launches through `dispatch.sh`, sets `status: dispatched`,
+   records the verified pane and prints the bridge command. A failed launch leaves
+   the slice `specced`, puts *Frozen gates* back as it was, and nothing is running.
 7. **Report.** When the slice is accepted or the run stops, give the verdict, gate
    results and a delivery line. A standalone `offload` run also sets its final state
    in `run.json` with `runs.mjs set <run> --state <s> --summary "<line>" --delivery
@@ -250,7 +263,10 @@ Launch within existing authorization. Ask only if the actual permission relaxati
    `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>] [--run-dir <abs>]`;
    pass `--run-dir <run dir>` on the first call of a run.
    It resolves your session key, creates the worktree from `--base` (default
-   HEAD) or reuses one you pre-warmed, inits the slice handoff, writes *Next
+   HEAD) or reuses one you pre-warmed, inits the slice handoff, freezes the
+   block's ID-first criterion lines into *Frozen gates* (a fresh dispatch only; an
+   unchanged section is left alone, a block with different IDs is refused, a block
+   with no IDs prints one warning), writes *Next
    slice*, opens the ledger when the session has none (goal: `--title`, else the
    block's heading; linked to `--run-dir`, else `BORK_RUN_DIR` when that
    directory exists), adds or updates the ledger row (without `--id` it reuses
@@ -282,7 +298,8 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 
 **Correctives reuse the warm builder.** After a rejection, write the corrective
 block (the confirmed blockers, the same owned files and gates) and run
-`dispatch-slice.sh … "<fix>.md" --id <n> --corrective --verdict "<why>"`. The
+`dispatch-slice.sh … "<fix>.md" --id <n> --corrective --verdict "<why>"`; a
+corrective never touches *Frozen gates*. The
 verdict lands on the ledger's rejected entry, so `ledger report` can count it as
 review-only or gate-failed. A one-slice run needs no `--id`: the corrective
 applies to the row for this handoff. From an unjudged state (`results-ready` or
