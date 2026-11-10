@@ -53,7 +53,7 @@ Report `harness` rows separately as a harness bug list, with citations. They nev
 
 Ask the user about every row, including every **repo-rule** and **check** row (AskUserQuestion, batching related rows, with "(Recommended)" on the option you'd pick). Apply only the approved rows. After applying `review-criteria.md` rows, set its header's `Last dreamed:` line to today's date and the number of runs scanned. Record each rejected row in `decisions.md` in the dream run directory, with the user's reason. Don't commit unless the user asks.
 
-**repo-rule rows.** Only after approval, write the rule file to `~/.agent-handoffs/repo-rules/<key>/` (`node "<do skill base>/repo-rules-key.mjs" --dir <repo>` prints the directory). Create the store and key directories with mode 700 on the first approved write, and never overwrite an existing rule file.
+**repo-rule rows.** Only after approval, write the rule file to `~/.agent-handoffs/repo-rules/<key>/` (`node "<do skill base>/repo-rules-key.mjs" --dir <repo>` prints the directory). Create the store and key directories with mode 700 on the first approved write (`chmod 700` each directory you create, because `mkdir -p -m` sets only the last one), and never overwrite an existing rule file.
 
 **check rows.** Approval of the row authorizes the proof below and, when it succeeds, applying the patch.
 
