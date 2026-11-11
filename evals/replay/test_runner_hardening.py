@@ -366,6 +366,18 @@ class CommonDirRedirectTests(HardBase):
         trial = support.case_record(self.out)['trials'][0]
         self.assertNotIn('commondir', trial['reason'] or '', 'the refusal was supposed to be off')
 
+    def test_b16_a_planted_commondir_is_refused_even_when_the_builder_makes_git_unsearchable(self):
+        for mode in ('commondir-000', 'commondir-600'):
+            with self.subTest(mode=mode):
+                self.setUp()
+                marker, env = self.planted_filter()
+                run = self.replay(['--fake-builder-mode', mode, '--gate-env', 'FAKE_FILTER_SCRIPT'], env=env)
+                self.assertFalse(marker.exists(), mode)
+                trial = support.case_record(self.out)['trials'][0]
+                self.assertEqual(trial['outcome'], 'error', run.stderr)
+                self.assertIn('commondir', trial['reason'], mode)
+                self.assertEqual(self.scratch_left(), [])
+
     def test_b14_a_planted_gitdir_file_is_refused_too(self):
         marker, env = self.planted_filter()
         run = self.replay(['--fake-builder-mode', 'gitdir-file', '--gate-env', 'FAKE_FILTER_SCRIPT'], env=env)
@@ -380,6 +392,17 @@ class CommonDirRedirectTests(HardBase):
         run = self.replay()
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'graded')
+
+
+class ReplaceRefTests(HardBase):
+    def test_b17_a_replace_ref_the_builder_makes_cannot_hide_its_change_from_the_sealed_diff(self):
+        self.build()
+        run = self.replay(['--fake-builder-mode', 'replace'])
+        self.assertEqual(run.returncode, 0, run.stderr)
+        diff = json.loads((support.trial_dir(self.out, 'current') / 'grader-stdin.json').read_text())['diff']
+        self.assertIn('deleted file mode', diff)
+        self.assertIn('app.txt', diff)
+        self.assertIn('FAKE-BUILDER-ADDED-LINE', diff)
 
 
 class AdapterHomeTests(HardBase):

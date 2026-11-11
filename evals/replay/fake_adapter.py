@@ -85,7 +85,7 @@ def builder(request):
             handle.write(f'[filter "x"]\n\tclean = {os.environ["FAKE_FILTER_SCRIPT"]}\n')
         Path(worktree, 'x.txt').write_text('two changed\n')
         os.chmod(Path(worktree, '.git'), 0o555)
-    if mode == 'commondir':
+    if mode in ('commondir', 'commondir-000', 'commondir-600'):
         # Plant a second git dir with its own config, then point `.git/commondir` at it last (the builder's own git
         # calls would break after that). A clean filter in that config must never run under the runner's git calls.
         Path(worktree, '.gitattributes').write_text('*.txt filter=x\n')
@@ -99,6 +99,14 @@ def builder(request):
         Path(worktree, 'x.txt').write_text('two changed\n')
         os.utime(Path(worktree, 'x.txt'), (1000000000, 1000000000))
         (dot / 'commondir').write_text('evilcommon\n')
+        if mode != 'commondir':  # the runner must refuse even when it cannot search .git until it takes it back
+            os.chmod(dot, int(mode.rsplit('-', 1)[1], 8))
+    if mode == 'replace':
+        # Delete a tracked file, commit, then replace the base commit with the head: `git diff base head` then compares
+        # head with itself and the real change never reaches the grader.
+        git(worktree, 'rm', '-q', 'app.txt')
+        git(worktree, 'commit', '-q', '-m', 'delete app')
+        git(worktree, 'replace', json.loads((trial / 'builder-record.json').read_text())['head_at_start'], git(worktree, 'rev-parse', 'HEAD'))
     if mode == 'gitdir-file':
         Path(worktree, '.git', 'gitdir').write_text(worktree + '/.git\n')
     victim = os.environ.get('FAKE_VICTIM')

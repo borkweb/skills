@@ -76,7 +76,7 @@ def parse_args(argv):
     p.add_argument('--fake-grades', help='JSON {"<case>/<arm>/<trial>": {"C1": "MET"} | "ungraded" | "exit1"}')
     p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage', 'readonly', 'dirty', 'plant', 'inspect',
                                                                  'symlink-config', 'symlink-reply', 'symlink-grader-reply',
-                                                                 'symlink-git', 'filter-readonly', 'commondir', 'gitdir-file'])
+                                                                 'symlink-git', 'filter-readonly', 'commondir', 'commondir-000', 'commondir-600', 'gitdir-file', 'replace'])
     p.add_argument('--inject-fault', choices=['after-worktree', 'skip-config-restore', 'skip-redirect-refusal'],
                    help='raise in the runner, or switch off one defense so a test can prove the next one alone')
     return p.parse_args(argv)
@@ -186,10 +186,16 @@ def require_real_git_dir(repo):
 
 def refuse_redirects(worktree):
     """A `commondir` or `gitdir` file inside the trial's .git makes git read its config from, or treat as its own,
-    a directory the builder wrote. A real clone has neither."""
+    a directory the builder wrote. A real clone has neither. Call this once the runner owns `.git` again: any error
+    other than "not there" (a builder-made unsearchable directory) counts as present."""
     for name in ('commondir', 'gitdir'):
-        if os.path.lexists(Path(worktree) / '.git' / name):
-            raise Unsafe(f'the builder planted .git/{name}, which redirects git to a directory it controls')
+        try:
+            os.lstat(Path(worktree) / '.git' / name)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise Unsafe(f'could not look for .git/{name} (a builder-planted redirect cannot be ruled out): {error}')
+        raise Unsafe(f'the builder planted .git/{name}, which redirects git to a directory it controls')
 
 
 def trial_git(worktree, *args, **kw):
@@ -368,17 +374,17 @@ def run_trial(case, arm, trial, ctx):
             record.update(outcome='error', reason=str(error))
             return record
         require_real_git_dir(worktree)
-        if args.inject_fault != 'skip-redirect-refusal':
-            refuse_redirects(worktree)
         save_reply(trial_dir, 'builder-reply.json', reply)
         if args.inject_fault != 'skip-config-restore':
-            # The runner owns this directory: take back write access the builder removed, then restore. Any failure
-            # ends the trial, so no git call below ever reads a config the builder planted.
+            # The runner owns this directory: take back write access the builder removed. Any failure ends the trial.
             try:
                 os.chmod(worktree / '.git', 0o700)
             except OSError as error:
                 raise Unsafe(f'could not take back the trial repo .git: {error}')
-            safe_write(config_path, trusted_config)
+        if args.inject_fault != 'skip-redirect-refusal':
+            refuse_redirects(worktree)  # after the chmod, so an unsearchable .git cannot hide a planted commondir
+        if args.inject_fault != 'skip-config-restore':
+            safe_write(config_path, trusted_config)  # so no git call below reads a config the builder planted
         head = trial_git(worktree, 'rev-parse', 'HEAD')
         if head == case['base_commit']:
             record.update(outcome='error', reason='no-commit: the builder left HEAD at the base commit; only commits are graded')

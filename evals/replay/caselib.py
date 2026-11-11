@@ -46,7 +46,7 @@ def scrubbed_env(extra_names=()):
 def git_env():
     env = scrubbed_env()
     env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0',
-               GIT_NO_LAZY_FETCH='1', GIT_LFS_SKIP_SMUDGE='1', GIT_AUTHOR_NAME='replay', GIT_AUTHOR_EMAIL='replay@example.invalid',
+               GIT_NO_LAZY_FETCH='1', GIT_NO_REPLACE_OBJECTS='1', GIT_LFS_SKIP_SMUDGE='1', GIT_AUTHOR_NAME='replay', GIT_AUTHOR_EMAIL='replay@example.invalid',
                GIT_COMMITTER_NAME='replay', GIT_COMMITTER_EMAIL='replay@example.invalid')
     return env
 
