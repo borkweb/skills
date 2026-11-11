@@ -336,6 +336,90 @@ class ReadOnlyGitDirTests(HardBase):
         self.assertEqual(self.scratch_left(), [])
 
 
+class CommonDirRedirectTests(HardBase):
+    """B14: `.git/commondir` redirects git's config lookup to a directory the builder wrote."""
+
+    def planted_filter(self):
+        self.build()
+        marker = self.tmp / 'FILTER-RAN'
+        script = self.tmp / 'clean.sh'
+        script.write_text(f'#!/bin/sh\nenv > {marker}\ncat\n')
+        script.chmod(0o755)
+        return marker, {'FAKE_FILTER_SCRIPT': str(script), 'HERDR_ENV': '1', 'ANTHROPIC_API_KEY': 'sk-ant-FILTER-12345678'}
+
+    def run_planted(self, env, extra=()):
+        return self.replay(['--fake-builder-mode', 'commondir', '--gate-env', 'FAKE_FILTER_SCRIPT', *extra], env=env)
+
+    def test_b14_a_planted_commondir_filter_never_runs_and_the_trial_is_refused(self):
+        marker, env = self.planted_filter()
+        run = self.run_planted(env)
+        self.assertFalse(marker.exists(), 'the runner ran a clean filter from a planted commondir: ' + (marker.read_text()[:200] if marker.exists() else ''))
+        trial = support.case_record(self.out)['trials'][0]
+        self.assertEqual(trial['outcome'], 'error', run.stderr)
+        self.assertIn('commondir', trial['reason'])
+        self.assertEqual(self.scratch_left(), [])
+
+    def test_b14_the_git_dir_override_alone_keeps_a_planted_commondir_filter_from_running(self):
+        marker, env = self.planted_filter()
+        self.run_planted(env, ['--inject-fault', 'skip-redirect-refusal'])
+        self.assertFalse(marker.exists(), 'with the refusal off, the runner ran a clean filter from a planted commondir: ' + (marker.read_text()[:200] if marker.exists() else ''))
+        trial = support.case_record(self.out)['trials'][0]
+        self.assertNotIn('commondir', trial['reason'] or '', 'the refusal was supposed to be off')
+
+    def test_b14_a_planted_gitdir_file_is_refused_too(self):
+        marker, env = self.planted_filter()
+        run = self.replay(['--fake-builder-mode', 'gitdir-file', '--gate-env', 'FAKE_FILTER_SCRIPT'], env=env)
+        trial = support.case_record(self.out)['trials'][0]
+        self.assertEqual(trial['outcome'], 'error', run.stderr)
+        self.assertIn('gitdir', trial['reason'])
+
+    def test_b14_live_repo_git_calls_keep_their_own_repo(self):
+        # The override is for trial-repo calls only: a case whose base commit is missing is still found missing in the
+        # live repo, and a normal run still clones from it.
+        self.build()
+        run = self.replay()
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'graded')
+
+
+class AdapterHomeTests(HardBase):
+    """B15: a custom adapter gets an empty HOME, never the real one: the builder's under the trial dir, the grader's apart."""
+
+    def test_b15_builder_and_grader_adapters_get_separate_empty_homes_the_graders_outside_the_trial_dir(self):
+        real_home = self.tmp / 'realhome'
+        real_home.mkdir()
+        (real_home / 'secret').write_text('x')
+        self.build()
+        dump = ('h = os.environ.get("HOME")\n'
+                'open(os.environ["DUMP_TO"] + os.path.basename(sys.argv[0]), "w").write(json.dumps({"home": h, '
+                '"exists": os.path.isdir(h or ""), "entries": os.listdir(h) if h and os.path.isdir(h) else None}))\n'
+                'sys.stdin.read()\n')
+        commit = ('request = json.loads(sys.stdin.read())\n'
+                  'open("b.txt", "w").write("b\\n")\n'
+                  'for cmd in (["add", "b.txt"], ["-c", "user.name=b", "-c", "user.email=b@example.invalid", "commit", "-q", "-m", "b"]):\n'
+                  '    subprocess.run(["git", *cmd], check=True, cwd=request["worktree"])\n')
+        builder = support.write_stub(self.tmp / 'b.py', 'import subprocess\n' + dump.replace('sys.stdin.read()\n', '') + commit + 'print(json.dumps({"status": "ok"}))\n')
+        grader = support.write_stub(self.tmp / 'g.py', dump + 'print(json.dumps({"grades": {}}))\n')
+        env = {'HOME': str(real_home), 'DUMP_TO': str(self.tmp / 'home-'), 'TMPDIR': str(self.tmpdir)}
+        base =[a for a in support.std_args(self.fx, self.out) if a != '--fake'] + ['--spend', '--gate-env', 'DUMP_TO']
+        run = support.run_cli(support.RUNNER, base + ['--builder-adapter', builder, '--grader-adapter', grader], env=env)
+        seen = {n: json.loads(Path(str(self.tmp / 'home-') + n).read_text()) for n in ('b.py', 'g.py')}
+        trials = os.path.realpath(self.out / 'trials')
+        out = os.path.realpath(self.out)
+        for name, record in seen.items():
+            self.assertIsNotNone(record['home'], f'{name} got no HOME')
+            self.assertNotEqual(os.path.realpath(record['home']), os.path.realpath(real_home), name)
+            self.assertTrue(record['exists'], name)
+            self.assertEqual(record['entries'], [], f'{name} HOME is not empty')
+        # The builder's HOME is under the trial output dir. The grader's is not: the trial dir holds the builder's
+        # result file, handoff and reply, so a grader HOME there would reach them through `..` (blinding, C6a).
+        self.assertTrue(os.path.realpath(seen['b.py']['home']).startswith(trials + os.sep), seen['b.py']['home'])
+        self.assertFalse(os.path.realpath(seen['g.py']['home']).startswith(out + os.sep), seen['g.py']['home'])
+        self.assertFalse(Path(seen['g.py']['home']).exists(), 'the grader HOME was not removed')
+        self.assertEqual(self.scratch_left(), [])
+        self.assertNotEqual(seen['b.py']['home'], seen['g.py']['home'])
+
+
 class LivePathInCaseTextTests(HardBase):
     def test_b2_a_case_naming_the_live_repo_in_any_text_field_is_skipped_naming_the_field(self):
         for field in ('goal', 'owned_files', 'criteria', 'gates_text'):

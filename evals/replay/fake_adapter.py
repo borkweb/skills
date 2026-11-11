@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import time
@@ -84,6 +85,22 @@ def builder(request):
             handle.write(f'[filter "x"]\n\tclean = {os.environ["FAKE_FILTER_SCRIPT"]}\n')
         Path(worktree, 'x.txt').write_text('two changed\n')
         os.chmod(Path(worktree, '.git'), 0o555)
+    if mode == 'commondir':
+        # Plant a second git dir with its own config, then point `.git/commondir` at it last (the builder's own git
+        # calls would break after that). A clean filter in that config must never run under the runner's git calls.
+        Path(worktree, '.gitattributes').write_text('*.txt filter=x\n')
+        Path(worktree, 'x.txt').write_text('one\n')
+        git(worktree, 'add', '.gitattributes', 'x.txt')
+        git(worktree, 'commit', '-q', '-m', 'filter fixture')
+        dot, evil = Path(worktree, '.git'), Path(worktree, '.git', 'evilcommon')
+        shutil.copytree(dot, evil, ignore=shutil.ignore_patterns('evilcommon'))
+        with open(evil / 'config', 'a') as handle:
+            handle.write(f'[filter "x"]\n\tclean = {os.environ["FAKE_FILTER_SCRIPT"]}\n')
+        Path(worktree, 'x.txt').write_text('two changed\n')
+        os.utime(Path(worktree, 'x.txt'), (1000000000, 1000000000))
+        (dot / 'commondir').write_text('evilcommon\n')
+    if mode == 'gitdir-file':
+        Path(worktree, '.git', 'gitdir').write_text(worktree + '/.git\n')
     victim = os.environ.get('FAKE_VICTIM')
     if mode == 'symlink-config':  # the runner restores this file after the builder; a symlink must not be followed
         Path(worktree, '.git', 'config').rename(Path(worktree, '.git', 'config.orig'))

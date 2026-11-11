@@ -76,8 +76,9 @@ def parse_args(argv):
     p.add_argument('--fake-grades', help='JSON {"<case>/<arm>/<trial>": {"C1": "MET"} | "ungraded" | "exit1"}')
     p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage', 'readonly', 'dirty', 'plant', 'inspect',
                                                                  'symlink-config', 'symlink-reply', 'symlink-grader-reply',
-                                                                 'symlink-git', 'filter-readonly'])
-    p.add_argument('--inject-fault', choices=['after-worktree', 'skip-config-restore'], help='raise in the runner (for cleanup tests)')
+                                                                 'symlink-git', 'filter-readonly', 'commondir', 'gitdir-file'])
+    p.add_argument('--inject-fault', choices=['after-worktree', 'skip-config-restore', 'skip-redirect-refusal'],
+                   help='raise in the runner, or switch off one defense so a test can prove the next one alone')
     return p.parse_args(argv)
 
 
@@ -126,10 +127,13 @@ def scrub(text):
     return text
 
 
-def adapter_env(ctx, role, extra):
-    """An adapter's environment: the allowlist, the --gate-env names, the harness's own credential variables when it
-    is a built-in real adapter, and the per-trial variables in `extra`."""
+def adapter_env(ctx, role, home, extra):
+    """An adapter's environment: the allowlist, the --gate-env names, an empty HOME at `home` (the builder's and the
+    grader's differ), the harness's own credential variables when it is a built-in real adapter, and the per-trial
+    variables in `extra`."""
     env = caselib.scrubbed_env(ctx['args'].gate_env)
+    Path(home).mkdir(parents=True, exist_ok=True)
+    env['HOME'] = str(home)
     harness = ctx[f'{role}_harness']
     if harness:
         env.update({n: os.environ[n] for n in real_adapter.CREDENTIALS[harness] if os.environ.get(n)})
@@ -178,6 +182,22 @@ def require_real_git_dir(repo):
         mode = None
     if mode is None or not stat.S_ISDIR(mode):
         raise Unsafe('the trial repo .git is not a real directory (a symlink or missing); refusing to run git in it')
+
+
+def refuse_redirects(worktree):
+    """A `commondir` or `gitdir` file inside the trial's .git makes git read its config from, or treat as its own,
+    a directory the builder wrote. A real clone has neither."""
+    for name in ('commondir', 'gitdir'):
+        if os.path.lexists(Path(worktree) / '.git' / name):
+            raise Unsafe(f'the builder planted .git/{name}, which redirects git to a directory it controls')
+
+
+def trial_git(worktree, *args, **kw):
+    """A runner git call on the trial repo after the builder started. The three variables pin the git dir, the common
+    dir (which overrides a planted `commondir` file) and the work tree. Live-repo calls use caselib.git without them."""
+    dot = str(Path(worktree) / '.git')
+    pinned = {'GIT_DIR': dot, 'GIT_COMMON_DIR': dot, 'GIT_WORK_TREE': str(worktree)}
+    return caselib.git(worktree, *args, env_extra=pinned, **kw)
 
 
 def call_adapter(command, request, env, cwd, timeout):
@@ -331,7 +351,7 @@ def run_trial(case, arm, trial, ctx):
         brief = render.render(arm['template'], case['goal'], str(worktree), branch, case['owned_files'],
                               case['criteria'], case['gates_text'], str(result_file))
         (trial_dir / 'brief.md').write_text(brief)
-        env = adapter_env(ctx, 'builder', {'AGENT_HANDOFFS_DIR': str(trial_dir / 'handoffs'),
+        env = adapter_env(ctx, 'builder', trial_dir / 'home', {'AGENT_HANDOFFS_DIR': str(trial_dir / 'handoffs'),
                                            'OFFLOAD_HANDOFF': str(handoff_file), 'REPLAY_TRIAL_DIR': str(trial_dir)})
         # The builder sees the brief, which holds the criteria. It never sees which criterion was missed.
         request = {'brief': brief, 'worktree': str(worktree), 'branch': branch, 'result_file': str(result_file),
@@ -348,6 +368,8 @@ def run_trial(case, arm, trial, ctx):
             record.update(outcome='error', reason=str(error))
             return record
         require_real_git_dir(worktree)
+        if args.inject_fault != 'skip-redirect-refusal':
+            refuse_redirects(worktree)
         save_reply(trial_dir, 'builder-reply.json', reply)
         if args.inject_fault != 'skip-config-restore':
             # The runner owns this directory: take back write access the builder removed, then restore. Any failure
@@ -357,11 +379,11 @@ def run_trial(case, arm, trial, ctx):
             except OSError as error:
                 raise Unsafe(f'could not take back the trial repo .git: {error}')
             safe_write(config_path, trusted_config)
-        head = caselib.git(worktree, 'rev-parse', 'HEAD')
+        head = trial_git(worktree, 'rev-parse', 'HEAD')
         if head == case['base_commit']:
             record.update(outcome='error', reason='no-commit: the builder left HEAD at the base commit; only commits are graded')
             return record
-        if caselib.git(worktree, 'status', '--porcelain', '--ignore-submodules=all'):
+        if trial_git(worktree, 'status', '--porcelain', '--ignore-submodules=all'):
             record.update(outcome='error', reason='dirty-tree: the builder left uncommitted changes the grader would not see')
             return record
         for command in case['gate_commands']:
@@ -372,7 +394,7 @@ def run_trial(case, arm, trial, ctx):
                 return record
         # The flags alone keep a planted diff or textconv program from running and fix the output format, so the
         # config restore above is a second layer, not the only one.
-        diff = caselib.git(worktree, 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames',
+        diff = trial_git(worktree, 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames',
                            '--no-relative', '-U3', '--src-prefix=a/', '--dst-prefix=b/', case['base_commit'], head)
         gate_output = ''.join(f"$ {g['command']}\n[exit {g['exit_code']}]\n{g['output']}\n" for g in record['gates'])
         # The diff is in hand: drop the clone so the grader process cannot read commit messages from it.
@@ -389,16 +411,20 @@ def grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output):
     """Call the grader in an empty directory with a stripped environment; fold its reply into the record."""
     args = ctx['args']
     sealed = {'id': token, 'diff': diff, 'criteria': case['criteria'], 'gate_output': gate_output}
-    env = adapter_env(ctx, 'grader', {})
+    fake = {}
     if ctx['grader_fake']:
         # Dedicated variables, read only by the built-in fake. They carry the opaque token, never the arm.
-        env.update(REPLAY_FAKE_GRADER_TOKEN=token, REPLAY_FAKE_GRADER_CAPTURE=str(trial_dir / 'grader-stdin.json'),
-                   REPLAY_FAKE_GRADER_SEED=args.seed)
+        fake.update(REPLAY_FAKE_GRADER_TOKEN=token, REPLAY_FAKE_GRADER_CAPTURE=str(trial_dir / 'grader-stdin.json'),
+                    REPLAY_FAKE_GRADER_SEED=args.seed)
         if args.fake_grades:
             entry = json.loads(Path(args.fake_grades).read_text()).get(key)
             if entry is not None:
-                env['REPLAY_FAKE_GRADER_ENTRY'] = json.dumps(entry)
+                fake['REPLAY_FAKE_GRADER_ENTRY'] = json.dumps(entry)
+    # The grader's HOME is a fresh empty directory outside the trial dir, like its cwd: the trial dir holds the
+    # builder's result file, handoff and reply, which the grader must never reach (not even through `..`).
     empty = tempfile.mkdtemp(prefix='replay-grader-')
+    grader_home = tempfile.mkdtemp(prefix='replay-grader-home-')
+    env = adapter_env(ctx, 'grader', grader_home, fake)
     try:
         reply = call_adapter(ctx['grader'], adapter_request(ctx, 'grader', sealed), env, empty, args.timeout)
     except AdapterError as error:
@@ -406,6 +432,7 @@ def grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output):
         return record
     finally:
         shutil.rmtree(empty, ignore_errors=True)
+        shutil.rmtree(grader_home, ignore_errors=True)
     save_reply(trial_dir, 'grader-reply.json', reply)
     grades = reply.get('grades')
     if not isinstance(grades, dict):

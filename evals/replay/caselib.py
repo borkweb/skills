@@ -51,11 +51,11 @@ def git_env():
     return env
 
 
-def git(repo, *args, check=True, timeout=120):
+def git(repo, *args, check=True, timeout=120, env_extra=None):
     """Run git in `repo` with the user's config out of the way; return stripped stdout."""
     # The case repo's own hooks (post-checkout, husky, LFS) and fsmonitor are commands the case never listed.
     run = procs.run_group(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', str(repo), *args],
-                          env=git_env(), timeout=timeout)
+                          env={**git_env(), **(env_extra or {})}, timeout=timeout)
     if check and run.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {run.stderr.strip()}')
     return run.stdout.strip() if check else run
