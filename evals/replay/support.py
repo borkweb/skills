@@ -246,7 +246,13 @@ def hostile_user_env(root):
             'ORCHESTRATOR_HOME': root / 'user-orch', 'HERDR_ENV': '1', 'HERDR_PANE_ID': 'pane-user',
             'HERDR_TAB_ID': 'tab-user', 'HERDR_WORKSPACE_ID': 'ws-user', 'HERDR_SOCKET_PATH': str(root / 'herdr.sock'),
             'CLAUDE_CODE_SESSION_ID': 'claude-session-user', 'CODEX_SESSION_ID': 'codex-session-user',
-            'BORK_REPO_RULES_DIR': root / 'user-rules'}
+            'BORK_REPO_RULES_DIR': root / 'user-rules',
+            'GH_TOKEN': 'gho_FAKE123456', 'GITHUB_TOKEN': 'ghs_FAKE123456', 'GITHUB_PERSONAL_ACCESS_TOKEN': 'ghp_FAKEPAT123456',
+            'CLAUDE_CODE_OAUTH_TOKEN': 'oauth-123456', 'SERVICE_OAUTH_TOKEN': 'svc-oauth-123456',
+            'CLAUDE_CODE_MESSAGING_TOKEN': 'msgtok-123456', 'CLAUDE_CODE_MESSAGING_SOCKET': root / 'msg.sock',
+            'CLAUDE_CODE_BRIDGE_SESSION_ID': 'u-bridge', 'CODEX_COMPANION_SESSION_ID': 'u-comp',
+            'SSH_AUTH_SOCK': root / 'ssh.sock', 'CODEX_HOME': root / 'user-codex', 'AWS_SECRET_ACCESS_KEY': 'aws-123456',
+            'ANTHROPIC_AUTH_TOKEN': 'aat-123456', 'FOO': 'bar'}
     (root / 'user-handoffs').mkdir(parents=True, exist_ok=True)
     (root / 'user-handoffs' / 'ledger.json').write_text('{}')
     return {k: str(v) for k, v in user.items()}

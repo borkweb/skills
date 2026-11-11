@@ -226,7 +226,7 @@ class SpendE2E(RealBase):
             self.assertTrue(support.pid_dead(pids['child']), f'its child survived at --timeout {timeout}')
             self.pidfile.unlink()
 
-    def test_model_call_timeout_in_the_grader_is_ungraded_and_leaves_no_process(self):
+    def test_model_call_timeout_kills_child_in_the_grader_and_the_trial_is_ungraded(self):
         self.configure(grader='sleep', pidfile=str(self.pidfile))
         # The model limit is half the runner's (here 5 s), so the builder stub has room on a loaded machine.
         run = self.go('claude', extra=['--timeout', '10'])

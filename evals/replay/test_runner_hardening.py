@@ -119,7 +119,7 @@ class GitHardeningTests(HardBase):
         # planted in the live repo's config and, by the fake builder, in the trial repo's config
         live = self.fx.repo / '.git' / 'config'
         live.write_text(live.read_text() + f'[diff]\n\texternal = {script}\n\tnoprefix = true\n[color]\n\tdiff = always\n')
-        run = self.replay(['--fake-builder-mode', 'plant'], env={'FAKE_PLANT_EXTERNAL': str(script)})
+        run = self.replay(['--fake-builder-mode', 'plant', '--gate-env', 'FAKE_PLANT_EXTERNAL'], env={'FAKE_PLANT_EXTERNAL': str(script)})
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertFalse(marker.exists(), 'a diff program ran')
         sealed = (support.trial_dir(self.out, 'current') / 'grader-stdin.json').read_text()
@@ -172,7 +172,7 @@ class CloneTests(HardBase):
     def test_the_trial_repo_is_a_disposable_clone_that_does_not_point_at_the_live_repo(self):
         self.build()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        run = self.replay(['--fake-builder-mode', 'inspect'], env={'FAKE_LIVE_PATH': str(self.fx.repo)})
+        run = self.replay(['--fake-builder-mode', 'inspect', '--gate-env', 'FAKE_LIVE_PATH'], env={'FAKE_LIVE_PATH': str(self.fx.repo)})
         self.assertEqual(run.returncode, 0, run.stderr)
         record = support.load(support.trial_dir(self.out, 'current') / 'builder-record.json')
         self.assertEqual(record['live_path_hits'], [])
@@ -204,6 +204,18 @@ class CloneTests(HardBase):
         self.assertEqual(self.scratch_left(), [])
 
 
+ALLOWED = {'PATH', 'SHELL', 'USER', 'LOGNAME', 'LANG', 'TERM', 'TMPDIR', 'TZ', 'HOME', 'AGENT_HANDOFFS_DIR',
+           'BORK_REPO_RULES_DIR', 'PWD', 'OLDPWD', 'SHLVL', '_', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+           'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+           'REQUESTS_CA_BUNDLE', '__CF_USER_TEXT_ENCODING', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM'}
+HOSTILE_NAMES = ('GH_TOKEN', 'GITHUB_TOKEN', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
+                 'SERVICE_OAUTH_TOKEN', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_CODE_MESSAGING_SOCKET',
+                 'CLAUDE_CODE_BRIDGE_SESSION_ID', 'CODEX_COMPANION_SESSION_ID', 'CODEX_SESSION_ID', 'SSH_AUTH_SOCK',
+                 'CODEX_HOME', 'AWS_SECRET_ACCESS_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY',
+                 'CODEX_API_KEY', 'CLAUDE_CODE_SESSION_ID', 'HERDR_ENV', 'HERDR_PANE_ID', 'BORK_RUN_DIR', 'BORK_RUNS_HOME',
+                 'BORK_RUN_ID', 'ORCHESTRATOR_HOME', 'FOO')
+
+
 class GateEnvTests(HardBase):
     def hostile(self):
         home = self.tmp / 'realhome'
@@ -226,16 +238,76 @@ class GateEnvTests(HardBase):
         for label, text in (('gate', trial['gates'][0]['output']), ('setup', setup_out.read_text())):
             seen = self.env_lines(text)
             self.assertTrue(seen, label)
-            for name in ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'CLAUDE_CODE_SESSION_ID',
-                         'CODEX_SESSION_ID', 'HERDR_ENV', 'HERDR_PANE_ID', 'BORK_RUN_DIR', 'BORK_RUNS_HOME',
-                         'BORK_RUN_ID', 'ORCHESTRATOR_HOME'):
+            for name in HOSTILE_NAMES:
                 self.assertNotIn(name, seen, f'{label} saw {name}')
+            self.assertEqual(set(seen) - ALLOWED, set(), f'{label} saw a name outside the allowlist')
             self.assertNotIn(str(home), text, label)
             self.assertNotEqual(seen['HOME'], str(home))
             trials = os.path.realpath(self.out / 'trials')
             for name in ('HOME', 'AGENT_HANDOFFS_DIR', 'BORK_REPO_RULES_DIR'):
                 self.assertTrue(os.path.realpath(seen[name]).startswith(trials + os.sep), f'{label} {name}={seen[name]}')
         self.assertIs(support.case_record(self.out)['gates_real_home'], False)
+
+    def test_b10_gate_env_names_are_forwarded_only_when_passed_and_are_recorded(self):
+        home, hostile = self.hostile()
+        self.build(gates=('env',))
+        run = self.replay(['--gate-env', 'FOO'], env=hostile)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        seen = self.env_lines(support.case_record(self.out)['trials'][0]['gates'][0]['output'])
+        self.assertEqual(seen.get('FOO'), 'bar')
+        for name in HOSTILE_NAMES:
+            if name != 'FOO':
+                self.assertNotIn(name, seen, name)
+        self.assertEqual(support.case_record(self.out)['gate_env'], ['FOO'])
+        self.setUp()
+        self.build(gates=('env',))
+        self.replay(env=hostile)
+        self.assertEqual(support.case_record(self.out)['gate_env'], [])
+        self.assertNotIn('FOO', self.env_lines(support.case_record(self.out)['trials'][0]['gates'][0]['output']))
+
+    def test_b10_a_bad_gate_env_name_is_refused(self):
+        self.build()
+        for name in ('', 'A=B', 'has space', '1X'):
+            run = support.run_cli(support.RUNNER, support.std_args(self.fx, self.out, extra=['--gate-env', name]))
+            self.assertEqual(run.returncode, 2, run.stderr)
+            self.assertFalse(self.out.exists())
+
+    def test_b10_the_runners_own_git_calls_get_the_allowlist_env_only(self):
+        home, hostile = self.hostile()
+        self.build()
+        log = self.tmp / 'git-env.log'
+        real = shutil.which('git')
+        wrapper = self.tmp / 'wrap' / 'git'
+        wrapper.parent.mkdir()
+        wrapper.write_text(f'#!/bin/sh\n{{ echo ---; env; }} >> {log}\nexec {real} "$@"\n')
+        wrapper.chmod(0o755)
+        hostile['PATH'] = f'{wrapper.parent}:{os.environ["PATH"]}'
+        run = self.replay(env=hostile)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        calls = log.read_text().split('---\n')[1:]
+        self.assertGreater(len(calls), 10)
+        for call in calls:
+            names = {line.split('=', 1)[0] for line in call.splitlines() if '=' in line and not line.startswith(' ')}
+            for name in HOSTILE_NAMES:
+                self.assertNotIn(name, names, f'a runner git call saw {name}')
+
+    def test_b10_custom_adapters_get_the_allowlist_env_and_gate_env_names(self):
+        home, hostile = self.hostile()
+        self.build()
+        dump = 'json.dump(dict(os.environ), open(os.environ["DUMP_TO"] + os.path.basename(sys.argv[0]), "w"))\nsys.stdin.read()\n'
+        builder = support.write_stub(self.tmp / 'b.py', dump + 'print(json.dumps({"status": "ok"}))\n')
+        grader = support.write_stub(self.tmp / 'g.py', dump + 'print(json.dumps({"grades": {}}))\n')
+        hostile['DUMP_TO'] = str(self.tmp / 'env-')
+        base = [a for a in support.std_args(self.fx, self.out) if a != '--fake'] + ['--spend', '--gate-env', 'DUMP_TO']
+        support.run_cli(support.RUNNER, base + ['--builder-adapter', builder, '--fake-grader'], env=hostile)
+        self.out = self.tmp / 'out2'
+        base = [a for a in support.std_args(self.fx, self.out) if a != '--fake'] + ['--spend', '--gate-env', 'DUMP_TO']
+        support.run_cli(support.RUNNER, base + ['--fake-builder', '--grader-adapter', grader], env=hostile)
+        for name in ('b.py', 'g.py'):
+            seen = json.loads(Path(str(self.tmp / 'env-') + name).read_text())
+            for hostile_name in HOSTILE_NAMES:
+                self.assertNotIn(hostile_name, seen, f'{name} saw {hostile_name}')
+            self.assertIn('DUMP_TO', seen)
 
     def test_b1_gates_real_home_is_opt_in_and_recorded_in_the_case_json(self):
         home, hostile = self.hostile()
@@ -244,9 +316,24 @@ class GateEnvTests(HardBase):
         self.assertEqual(run.returncode, 0, run.stderr)
         seen = self.env_lines(support.case_record(self.out)['trials'][0]['gates'][0]['output'])
         self.assertEqual(seen['HOME'], str(home))
-        self.assertNotIn('ANTHROPIC_API_KEY', seen)
-        self.assertNotIn('HERDR_ENV', seen)
+        for name in HOSTILE_NAMES:
+            self.assertNotIn(name, seen, name)
         self.assertIs(support.case_record(self.out)['gates_real_home'], True)
+
+
+class ReadOnlyGitDirTests(HardBase):
+    def test_b11_a_planted_clean_filter_never_runs_even_when_the_builder_locks_the_git_dir(self):
+        self.build()
+        marker = self.tmp / 'FILTER-RAN'
+        script = self.tmp / 'clean.sh'
+        script.write_text(f'#!/bin/sh\nenv > {marker}\ncat\n')
+        script.chmod(0o755)
+        run = self.replay(['--fake-builder-mode', 'filter-readonly', '--gate-env', 'FAKE_FILTER_SCRIPT'],
+                          env={'FAKE_FILTER_SCRIPT': str(script), 'HERDR_ENV': '1', 'ANTHROPIC_API_KEY': 'sk-ant-FILTER-12345678'})
+        self.assertFalse(marker.exists(), 'the runner ran the builder\'s clean filter' + (marker.read_text()[:300] if marker.exists() else ''))
+        trial = support.case_record(self.out)['trials'][0]
+        self.assertEqual(trial['outcome'], 'error', run.stderr)
+        self.assertEqual(self.scratch_left(), [])
 
 
 class LivePathInCaseTextTests(HardBase):
@@ -280,7 +367,7 @@ class SymlinkTests(HardBase):
         else:
             victim.write_text('USER FILE CONTENT\n')
             watched = victim
-        run = self.replay(['--fake-builder-mode', mode], env={'FAKE_VICTIM': str(victim)})
+        run = self.replay(['--fake-builder-mode', mode, '--gate-env', 'FAKE_VICTIM'], env={'FAKE_VICTIM': str(victim)})
         self.assertEqual(watched.read_text(), 'USER FILE CONTENT\n', 'the runner wrote through a symlink the builder planted')
         trial = support.case_record(self.out)['trials'][0]
         self.assertEqual(trial['outcome'], 'error', run.stderr)
@@ -304,6 +391,8 @@ class OneRefCloneTests(HardBase):
     def test_b4_the_trial_repo_has_one_ref_no_post_base_commit_no_tags_and_no_hardlinks(self):
         self.build()
         repo = self.fx.repo
+        support.git(repo, 'tag', 'base-light')  # tags on the base commit itself: only --no-tags keeps them out
+        support.git(repo, 'tag', '-a', 'base-ann', '-m', 'annotated base tag')
         (repo / 'post.txt').write_text('the fix\n')
         support.git(repo, 'add', 'post.txt')
         support.git(repo, 'commit', '-q', '-m', 'post-base fix naming C2')
@@ -311,7 +400,8 @@ class OneRefCloneTests(HardBase):
         support.git(repo, 'tag', 'light')
         support.git(repo, 'tag', '-a', 'ann', '-m', 'annotated')
         support.git(repo, 'branch', 'extra', self.fx.base)
-        run = self.replay(['--fake-builder-mode', 'inspect'], env={'FAKE_LIVE_PATH': str(repo), 'FAKE_POST_BASE': post})
+        run = self.replay(['--fake-builder-mode', 'inspect', '--gate-env', 'FAKE_LIVE_PATH', '--gate-env', 'FAKE_POST_BASE'],
+                          env={'FAKE_LIVE_PATH': str(repo), 'FAKE_POST_BASE': post})
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(support.git(repo, 'cat-file', '-t', post), 'commit', 'positive control: the live repo has it')
         record = support.load(support.trial_dir(self.out, 'current') / 'builder-record.json')
@@ -329,7 +419,7 @@ class InformationalTests(HardBase):
         script = self.tmp / 'ext.sh'
         script.write_text(f'#!/bin/sh\ntouch {marker}\necho EXTERNAL-OUTPUT\n')
         script.chmod(0o755)
-        run = self.replay(['--fake-builder-mode', 'plant', '--inject-fault', 'skip-config-restore'],
+        run = self.replay(['--fake-builder-mode', 'plant', '--inject-fault', 'skip-config-restore', '--gate-env', 'FAKE_PLANT_EXTERNAL'],
                           env={'FAKE_PLANT_EXTERNAL': str(script)})
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertFalse(marker.exists(), 'a diff program ran')

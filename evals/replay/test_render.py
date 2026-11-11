@@ -103,7 +103,7 @@ class RenderTests(unittest.TestCase):
         run = support.run_cli(support.RUNNER, [
             '--cases', fx.cases_dir, '--output', self.tmp / f'out-bad{self.count}', '--current-ref', support.BASE_REF,
             '--revised-ref', 'HEAD', '--revised-skills-repo', fx.skills_repo, '--spend',
-            '--builder-adapter', builder, '--fake-grader'], env={'STUB_MARKER': str(marker)})
+            '--builder-adapter', builder, '--fake-grader', '--gate-env', 'STUB_MARKER'], env={'STUB_MARKER': str(marker)})
         self.assertEqual(run.returncode, 2, hint + run.stderr)
         self.assertIn('refusing', run.stderr)
         self.assertFalse(marker.exists(), hint)

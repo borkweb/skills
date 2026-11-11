@@ -32,8 +32,19 @@ def criteria_ids(text):
     return [i for i in map(line_id, text.splitlines()) if i]
 
 
+# Everything the runner starts (gates, setup, adapters, its own git calls) gets an environment built only from these
+# names, LC_*, and names the user passes with --gate-env. Nothing else is inherited: no tokens, sockets or session IDs.
+ENV_PASS = ('PATH', 'SHELL', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM', 'TMPDIR', 'HTTP_PROXY',
+            'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+            'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE')
+
+
+def scrubbed_env(extra_names=()):
+    return {k: v for k, v in os.environ.items() if k in ENV_PASS or k.startswith('LC_') or k in extra_names}
+
+
 def git_env():
-    env = os.environ.copy()
+    env = scrubbed_env()
     env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0',
                GIT_NO_LAZY_FETCH='1', GIT_LFS_SKIP_SMUDGE='1', GIT_AUTHOR_NAME='replay', GIT_AUTHOR_EMAIL='replay@example.invalid',
                GIT_COMMITTER_NAME='replay', GIT_COMMITTER_EMAIL='replay@example.invalid')

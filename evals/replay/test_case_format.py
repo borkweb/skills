@@ -43,7 +43,7 @@ class CaseFormatTests(unittest.TestCase):
                 run = support.run_cli(support.RUNNER, [
                     '--cases', self.fx.cases_dir, '--output', self.tmp / 'out', '--current-ref', support.BASE_REF,
                     '--revised-ref', 'HEAD', '--revised-skills-repo', self.fx.skills_repo, '--spend',
-                    '--builder-adapter', builder, '--grader-adapter', grader],
+                    '--builder-adapter', builder, '--grader-adapter', grader, '--gate-env', 'STUB_MARKER'],
                     env={'STUB_MARKER': str(marker)})
                 self.assertNotEqual(run.returncode, 0)
                 self.assertIn(f'missing required field {field}', run.stderr)

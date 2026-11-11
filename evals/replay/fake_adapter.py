@@ -74,6 +74,16 @@ def builder(request):
             handle.write(f'[diff]\n\texternal = {ext}\n\tnoprefix = true\n[diff "evil"]\n\ttextconv = {ext}\n[color]\n\tdiff = always\n')
         git(worktree, 'add', '.gitattributes')
         git(worktree, 'commit', '-q', '-m', 'attributes')
+    if mode == 'filter-readonly':
+        # Plant a clean filter, make a tracked file dirty so `git status` must run it, then lock the git dir.
+        Path(worktree, '.gitattributes').write_text('*.txt filter=x\n')
+        Path(worktree, 'x.txt').write_text('one\n')
+        git(worktree, 'add', '.gitattributes', 'x.txt')
+        git(worktree, 'commit', '-q', '-m', 'filter fixture')
+        with open(Path(worktree, '.git', 'config'), 'a') as handle:
+            handle.write(f'[filter "x"]\n\tclean = {os.environ["FAKE_FILTER_SCRIPT"]}\n')
+        Path(worktree, 'x.txt').write_text('two changed\n')
+        os.chmod(Path(worktree, '.git'), 0o555)
     victim = os.environ.get('FAKE_VICTIM')
     if mode == 'symlink-config':  # the runner restores this file after the builder; a symlink must not be followed
         Path(worktree, '.git', 'config').rename(Path(worktree, '.git', 'config.orig'))

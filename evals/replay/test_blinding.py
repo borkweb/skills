@@ -38,8 +38,8 @@ class BlindingTests(unittest.TestCase):
         report = self.tmp / 'builder-report.json'
         builder = support.write_stub(self.tmp / 'b.py', DUMP + 'print(json.dumps({"status": "ok"}))\n')
         args = [a for a in support.std_args(self.fx, self.out) if a != '--fake']
-        run = support.run_cli(support.RUNNER, args + ['--spend', '--builder-adapter', builder, '--fake-grader'],
-                              env={'STUB_REPORT': str(report)})
+        run = support.run_cli(support.RUNNER, args + ['--spend', '--builder-adapter', builder, '--fake-grader',
+                                                       '--gate-env', 'STUB_REPORT'], env={'STUB_REPORT': str(report)})
         seen = json.loads(report.read_text())
         # the builder's request, minus the brief, and its environment
         request = json.loads(seen['stdin'])
@@ -73,7 +73,8 @@ class BlindingTests(unittest.TestCase):
         report = self.tmp / 'grader-report.json'
         grader = support.write_stub(self.tmp / 'g.py', DUMP + 'print(json.dumps({"grades": {"C1": "MET", "C2": "MET", "C3": "MET"}}))\n')
         args = [a for a in support.std_args(self.fx, self.out) if a != '--fake']
-        run = support.run_cli(support.RUNNER, args + ['--spend', '--fake-builder', '--grader-adapter', grader],
+        run = support.run_cli(support.RUNNER, args + ['--spend', '--fake-builder', '--grader-adapter', grader,
+                                                       '--gate-env', 'STUB_REPORT', '--gate-env', 'STUB_REPO'],
                               env={'STUB_REPORT': str(report), 'STUB_REPO': str(self.fx.repo),
                                    'OFFLOAD_HANDOFF': '/nowhere/handoff.md', 'REPLAY_TRIAL_DIR': '/nowhere'})
         self.assertEqual(run.returncode, 0, run.stderr)

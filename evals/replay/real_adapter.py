@@ -27,9 +27,7 @@ HARNESSES = ('claude', 'codex')
 CREDENTIALS = {'claude': ('ANTHROPIC_API_KEY',), 'codex': ('OPENAI_API_KEY', 'CODEX_API_KEY')}
 CREDENTIAL_NAMES = ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'CODEX_API_KEY')
 # Nothing else is forwarded: no session ids, no BORK_* or HERDR_*, no tokens, no agent sockets.
-PASS = ('PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM', 'TMPDIR', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
-        'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
-        'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE')
+PASS = caselib.ENV_PASS
 SCHEMA = {'type': 'object', 'properties': {'grades': {'type': 'object', 'additionalProperties': {
     'type': 'string', 'enum': ['MET', 'NOT MET']}}}, 'required': ['grades'], 'additionalProperties': False}
 FENCE = re.compile(r'```(?:json)?\s*\n(.*?)\n```', re.S)
@@ -81,7 +79,7 @@ def find_harness(harness):
 
 
 def child_env(names, home, extra):
-    env = {k: os.environ[k] for k in PASS if k in os.environ}
+    env = caselib.scrubbed_env()
     env.update({n: os.environ[n] for n in names}, HOME=str(home), GIT_TERMINAL_PROMPT='0')
     env.update(extra)
     return env

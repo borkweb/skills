@@ -275,7 +275,7 @@ class AdapterTests(RunnerBase):
     def spend_args(self, builder, grader=None):
         extra = ['--spend', '--builder-adapter', builder]
         extra += ['--grader-adapter', grader] if grader else ['--fake-grader']
-        return [a for a in support.std_args(self.fx, self.out) if a != '--fake'] + extra
+        return [a for a in support.std_args(self.fx, self.out) if a != '--fake'] + extra + ['--gate-env', 'STUB_MARKER']
 
     def test_adapter_path_with_spaces_runs(self):
         self.build()
@@ -336,6 +336,7 @@ class SpendGuardTests(RunnerBase):
         args = base + (['--fake-builder'] if builder_fake else ['--builder-adapter', builder])
         args += ['--fake-grader'] if grader_fake else ['--grader-adapter', grader]
         args += ['--spend'] if spend else []
+        args += ['--gate-env', 'STUB_MARKER', '--gate-env', 'STUB_STDOUT_FILE']
         env = os.environ.copy()
         env.update(STUB_MARKER=str(marker), STUB_STDOUT_FILE=str(stdout_file), AGENT_HANDOFFS_DIR=str(self.tmp / 'store'))
         with stdout_file.open('w') as handle:

@@ -31,9 +31,6 @@ ROOT = HERE.parent.parent
 TEMPLATE_PATH = 'skills/core/offload/builder-template.md'
 FAKE = [sys.executable, str(HERE / 'fake_adapter.py')]
 REAL = [sys.executable, str(HERE / 'real_adapter.py')]
-# Set by the user's shell or a coordinating session; no adapter may inherit them (HERDR_* too).
-ISOLATED = ('BORK_RUNS_HOME', 'BORK_RUN_DIR', 'BORK_RUN_ID', 'BORK_RUNS_CLI', 'ORCHESTRATOR_HOME',
-            'CLAUDE_CODE_SESSION_ID', 'CODEX_SESSION_ID')
 NOT_GRADED = ('skipped', 'error', 'ungraded', 'env-unavailable')
 OUTPUT_CAP = 20000
 
@@ -69,6 +66,8 @@ def parse_args(argv):
     p.add_argument('--grader-adapter', help='executable that is not the built-in fake; needs --spend')
     p.add_argument('--builder-harness', help='real builder: claude or codex (paid model calls; needs --spend)')
     p.add_argument('--grader-harness', help='real grader: claude or codex (paid model calls; needs --spend)')
+    p.add_argument('--gate-env', action='append', default=[], metavar='NAME',
+                   help='forward this environment variable to gates, setup and adapters (repeatable); weakens blinding')
     p.add_argument('--gates-real-home', action='store_true',
                    help='give setup and gate commands the real HOME; weakens blinding (default: a temp HOME)')
     p.add_argument('--max-budget-usd', type=float, default=2.0, help='per-call cap where the harness has one (claude)')
@@ -77,7 +76,7 @@ def parse_args(argv):
     p.add_argument('--fake-grades', help='JSON {"<case>/<arm>/<trial>": {"C1": "MET"} | "ungraded" | "exit1"}')
     p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage', 'readonly', 'dirty', 'plant', 'inspect',
                                                                  'symlink-config', 'symlink-reply', 'symlink-grader-reply',
-                                                                 'symlink-git'])
+                                                                 'symlink-git', 'filter-readonly'])
     p.add_argument('--inject-fault', choices=['after-worktree', 'skip-config-restore'], help='raise in the runner (for cleanup tests)')
     return p.parse_args(argv)
 
@@ -127,20 +126,27 @@ def scrub(text):
     return text
 
 
-def base_env():
-    """The runner's env minus everything an adapter must not inherit from the user's shell or a coordinating session."""
-    return {k: v for k, v in os.environ.items() if k not in ISOLATED and not k.startswith(('HERDR_', 'BORK_'))}
+def adapter_env(ctx, role, extra):
+    """An adapter's environment: the allowlist, the --gate-env names, the harness's own credential variables when it
+    is a built-in real adapter, and the per-trial variables in `extra`."""
+    env = caselib.scrubbed_env(ctx['args'].gate_env)
+    harness = ctx[f'{role}_harness']
+    if harness:
+        env.update({n: os.environ[n] for n in real_adapter.CREDENTIALS[harness] if os.environ.get(n)})
+    env.update(extra)
+    return env
 
 
-def gate_env(trial_dir, real_home):
-    """What setup and gate commands may see: the adapters' scrubbed env with no credential, and per-trial store dirs.
-    They run code the builder wrote, and their output reaches the grader."""
-    env = {k: v for k, v in base_env().items() if k not in real_adapter.CREDENTIAL_NAMES and 'API_KEY' not in k
-           and not k.startswith(('REPLAY_', 'OFFLOAD_'))}
+def gate_env(trial_dir, args):
+    """What setup and gate commands may see. They run code the builder wrote and their output reaches the grader, so
+    this is the allowlist plus the per-trial dirs, a temp HOME (unless --gates-real-home) and --gate-env names."""
+    env = caselib.scrubbed_env(args.gate_env)
     rules = trial_dir / 'repo-rules'
     rules.mkdir(exist_ok=True)
     env.update(AGENT_HANDOFFS_DIR=str(trial_dir / 'handoffs'), BORK_REPO_RULES_DIR=str(rules))
-    if not real_home:
+    if args.gates_real_home:
+        env['HOME'] = os.environ.get('HOME', '')
+    else:
         (trial_dir / 'home').mkdir(exist_ok=True)
         env['HOME'] = str(trial_dir / 'home')
     return env
@@ -151,15 +157,18 @@ def safe_write(path, text):
     is not a regular file, drop a regular file, then create exclusively."""
     path = Path(path)
     try:
-        mode = os.lstat(path).st_mode
-    except FileNotFoundError:
-        mode = None
-    if mode is not None:
-        if not stat.S_ISREG(mode):
-            raise Unsafe(f'{path.name} is a symlink or not a regular file; refusing to write through it')
-        os.unlink(path)
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w') as handle:
-        handle.write(text)
+        try:
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
+            mode = None
+        if mode is not None:
+            if not stat.S_ISREG(mode):
+                raise Unsafe(f'{path.name} is a symlink or not a regular file; refusing to write through it')
+            os.unlink(path)
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w') as handle:
+            handle.write(text)
+    except OSError as error:
+        raise Unsafe(f'could not write {path.name}: {error}')
 
 
 def require_real_git_dir(repo):
@@ -265,11 +274,6 @@ def make_clone(repo, base, branch, clone, timeout):
     return None
 
 
-def grader_env():
-    """What the grader process may see: nothing of the builder's run, and no arm name."""
-    return {k: v for k, v in base_env().items() if not k.startswith(('REPLAY_', 'OFFLOAD_')) and k != 'AGENT_HANDOFFS_DIR'}
-
-
 def adapter_request(ctx, role, request):
     """Real-adapter requests also carry the spend authorization, the harness, a model-call timeout (under the
     runner's own, so the adapter can kill its child and report) and the per-call budget."""
@@ -318,7 +322,7 @@ def run_trial(case, arm, trial, ctx):
         trusted_config = config_path.read_text()
         if args.inject_fault == 'after-worktree':
             raise RuntimeError('injected fault after the clone was created')
-        genv = gate_env(trial_dir, args.gates_real_home)
+        genv = gate_env(trial_dir, args)
         for command in case.get('setup_commands', []):
             step = run_shell(command, worktree, args.timeout, genv)
             if step['timeout'] or step['exit_code'] != 0:
@@ -327,8 +331,8 @@ def run_trial(case, arm, trial, ctx):
         brief = render.render(arm['template'], case['goal'], str(worktree), branch, case['owned_files'],
                               case['criteria'], case['gates_text'], str(result_file))
         (trial_dir / 'brief.md').write_text(brief)
-        env = dict(base_env(), AGENT_HANDOFFS_DIR=str(trial_dir / 'handoffs'), OFFLOAD_HANDOFF=str(handoff_file),
-                   REPLAY_TRIAL_DIR=str(trial_dir))
+        env = adapter_env(ctx, 'builder', {'AGENT_HANDOFFS_DIR': str(trial_dir / 'handoffs'),
+                                           'OFFLOAD_HANDOFF': str(handoff_file), 'REPLAY_TRIAL_DIR': str(trial_dir)})
         # The builder sees the brief, which holds the criteria. It never sees which criterion was missed.
         request = {'brief': brief, 'worktree': str(worktree), 'branch': branch, 'result_file': str(result_file),
                    'handoff_file': str(handoff_file), 'trial_dir': str(trial_dir), 'trial': token,
@@ -346,15 +350,18 @@ def run_trial(case, arm, trial, ctx):
         require_real_git_dir(worktree)
         save_reply(trial_dir, 'builder-reply.json', reply)
         if args.inject_fault != 'skip-config-restore':
+            # The runner owns this directory: take back write access the builder removed, then restore. Any failure
+            # ends the trial, so no git call below ever reads a config the builder planted.
             try:
-                safe_write(config_path, trusted_config)
-            except OSError:
-                pass  # a read-only clone: remove_tree handles it, and no planted config is read below
+                os.chmod(worktree / '.git', 0o700)
+            except OSError as error:
+                raise Unsafe(f'could not take back the trial repo .git: {error}')
+            safe_write(config_path, trusted_config)
         head = caselib.git(worktree, 'rev-parse', 'HEAD')
         if head == case['base_commit']:
             record.update(outcome='error', reason='no-commit: the builder left HEAD at the base commit; only commits are graded')
             return record
-        if caselib.git(worktree, 'status', '--porcelain'):
+        if caselib.git(worktree, 'status', '--porcelain', '--ignore-submodules=all'):
             record.update(outcome='error', reason='dirty-tree: the builder left uncommitted changes the grader would not see')
             return record
         for command in case['gate_commands']:
@@ -382,7 +389,7 @@ def grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output):
     """Call the grader in an empty directory with a stripped environment; fold its reply into the record."""
     args = ctx['args']
     sealed = {'id': token, 'diff': diff, 'criteria': case['criteria'], 'gate_output': gate_output}
-    env = grader_env()
+    env = adapter_env(ctx, 'grader', {})
     if ctx['grader_fake']:
         # Dedicated variables, read only by the built-in fake. They carry the opaque token, never the arm.
         env.update(REPLAY_FAKE_GRADER_TOKEN=token, REPLAY_FAKE_GRADER_CAPTURE=str(trial_dir / 'grader-stdin.json'),
@@ -463,6 +470,9 @@ def execute(args):
         raise Refusal('--trials must be at least 1')
     if args.timeout <= 0:
         raise Refusal('--timeout must be positive')
+    for name in args.gate_env:
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+            raise Refusal(f'--gate-env needs a variable name, not {name!r}')
     if not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0:
         raise Refusal('--max-budget-usd must be a finite number greater than 0')
     if args.demo:
@@ -512,6 +522,7 @@ def execute(args):
         reason = case_skip_reason(case)
         case_record = {'id': case['id'], 'base_commit': case['base_commit'], 'gate_commands': case['gate_commands'],
                        'gates_real_home': args.gates_real_home,
+                       'gate_env': list(args.gate_env),
                        'status': 'skipped' if reason else 'ran', 'reason': reason, 'trials': []}
         for trial in range(1, args.trials + 1):
             for arm in arms:
