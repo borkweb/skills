@@ -9,6 +9,7 @@ the harness binary is on PATH (there is no fallback); and the harness credential
 The model process gets an allowlisted environment and a temp HOME, so it inherits nothing of the user's session.
 """
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -61,6 +62,14 @@ def check(request):
     timeout = request.get('timeout')
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
         raise Refusal('timeout must be a positive number of seconds: every model call has a wall-clock limit')
+    budget = request.get('max_budget_usd', 2)
+    if isinstance(budget, bool) or not isinstance(budget, (int, float)) or not math.isfinite(budget) or budget <= 0:
+        raise Refusal('max_budget_usd must be a finite number greater than 0: it is the per-call spend cap')
+    return find_harness(harness)
+
+
+def find_harness(harness):
+    """The harness binary on PATH and the credential variables to forward; Refusal naming what is missing."""
     binary = shutil.which(harness, path=os.environ.get('PATH', ''))
     if not binary:
         raise Refusal(f'{harness} is not on PATH; there is no fallback to another harness or a fake')

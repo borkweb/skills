@@ -40,8 +40,13 @@ def builder(request):
         hits = [str(p) for p in Path(worktree, '.git').rglob('*') if p.is_file() and not p.is_symlink()
                 and any(n in p.read_bytes() for n in needles)]
         record = json.loads((trial / 'builder-record.json').read_text())
+        post = os.environ.get('FAKE_POST_BASE', '')
+        probe = subprocess.run(['git', '-C', worktree, 'cat-file', '-e', post + '^{commit}'], capture_output=True) if post else None
+        links = [p.stat().st_nlink for p in Path(worktree, '.git', 'objects').rglob('*') if p.is_file()]
         record.update(live_path_hits=hits, remotes=git(worktree, 'remote').split(),
-                      dot_git_is_file=Path(worktree, '.git').is_file())
+                      dot_git_is_file=Path(worktree, '.git').is_file(),
+                      refs=git(worktree, 'for-each-ref', '--format=%(refname)').split(),
+                      has_post_base=bool(probe is not None and probe.returncode == 0), max_nlink=max(links or [1]))
         (trial / 'builder-record.json').write_text(json.dumps(record))
     (trial / 'started').write_text('started\n')
     if mode == 'fail':
@@ -69,6 +74,17 @@ def builder(request):
             handle.write(f'[diff]\n\texternal = {ext}\n\tnoprefix = true\n[diff "evil"]\n\ttextconv = {ext}\n[color]\n\tdiff = always\n')
         git(worktree, 'add', '.gitattributes')
         git(worktree, 'commit', '-q', '-m', 'attributes')
+    victim = os.environ.get('FAKE_VICTIM')
+    if mode == 'symlink-config':  # the runner restores this file after the builder; a symlink must not be followed
+        Path(worktree, '.git', 'config').rename(Path(worktree, '.git', 'config.orig'))
+        os.symlink(victim, Path(worktree, '.git', 'config'))
+    if mode == 'symlink-reply':
+        os.symlink(victim, trial / 'builder-reply.json')
+    if mode == 'symlink-grader-reply':
+        os.symlink(victim, trial / 'grader-reply.json')
+    if mode == 'symlink-git':
+        Path(worktree, '.git').rename(Path(worktree, '.git-real'))
+        os.symlink(victim, Path(worktree, '.git'))
     # A work summary and gate results live in the result file and handoff, outside the worktree.
     for name in ('result_file', 'handoff_file'):
         Path(request[name]).write_text(f'## Gate results\n{SENTINEL_SUMMARY}\n\n## Work summary\n{SENTINEL_SUMMARY}\n')

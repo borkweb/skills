@@ -221,12 +221,12 @@ class CleanupTests(RunnerBase):
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
 
     def slow_clone_path(self):
-        """A git wrapper on PATH that finishes `clone`, writes a marker, then lingers, so a signal lands in the clone window."""
+        """A git wrapper on PATH that finishes the trial repo's `fetch`, writes a marker, then lingers, so a signal lands in that window."""
         real = subprocess.run(['which', 'git'], capture_output=True, text=True).stdout.strip()
         wrapper = self.tmp / 'bin' / 'git'
         wrapper.parent.mkdir()
         self.window = self.tmp / 'window-open'
-        wrapper.write_text('#!/bin/sh\ncase " $* " in *" clone "*) ' + real + ' "$@"; rc=$?; touch ' + str(self.window)
+        wrapper.write_text('#!/bin/sh\ncase " $* " in *" fetch "*) ' + real + ' "$@"; rc=$?; touch ' + str(self.window)
                            + '; sleep 30; exit $rc;; esac\nexec ' + real + ' "$@"\n')
         wrapper.chmod(0o755)
         return f'{wrapper.parent}:{os.environ["PATH"]}'

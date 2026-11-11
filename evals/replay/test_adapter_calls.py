@@ -235,6 +235,15 @@ class GuardTests(AdapterBase):
                     self.assertNotEqual(run.returncode, 0)
                     self.assertEqual(self.calls(), [])
 
+    def test_max_budget_must_be_finite_and_positive(self):
+        for value in (float('nan'), float('inf'), 0, -1, 'two', True, None):
+            for role in ('builder', 'grader'):
+                with self.subTest(value=repr(value), role=role):
+                    run = getattr(self, role)('claude', max_budget_usd=value)
+                    self.assertNotEqual(run.returncode, 0)
+                    self.assertIn('max_budget_usd', run.stderr)
+                    self.assertEqual(self.calls(), [])
+
     def test_missing_credential_is_refused_naming_the_variable(self):
         no_keys = {'ANTHROPIC_API_KEY': '', 'OPENAI_API_KEY': '', 'CODEX_API_KEY': ''}
         for role in ('builder', 'grader'):

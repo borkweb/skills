@@ -158,16 +158,32 @@ class SpendE2E(RealBase):
             self.assertEqual(self.calls(), [])
             self.assertFalse(self.out.exists())
 
-    def test_builder_missing_binary_is_a_runner_error_and_the_grader_is_never_called(self):
+    def test_builder_missing_binary_is_refused_by_the_runner_before_any_trial(self):
         (self.bin / 'claude').unlink()
         run = support.run_real(self.fx, self.out, self.bin, self.tmp, 'claude', grader_harness='codex')
-        self.assertEqual(run.returncode, 1, run.stderr)
-        trial = self.trials()[0]
-        self.assertEqual(trial['outcome'], 'error')
-        self.assertIn('claude', trial['reason'])
-        self.assertEqual(trial['grades'], {})
+        self.assertEqual(run.returncode, 2, run.stderr)
+        self.assertIn('claude', run.stderr)
         self.assertEqual(self.calls(), [], 'no stub ran: not the builder, not the codex grader')
-        self.assertNotIn('MET', json.dumps(trial['grades']))
+        self.assertFalse(self.out.exists(), 'no trial was recorded, so no criterion can be MET')
+
+    def test_preflight_refuses_a_mixed_run_whose_grader_harness_cannot_run(self):
+        run = support.run_real(self.fx, self.out, self.bin, self.tmp, 'codex', grader_harness='claude',
+                               env={'ANTHROPIC_API_KEY': ''})
+        self.assertEqual(run.returncode, 2, run.stderr)
+        self.assertIn('ANTHROPIC_API_KEY', run.stderr)
+        self.assertEqual(self.calls(), [], 'no paid builder call before the grader is known to work')
+        self.assertFalse(self.out.exists())
+        (self.bin / 'claude').unlink()
+        run = support.run_real(self.fx, self.out, self.bin, self.tmp, 'codex', grader_harness='claude')
+        self.assertEqual(run.returncode, 2, run.stderr)
+        self.assertIn('claude', run.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_runner_refuses_a_bad_max_budget_before_any_call(self):
+        for value in ('nan', 'inf', '0', '-3'):
+            run = self.go('claude', extra=['--max-budget-usd', value])
+            self.assertEqual(run.returncode, 2, run.stderr)
+            self.assertEqual(self.calls(), [])
 
     def test_runner_refuses_an_unknown_or_empty_harness_before_any_call(self):
         for harness in ('opencode', 'Claude', ''):
@@ -184,10 +200,10 @@ class SpendE2E(RealBase):
 
     def test_runner_refuses_a_missing_credential_before_the_first_call(self):
         run = self.go('claude', env={'ANTHROPIC_API_KEY': ''})
-        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(run.returncode, 2, run.stderr)
         self.assertEqual(self.calls(), [])
-        self.assertEqual({t['outcome'] for t in self.trials()}, {'error'})
-        self.assertIn('ANTHROPIC_API_KEY', json.dumps(self.trials()))
+        self.assertIn('ANTHROPIC_API_KEY', run.stderr)
+        self.assertFalse(self.out.exists())
 
     def test_model_call_timeout_kills_child_through_the_runner(self):
         self.configure(builder='sleep', pidfile=str(self.pidfile))
@@ -212,7 +228,8 @@ class SpendE2E(RealBase):
 
     def test_model_call_timeout_in_the_grader_is_ungraded_and_leaves_no_process(self):
         self.configure(grader='sleep', pidfile=str(self.pidfile))
-        run = self.go('claude', extra=['--timeout', '2'])
+        # The model limit is half the runner's (here 5 s), so the builder stub has room on a loaded machine.
+        run = self.go('claude', extra=['--timeout', '10'])
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual({t['outcome'] for t in self.trials()}, {'ungraded'})
         self.assertEqual({v for t in self.trials() for v in t['grades'].values()}, {'ungraded'})

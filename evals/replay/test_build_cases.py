@@ -265,10 +265,12 @@ class BaseSourceTests(BuilderCase):
             self.write_run_file('notes.md', template.format(sha=self.fx.base[:8]))
             return self.one()
 
-        for template in ('S2 merged @ {sha} today\n', 'unrelated note @ {sha}\n'):
+        for template in ('S2 merged @ {sha} today\n', 'unrelated note @ {sha}\n', 'S2 base @ {sha}\n'):
             with self.subTest(notes=template):
                 run, cases = with_notes(template)
                 self.assertEqual(cases, [], run.stdout)
+        run, cases = with_notes('S1 and S2 base @ {sha}\n')
+        self.assertEqual(len(cases), 1, 'a line that names this slice as well still counts')
         run, cases = with_notes('the base for S1 was @ {sha}\n')
         (path,) = cases
         self.assertIn(f'the base for S1 was @ {self.fx.base[:8]}', json.loads(path.read_text())['provenance'])

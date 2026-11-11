@@ -117,8 +117,11 @@ def sha_lines(text, source, keep=lambda line: True):
 
 
 def names_slice_or_base(line, tags):
-    return (re.search(r'\bbase\b', line, re.I) is not None
-            or any(re.search(rf'(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])', line) for t in tags))
+    mine = any(re.search(rf'(?<![A-Za-z0-9]){re.escape(t)}(?![A-Za-z0-9])', line) for t in tags)
+    other = [t for t in re.findall(r'(?<![A-Za-z0-9])S\d+[a-z]?(?![A-Za-z0-9])', line) if t not in tags]
+    if other and not mine:
+        return False  # a line about another slice is not this slice's base, even when it says "base"
+    return mine or re.search(r'\bbase\b', line, re.I) is not None
 
 
 def base_candidates(run_dir, tags, item, ledger, review_round):
