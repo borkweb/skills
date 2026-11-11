@@ -99,7 +99,7 @@ class BuilderTests(AdapterBase):
         self.assertEqual(len(self.calls('builder')), 2)
 
     def test_model_call_timeout_kills_child_builder(self):
-        self.configure(builder='sleep', pidfile=str(self.pidfile))
+        self.configure(builder='sleep', ignore_term=True, pidfile=str(self.pidfile))
         start = time.monotonic()
         run = self.builder('claude', timeout=2)
         self.assertLess(time.monotonic() - start, 30)

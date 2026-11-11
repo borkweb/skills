@@ -167,26 +167,34 @@ class GateTests(RunnerBase):
 
 
 class CleanupTests(RunnerBase):
+    def setUp(self):
+        super().setUp()
+        (self.tmp / 'tmpdir').mkdir(exist_ok=True)
+        self.tmpenv = {'TMPDIR': str(self.tmp / 'tmpdir')}
+
     def test_worktree_and_branch_are_gone_after_builder_failure(self):
         self.build()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'fail'])
+        support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'fail'], env=self.tmpenv)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
         self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'error')
 
     def test_worktree_is_gone_after_a_failing_gate(self):
         self.build(gates=('exit 3',))
-        run = support.replay(self.fx, self.out)
+        run = support.replay(self.fx, self.out, env=self.tmpenv)
         self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.case_record(self.out)['trials'][0]['gates'][0]['exit_code'], 3)
 
     def test_worktree_is_gone_when_the_runner_itself_raises(self):
         self.build()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        run = support.replay(self.fx, self.out, extra=['--inject-fault', 'after-worktree'])
+        run = support.replay(self.fx, self.out, extra=['--inject-fault', 'after-worktree'], env=self.tmpenv)
         self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
 
@@ -195,6 +203,7 @@ class CleanupTests(RunnerBase):
         branches = support.git(self.fx.repo, 'branch', '--list')
         env = os.environ.copy()
         env['AGENT_HANDOFFS_DIR'] = str(self.tmp / 'store')
+        env.update(self.tmpenv)
         proc = subprocess.Popen([sys.executable, str(support.RUNNER), *map(str, support.std_args(
             self.fx, self.out, extra=['--fake-builder-mode', 'sleep']))], env=env, cwd=str(support.ROOT),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -207,9 +216,9 @@ class CleanupTests(RunnerBase):
         proc.send_signal(signal.SIGINT)
         proc.communicate(timeout=60)
         self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
-
 
     def slow_clone_path(self):
         """A git wrapper on PATH that finishes `clone`, writes a marker, then lingers, so a signal lands in the clone window."""
@@ -230,7 +239,7 @@ class CleanupTests(RunnerBase):
             with self.subTest(signal=sig.name):
                 self.setUp()
                 self.build()
-                (self.tmp / 'tmpdir').mkdir()
+                (self.tmp / 'tmpdir').mkdir(exist_ok=True)
                 branches = support.git(self.fx.repo, 'branch', '--list')
                 env = os.environ.copy()
                 env.update(AGENT_HANDOFFS_DIR=str(self.tmp / 'store'), PATH=self.slow_clone_path(),
@@ -251,7 +260,6 @@ class CleanupTests(RunnerBase):
 
     def test_clone_timeout_is_a_trial_error_and_cleans_up(self):
         self.build()
-        (self.tmp / 'tmpdir').mkdir()
         branches = support.git(self.fx.repo, 'branch', '--list')
         run = support.replay(self.fx, self.out, extra=['--timeout', '2'],
                              env={'PATH': self.slow_clone_path(), 'TMPDIR': str(self.tmp / 'tmpdir')})

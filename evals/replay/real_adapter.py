@@ -81,7 +81,9 @@ def child_env(names, home, extra):
 def model_call(command, prompt, env, cwd, timeout):
     """Run the harness in its own process group; a timeout or a TERM to this adapter kills that group."""
     try:
-        run = procs.run_group(command, input=prompt, env=env, cwd=cwd, timeout=timeout)
+        # No grace: the runner kills this adapter's own group soon after it sends TERM, and that kill cannot reach the
+        # model's session, so the model group must already be dead by then.
+        run = procs.run_group(command, input=prompt, env=env, cwd=cwd, timeout=timeout, grace=0)
     except subprocess.TimeoutExpired:
         raise ModelFailure(f'model call timeout after {timeout:g}s')
     except OSError as error:

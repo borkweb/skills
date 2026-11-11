@@ -158,6 +158,17 @@ class SpendE2E(RealBase):
             self.assertEqual(self.calls(), [])
             self.assertFalse(self.out.exists())
 
+    def test_builder_missing_binary_is_a_runner_error_and_the_grader_is_never_called(self):
+        (self.bin / 'claude').unlink()
+        run = support.run_real(self.fx, self.out, self.bin, self.tmp, 'claude', grader_harness='codex')
+        self.assertEqual(run.returncode, 1, run.stderr)
+        trial = self.trials()[0]
+        self.assertEqual(trial['outcome'], 'error')
+        self.assertIn('claude', trial['reason'])
+        self.assertEqual(trial['grades'], {})
+        self.assertEqual(self.calls(), [], 'no stub ran: not the builder, not the codex grader')
+        self.assertNotIn('MET', json.dumps(trial['grades']))
+
     def test_runner_refuses_an_unknown_or_empty_harness_before_any_call(self):
         for harness in ('opencode', 'Claude', ''):
             run = self.go(harness)
@@ -188,6 +199,17 @@ class SpendE2E(RealBase):
         self.assertTrue(support.pid_dead(pids['child']))
         self.assertEqual(self.calls('grader'), [], 'no grader call after a failed builder')
 
+    def test_model_call_timeout_kills_child_that_ignores_sigterm(self):
+        self.configure(builder='sleep', ignore_term=True, pidfile=str(self.pidfile))
+        for timeout in ('2', '8'):
+            self.out = self.tmp / f'out{timeout}'
+            run = self.go('claude', extra=['--timeout', timeout])
+            self.assertEqual(run.returncode, 1)
+            pids = support.read_pids(self.pidfile)
+            self.assertTrue(support.pid_dead(pids['stub']), f'stub survived at --timeout {timeout}')
+            self.assertTrue(support.pid_dead(pids['child']), f'its child survived at --timeout {timeout}')
+            self.pidfile.unlink()
+
     def test_model_call_timeout_in_the_grader_is_ungraded_and_leaves_no_process(self):
         self.configure(grader='sleep', pidfile=str(self.pidfile))
         run = self.go('claude', extra=['--timeout', '2'])
@@ -208,8 +230,11 @@ class SpendE2E(RealBase):
         self.go('claude', trials=2)
         self.assertEqual(len(self.calls('grader')), 4)
 
-    def test_sigint_kills_model_child_and_cleans_up(self):
-        self.configure(builder='sleep', pidfile=str(self.pidfile))
+    def test_sigint_kills_model_child_that_ignores_sigterm(self):
+        self.test_sigint_kills_model_child_and_cleans_up(ignore_term=True)
+
+    def test_sigint_kills_model_child_and_cleans_up(self, ignore_term=False):
+        self.configure(builder='sleep', pidfile=str(self.pidfile), ignore_term=ignore_term)
         env = os.environ.copy()
         env.update(support.real_env(self.bin, self.tmp))
         env['AGENT_HANDOFFS_DIR'] = str(self.tmp / 'store')
@@ -234,6 +259,9 @@ class SpendE2E(RealBase):
             self.assertIn(run.returncode, (0, 1), run.stderr)
             files = [p for p in self.out.rglob('*') if p.is_file()]
             self.assertTrue(files)
+            for row in self.calls('grader'):
+                for marker in (marker_a, marker_o):
+                    self.assertNotIn(marker, row['stdin'], 'the credential reached the grader input')
             for path in files:
                 text = path.read_text(errors='replace')
                 for marker in (marker_a, marker_o):

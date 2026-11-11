@@ -126,7 +126,12 @@ mode = cfg.get(role, 'ok')
 if mode == 'fail':
     sys.stderr.write('stub failure\n'); sys.exit(1)
 if mode == 'sleep':
-    child = subprocess.Popen(['sleep', '300'])
+    if cfg.get('ignore_term'):
+        import signal
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        child = subprocess.Popen(['sh', '-c', 'trap "" TERM; sleep 300'])
+    else:
+        child = subprocess.Popen(['sleep', '300'])
     json.dump({'stub': os.getpid(), 'child': child.pid}, open(cfg['pidfile'], 'w'))
     time.sleep(300)
 def emit(text, structured=None):
