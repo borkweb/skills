@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import subprocess
 
+import procs
+
 REQUIRED = ('id', 'repo', 'base_commit', 'goal', 'owned_files', 'criteria', 'gates_text', 'gate_commands',
             'missed_ids', 'provenance')
 # A line's first token is an ID: optional list marker, table pipe, ** or backticks, then C<n>[.<n>][a-z] and a
@@ -30,19 +32,30 @@ def criteria_ids(text):
     return [i for i in map(line_id, text.splitlines()) if i]
 
 
+# Everything the runner starts (gates, setup, adapters, its own git calls) gets an environment built only from these
+# names, LC_*, and names the user passes with --gate-env. Nothing else is inherited: no tokens, sockets or session IDs.
+ENV_PASS = ('PATH', 'SHELL', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TERM', 'TMPDIR', 'HTTP_PROXY',
+            'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+            'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'REQUESTS_CA_BUNDLE')
+
+
+def scrubbed_env(extra_names=()):
+    return {k: v for k, v in os.environ.items() if k in ENV_PASS or k.startswith('LC_') or k in extra_names}
+
+
 def git_env():
-    env = os.environ.copy()
+    env = scrubbed_env()
     env.update(GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0',
-               GIT_AUTHOR_NAME='replay', GIT_AUTHOR_EMAIL='replay@example.invalid',
+               GIT_NO_LAZY_FETCH='1', GIT_NO_REPLACE_OBJECTS='1', GIT_LFS_SKIP_SMUDGE='1', GIT_AUTHOR_NAME='replay', GIT_AUTHOR_EMAIL='replay@example.invalid',
                GIT_COMMITTER_NAME='replay', GIT_COMMITTER_EMAIL='replay@example.invalid')
     return env
 
 
-def git(repo, *args, check=True, timeout=120):
+def git(repo, *args, check=True, timeout=120, env_extra=None):
     """Run git in `repo` with the user's config out of the way; return stripped stdout."""
-    # The case repo's own hooks (post-checkout, husky, LFS) are commands the case never listed.
-    run = subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', '-C', str(repo), *args], capture_output=True,
-                         text=True, env=git_env(), timeout=timeout)
+    # The case repo's own hooks (post-checkout, husky, LFS) and fsmonitor are commands the case never listed.
+    run = procs.run_group(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', str(repo), *args],
+                          env={**git_env(), **(env_extra or {})}, timeout=timeout)
     if check and run.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {run.stderr.strip()}')
     return run.stdout.strip() if check else run
@@ -114,9 +127,10 @@ def validate_case(case, source='case'):
     for command in case['gate_commands']:
         if command not in case['gates_text']:
             raise CaseError(f'{source}: field gate_commands holds a command missing from gates_text: {command}')
-    if case['gate_commands'] and case.get('gate_commands_reviewed') is not True:
-        raise CaseError(f'{source}: gate_commands will run in a worktree; read them, then set '
-                        'gate_commands_reviewed to true (the case builder only proposes gate_command_candidates)')
+    candidates = case.get('gate_command_candidates', [])
+    if (case['gate_commands'] or candidates) and case.get('gate_commands_reviewed') is not True:
+        raise CaseError(f'{source}: gate_commands will run in a trial clone, and candidates are only proposals; read '
+                        'them, copy the ones you trust into gate_commands, then set gate_commands_reviewed to true')
     for field in ('goal', 'owned_files'):
         for missed in case['missed_ids']:
             if re.search(rf'(?<![A-Za-z0-9]){re.escape(missed)}(?![A-Za-z0-9])', case[field]):

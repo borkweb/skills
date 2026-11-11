@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Replay a missed-criterion case against two skill revisions, using fake adapters only unless --spend is given.
 
-For each case, trial and arm (current, revised) it makes a throwaway worktree at the case's base commit, renders the
-arm's builder-template.md into a brief, calls a builder adapter, runs the case's gate commands in that worktree,
-and asks a grader adapter to grade the sealed input. Adapters are exec'd directly (no shell) with JSON on stdin and
-stdout, as in evals/run.py. Results are never overwritten.
+For each case, trial and arm (current, revised) it makes a disposable local clone of the case repo at the case's base
+commit, renders the arm's builder-template.md into a brief, calls a builder adapter, runs the case's gate commands in
+that clone, and asks a grader adapter to grade the sealed input. Adapters are exec'd directly (no shell) with JSON on
+stdin and stdout, as in evals/run.py, each in its own process group. Results are never overwritten.
 """
 import argparse
 import json
 import os
 from pathlib import Path
 import re
+import math
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -20,12 +22,15 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import caselib  # noqa: E402
+import procs  # noqa: E402
+import real_adapter  # noqa: E402
 import render  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 TEMPLATE_PATH = 'skills/core/offload/builder-template.md'
 FAKE = [sys.executable, str(HERE / 'fake_adapter.py')]
+REAL = [sys.executable, str(HERE / 'real_adapter.py')]
 NOT_GRADED = ('skipped', 'error', 'ungraded', 'env-unavailable')
 OUTPUT_CAP = 20000
 
@@ -36,6 +41,10 @@ class Refusal(Exception):
 
 class AdapterError(Exception):
     pass
+
+
+class Unsafe(Exception):
+    """The builder left something the runner must not write through. The trial is an error."""
 
 
 def parse_args(argv):
@@ -55,22 +64,40 @@ def parse_args(argv):
     p.add_argument('--fake-grader', action='store_true')
     p.add_argument('--builder-adapter', help='executable that is not the built-in fake; needs --spend')
     p.add_argument('--grader-adapter', help='executable that is not the built-in fake; needs --spend')
+    p.add_argument('--builder-harness', help='real builder: claude or codex (paid model calls; needs --spend)')
+    p.add_argument('--grader-harness', help='real grader: claude or codex (paid model calls; needs --spend)')
+    p.add_argument('--gate-env', action='append', default=[], metavar='NAME',
+                   help='forward this environment variable to gates, setup and adapters (repeatable); weakens blinding')
+    p.add_argument('--gates-real-home', action='store_true',
+                   help='give setup and gate commands the real HOME; weakens blinding (default: a temp HOME)')
+    p.add_argument('--max-budget-usd', type=float, default=2.0, help='per-call cap where the harness has one (claude)')
     p.add_argument('--spend', action='store_true', help='allow adapters that are not the built-in fakes')
     p.add_argument('--seed', default='0', help='fake grader seed')
     p.add_argument('--fake-grades', help='JSON {"<case>/<arm>/<trial>": {"C1": "MET"} | "ungraded" | "exit1"}')
-    p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage', 'lock', 'dirty'])
-    p.add_argument('--inject-fault', choices=['after-worktree'], help='raise in the runner (for cleanup tests)')
+    p.add_argument('--fake-builder-mode', default='commit', choices=['commit', 'fail', 'no-commit', 'sleep', 'garbage', 'readonly', 'dirty', 'plant', 'inspect',
+                                                                 'symlink-config', 'symlink-reply', 'symlink-grader-reply',
+                                                                 'symlink-git', 'filter-readonly', 'commondir', 'commondir-000', 'commondir-600', 'gitdir-file', 'replace'])
+    p.add_argument('--inject-fault', choices=['after-worktree', 'skip-config-restore', 'skip-redirect-refusal'],
+                   help='raise in the runner, or switch off one defense so a test can prove the next one alone')
     return p.parse_args(argv)
 
 
 def resolve_adapters(args):
+    """role -> (command, is_fake, harness). Exactly one of: the built-in fake, an adapter executable, a harness."""
     roles = {}
     for role in ('builder', 'grader'):
         fake = args.fake or getattr(args, f'fake_{role}')
         external = getattr(args, f'{role}_adapter')
-        if bool(fake) == bool(external):
-            raise Refusal(f'choose exactly one {role}: --fake{"" if args.fake else "-" + role} or --{role}-adapter')
-        roles[role] = (FAKE + [role], True) if fake else ([external], False)
+        harness = getattr(args, f'{role}_harness')
+        if bool(fake) + bool(external) + (harness is not None) != 1:
+            raise Refusal(f'choose exactly one {role}: --fake{"" if args.fake else "-" + role}, --{role}-adapter '
+                          f'or --{role}-harness')
+        if harness is not None:
+            if harness not in real_adapter.HARNESSES:
+                raise Refusal(f'unknown {role} harness {harness!r}: use one of {", ".join(real_adapter.HARNESSES)}')
+            roles[role] = (REAL + [role], False, harness)
+        else:
+            roles[role] = (FAKE + [role], True, None) if fake else ([external], False, None)
     return roles
 
 
@@ -89,16 +116,105 @@ def arm_template(arm, repo, ref):
     return {'name': arm, 'repo': str(repo), 'ref': ref, 'sha': sha, 'template': text}
 
 
+def secrets():
+    """Credential values the runner holds, so recorded text can be scrubbed of them."""
+    return [v for k in real_adapter.CREDENTIAL_NAMES if len(v := os.environ.get(k, '')) >= 8]
+
+
+def scrub(text):
+    for value in secrets():
+        text = text.replace(value, '[redacted]')
+    return text
+
+
+def adapter_env(ctx, role, home, extra):
+    """An adapter's environment: the allowlist, the --gate-env names, an empty HOME at `home` (the builder's and the
+    grader's differ), the harness's own credential variables when it is a built-in real adapter, and the per-trial
+    variables in `extra`."""
+    env = caselib.scrubbed_env(ctx['args'].gate_env)
+    Path(home).mkdir(parents=True, exist_ok=True)
+    env['HOME'] = str(home)
+    harness = ctx[f'{role}_harness']
+    if harness:
+        env.update({n: os.environ[n] for n in real_adapter.CREDENTIALS[harness] if os.environ.get(n)})
+    env.update(extra)
+    return env
+
+
+def gate_env(trial_dir, args):
+    """What setup and gate commands may see. They run code the builder wrote and their output reaches the grader, so
+    this is the allowlist plus the per-trial dirs, a temp HOME (unless --gates-real-home) and --gate-env names."""
+    env = caselib.scrubbed_env(args.gate_env)
+    rules = trial_dir / 'repo-rules'
+    rules.mkdir(exist_ok=True)
+    env.update(AGENT_HANDOFFS_DIR=str(trial_dir / 'handoffs'), BORK_REPO_RULES_DIR=str(rules))
+    if args.gates_real_home:
+        env['HOME'] = os.environ.get('HOME', '')
+    else:
+        (trial_dir / 'home').mkdir(exist_ok=True)
+        env['HOME'] = str(trial_dir / 'home')
+    return env
+
+
+def safe_write(path, text):
+    """Write `path` without following a symlink or hardlink the builder planted: refuse anything that exists and
+    is not a regular file, drop a regular file, then create exclusively."""
+    path = Path(path)
+    try:
+        try:
+            mode = os.lstat(path).st_mode
+        except FileNotFoundError:
+            mode = None
+        if mode is not None:
+            if not stat.S_ISREG(mode):
+                raise Unsafe(f'{path.name} is a symlink or not a regular file; refusing to write through it')
+            os.unlink(path)
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), 'w') as handle:
+            handle.write(text)
+    except OSError as error:
+        raise Unsafe(f'could not write {path.name}: {error}')
+
+
+def require_real_git_dir(repo):
+    try:
+        mode = os.lstat(Path(repo) / '.git').st_mode
+    except OSError:
+        mode = None
+    if mode is None or not stat.S_ISDIR(mode):
+        raise Unsafe('the trial repo .git is not a real directory (a symlink or missing); refusing to run git in it')
+
+
+def refuse_redirects(worktree):
+    """A `commondir` or `gitdir` file inside the trial's .git makes git read its config from, or treat as its own,
+    a directory the builder wrote. A real clone has neither. Call this once the runner owns `.git` again: any error
+    other than "not there" (a builder-made unsearchable directory) counts as present."""
+    for name in ('commondir', 'gitdir'):
+        try:
+            os.lstat(Path(worktree) / '.git' / name)
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise Unsafe(f'could not look for .git/{name} (a builder-planted redirect cannot be ruled out): {error}')
+        raise Unsafe(f'the builder planted .git/{name}, which redirects git to a directory it controls')
+
+
+def trial_git(worktree, *args, **kw):
+    """A runner git call on the trial repo after the builder started. The three variables pin the git dir, the common
+    dir (which overrides a planted `commondir` file) and the work tree. Live-repo calls use caselib.git without them."""
+    dot = str(Path(worktree) / '.git')
+    pinned = {'GIT_DIR': dot, 'GIT_COMMON_DIR': dot, 'GIT_WORK_TREE': str(worktree)}
+    return caselib.git(worktree, *args, env_extra=pinned, **kw)
+
+
 def call_adapter(command, request, env, cwd, timeout):
     try:
-        run = subprocess.run(command, input=json.dumps(request), capture_output=True, text=True, env=env, cwd=cwd,
-                             timeout=timeout)
+        run = procs.run_group(command, input=json.dumps(request), env=env, cwd=cwd, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise AdapterError(f'adapter timeout after {timeout:g}s')
     except OSError as error:
         raise AdapterError(f'adapter could not start: {error}')
     if run.returncode != 0:
-        raise AdapterError(f'adapter exit {run.returncode}: {run.stderr.strip()[-300:]}')
+        raise AdapterError(scrub(f'adapter exit {run.returncode}: {run.stderr.strip()[-300:]}'))
     try:
         response = json.loads(run.stdout)
     except ValueError:
@@ -108,14 +224,13 @@ def call_adapter(command, request, env, cwd, timeout):
     return response
 
 
-def run_shell(command, cwd, timeout):
+def run_shell(command, cwd, timeout, env):
     """A gate or setup command line, run in `cwd`. These are case text, not adapters, so they go through sh."""
     try:
-        run = subprocess.run(['/bin/sh', '-c', command], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, timeout=timeout)
+        run = procs.run_group(['/bin/sh', '-c', command], cwd=cwd, timeout=timeout, merge_stderr=True, env=env)
     except subprocess.TimeoutExpired:
         return {'command': command, 'exit_code': None, 'output': '', 'timeout': True}
-    return {'command': command, 'exit_code': run.returncode, 'output': run.stdout[-OUTPUT_CAP:], 'timeout': False}
+    return {'command': command, 'exit_code': run.returncode, 'output': scrub(run.stdout[-OUTPUT_CAP:]), 'timeout': False}
 
 
 def live_paths(repo):
@@ -150,20 +265,54 @@ def case_skip_reason(case):
     for command in case['gate_commands'] + case.get('setup_commands', []):
         if names_live_path(command, paths):
             return f'command references the live repo path: {command}'
+    # The brief is rendered from these fields, so the builder would read the live path.
+    for field in ('goal', 'owned_files', 'criteria', 'gates_text'):
+        if names_live_path(case[field], paths):
+            return f'field {field} names the live repo path'
     return None
 
 
-def worktree_gone(repo, worktree, branch, scratch):
-    """Idempotent: safe to run twice and on a half-made worktree. A locked worktree needs --force twice."""
-    caselib.git(repo, 'worktree', 'remove', '--force', '--force', str(worktree), check=False)
-    shutil.rmtree(scratch, ignore_errors=True)
-    caselib.git(repo, 'worktree', 'prune', check=False)
-    caselib.git(repo, 'branch', '-D', branch, check=False)  # only this trial's own, uniquely named branch
+def remove_tree(path):
+    """rmtree that also removes what a builder made read-only (a directory without write permission)."""
+    for base, dirs, _ in os.walk(path):
+        for name in [base] + [os.path.join(base, d) for d in dirs]:
+            if not os.path.islink(name):
+                try:
+                    os.chmod(name, 0o700)
+                except OSError:
+                    pass
+    shutil.rmtree(path, ignore_errors=True)
 
 
-def grader_env():
-    """What the grader process may see: nothing of the builder's run, and no arm name."""
-    return {k: v for k, v in os.environ.items() if not k.startswith(('REPLAY_', 'OFFLOAD_')) and k != 'AGENT_HANDOFFS_DIR'}
+def make_clone(repo, base, branch, clone, timeout):
+    """A disposable trial repo holding exactly one ref (`branch`, at `base`) and nothing after it: `git init`, then
+    a fetch of that one commit, then a checkout. No other branch, no tag, no later commit, no remote, no reflog or
+    FETCH_HEAD naming `repo`, no alternates and no hardlink to its object store. Returns an error string or None."""
+    steps = (('init', clone.parent, ('init', '-q', str(clone))),
+             ('config', clone, ('config', 'core.logAllRefUpdates', 'false')),
+             ('fetch', clone, ('-c', 'core.logAllRefUpdates=false', '-c', 'uploadpack.allowAnySHA1InWant=true', 'fetch',
+                               '-q', '--no-tags', '--no-write-fetch-head', str(repo), f'{base}:refs/heads/{branch}')),
+             ('checkout', clone, ('checkout', '-q', branch)))
+    for label, where, args in steps:
+        done = caselib.git(where, *args, check=False, timeout=timeout)
+        if done.returncode != 0:
+            return f'clone failed ({label}): {done.stderr.strip()[-200:]}'
+    return None
+
+
+def adapter_request(ctx, role, request):
+    """Real-adapter requests also carry the spend authorization, the harness, a model-call timeout (under the
+    runner's own, so the adapter can kill its child and report) and the per-call budget."""
+    harness = ctx[f'{role}_harness']
+    if harness is None:
+        return request
+    args = ctx['args']
+    return dict(request, harness=harness, spend=True, timeout=max(args.timeout / 2, args.timeout - 5),
+                max_budget_usd=args.max_budget_usd)
+
+
+def save_reply(trial_dir, name, reply):
+    safe_write(trial_dir / name, scrub(json.dumps(reply, indent=2)))
 
 
 def run_trial(case, arm, trial, ctx):
@@ -182,31 +331,34 @@ def run_trial(case, arm, trial, ctx):
     handoff_file.write_text('')
     repo = case['repo']['path']
     scratch = Path(tempfile.mkdtemp(prefix='replay-wt-'))
+    # The request key stays `worktree`: it is the directory the builder works in, now a disposable clone.
     worktree = Path(os.path.realpath(scratch)) / 'wt'
     branch = f"replay/{token}-{uuid.uuid4().hex[:8]}"
-    made = True  # set before the add: an interrupt or timeout during it must still reach the cleanup
     try:
         try:
-            added = caselib.git(repo, 'worktree', 'add', '-q', '-b', branch, str(worktree), case['base_commit'],
-                                check=False, timeout=args.timeout)
+            failed = make_clone(repo, case['base_commit'], branch, worktree, args.timeout)
         except subprocess.TimeoutExpired:
-            record.update(outcome='error', reason=f'worktree add timeout after {args.timeout:g}s')
+            record.update(outcome='error', reason=f'clone timeout after {args.timeout:g}s')
             return record
-        if added.returncode != 0:
-            record.update(outcome='error', reason=f'worktree add failed: {added.stderr.strip()}')
+        if failed:
+            record.update(outcome='error', reason=failed)
             return record
+        # The builder controls this repo's config. Keep a copy so the runner's own git calls read a trusted one.
+        config_path = worktree / '.git' / 'config'
+        trusted_config = config_path.read_text()
         if args.inject_fault == 'after-worktree':
-            raise RuntimeError('injected fault after the worktree was created')
+            raise RuntimeError('injected fault after the clone was created')
+        genv = gate_env(trial_dir, args)
         for command in case.get('setup_commands', []):
-            step = run_shell(command, worktree, args.timeout)
+            step = run_shell(command, worktree, args.timeout, genv)
             if step['timeout'] or step['exit_code'] != 0:
                 record.update(outcome='env-unavailable', reason=f'setup failed: {command}')
                 return record
         brief = render.render(arm['template'], case['goal'], str(worktree), branch, case['owned_files'],
                               case['criteria'], case['gates_text'], str(result_file))
         (trial_dir / 'brief.md').write_text(brief)
-        env = dict(os.environ, AGENT_HANDOFFS_DIR=str(trial_dir / 'handoffs'), OFFLOAD_HANDOFF=str(handoff_file),
-                   REPLAY_TRIAL_DIR=str(trial_dir))
+        env = adapter_env(ctx, 'builder', trial_dir / 'home', {'AGENT_HANDOFFS_DIR': str(trial_dir / 'handoffs'),
+                                           'OFFLOAD_HANDOFF': str(handoff_file), 'REPLAY_TRIAL_DIR': str(trial_dir)})
         # The builder sees the brief, which holds the criteria. It never sees which criterion was missed.
         request = {'brief': brief, 'worktree': str(worktree), 'branch': branch, 'result_file': str(result_file),
                    'handoff_file': str(handoff_file), 'trial_dir': str(trial_dir), 'trial': token,
@@ -216,66 +368,92 @@ def run_trial(case, arm, trial, ctx):
         if ctx['builder_fake']:
             request['fake'] = {'mode': args.fake_builder_mode}
         try:
-            call_adapter(ctx['builder'], request, env, str(worktree), args.timeout)
+            reply = call_adapter(ctx['builder'], adapter_request(ctx, 'builder', request), env, str(worktree),
+                                 args.timeout)
         except AdapterError as error:
             record.update(outcome='error', reason=str(error))
             return record
-        head = caselib.git(worktree, 'rev-parse', 'HEAD')
+        require_real_git_dir(worktree)
+        save_reply(trial_dir, 'builder-reply.json', reply)
+        if args.inject_fault != 'skip-config-restore':
+            # The runner owns this directory: take back write access the builder removed. Any failure ends the trial.
+            try:
+                os.chmod(worktree / '.git', 0o700)
+            except OSError as error:
+                raise Unsafe(f'could not take back the trial repo .git: {error}')
+        if args.inject_fault != 'skip-redirect-refusal':
+            refuse_redirects(worktree)  # after the chmod, so an unsearchable .git cannot hide a planted commondir
+        if args.inject_fault != 'skip-config-restore':
+            safe_write(config_path, trusted_config)  # so no git call below reads a config the builder planted
+        head = trial_git(worktree, 'rev-parse', 'HEAD')
         if head == case['base_commit']:
             record.update(outcome='error', reason='no-commit: the builder left HEAD at the base commit; only commits are graded')
             return record
-        if caselib.git(worktree, 'status', '--porcelain'):
+        if trial_git(worktree, 'status', '--porcelain', '--ignore-submodules=all'):
             record.update(outcome='error', reason='dirty-tree: the builder left uncommitted changes the grader would not see')
             return record
         for command in case['gate_commands']:
-            step = run_shell(command, worktree, args.timeout)
+            step = run_shell(command, worktree, args.timeout, genv)
             record['gates'].append(step)
             if step['timeout']:
                 record.update(outcome='error', reason=f'gate timeout: {command}')
                 return record
-        diff = caselib.git(worktree, 'diff', f"{case['base_commit']}..{head}")
+        # The flags alone keep a planted diff or textconv program from running and fix the output format, so the
+        # config restore above is a second layer, not the only one.
+        diff = trial_git(worktree, 'diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames',
+                           '--no-relative', '-U3', '--src-prefix=a/', '--dst-prefix=b/', case['base_commit'], head)
         gate_output = ''.join(f"$ {g['command']}\n[exit {g['exit_code']}]\n{g['output']}\n" for g in record['gates'])
-        # The diff is in hand: drop the worktree so the grader process cannot read commit messages from it.
-        worktree_gone(repo, worktree, branch, scratch)
-        made = False
+        # The diff is in hand: drop the clone so the grader process cannot read commit messages from it.
+        remove_tree(scratch)
         return grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output)
+    except Unsafe as error:
+        record.update(outcome='error', reason=str(error))
+        return record
     finally:
-        if made:
-            worktree_gone(repo, worktree, branch, scratch)
+        remove_tree(scratch)
 
 
 def grade_trial(case, record, key, token, trial_dir, ctx, diff, gate_output):
     """Call the grader in an empty directory with a stripped environment; fold its reply into the record."""
     args = ctx['args']
     sealed = {'id': token, 'diff': diff, 'criteria': case['criteria'], 'gate_output': gate_output}
-    env = grader_env()
+    fake = {}
     if ctx['grader_fake']:
         # Dedicated variables, read only by the built-in fake. They carry the opaque token, never the arm.
-        env.update(REPLAY_FAKE_GRADER_TOKEN=token, REPLAY_FAKE_GRADER_CAPTURE=str(trial_dir / 'grader-stdin.json'),
-                   REPLAY_FAKE_GRADER_SEED=args.seed)
+        fake.update(REPLAY_FAKE_GRADER_TOKEN=token, REPLAY_FAKE_GRADER_CAPTURE=str(trial_dir / 'grader-stdin.json'),
+                    REPLAY_FAKE_GRADER_SEED=args.seed)
         if args.fake_grades:
             entry = json.loads(Path(args.fake_grades).read_text()).get(key)
             if entry is not None:
-                env['REPLAY_FAKE_GRADER_ENTRY'] = json.dumps(entry)
+                fake['REPLAY_FAKE_GRADER_ENTRY'] = json.dumps(entry)
+    # The grader's HOME is a fresh empty directory outside the trial dir, like its cwd: the trial dir holds the
+    # builder's result file, handoff and reply, which the grader must never reach (not even through `..`).
     empty = tempfile.mkdtemp(prefix='replay-grader-')
+    grader_home = tempfile.mkdtemp(prefix='replay-grader-home-')
+    env = adapter_env(ctx, 'grader', grader_home, fake)
     try:
-        reply = call_adapter(ctx['grader'], sealed, env, empty, args.timeout)
+        reply = call_adapter(ctx['grader'], adapter_request(ctx, 'grader', sealed), env, empty, args.timeout)
     except AdapterError as error:
         record.update(outcome='error', reason=str(error))
         return record
     finally:
         shutil.rmtree(empty, ignore_errors=True)
+        shutil.rmtree(grader_home, ignore_errors=True)
+    save_reply(trial_dir, 'grader-reply.json', reply)
     grades = reply.get('grades')
     if not isinstance(grades, dict):
         record.update(outcome='error', reason='adapter output lacks a grades object')
         return record
-    record['grades'] = {i: (v if v in ('MET', 'NOT MET') else 'ungraded') for i, v in grades.items()}
+    frozen = caselib.criteria_ids(case['criteria'])
+    # An ID outside the frozen set covers nothing and is dropped.
+    record['grades'] = {i: (v if v in ('MET', 'NOT MET') else 'ungraded') for i, v in grades.items() if i in frozen}
     missed = case['missed_ids']
     if all(record['grades'].get(i) in ('MET', 'NOT MET') for i in missed):
         record['outcome'] = 'graded'
         record['named_miss'] = any(record['grades'][i] == 'NOT MET' for i in missed)
     else:
-        record.update(outcome='ungraded', reason='the grader gave no valid grade for a missed ID')
+        why = scrub(str(reply.get('reason') or ''))[:300]
+        record.update(outcome='ungraded', reason='the grader gave no valid grade for a missed ID' + (f': {why}' if why else ''))
     return record
 
 
@@ -305,7 +483,9 @@ def interrupt(signum, frame):
 
 def main(argv=None):
     args = parse_args(argv)
-    # A closed pane (SIGHUP) or a kill (SIGTERM) must clean up like Ctrl-C does.
+    # A closed pane (SIGHUP) or a kill (SIGTERM) must clean up like Ctrl-C does. SIGINT is set explicitly: a runner
+    # started as a background job inherits it as ignored.
+    signal.signal(signal.SIGINT, interrupt)
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGHUP, interrupt)
     try:
@@ -323,6 +503,11 @@ def execute(args):
         raise Refusal('--trials must be at least 1')
     if args.timeout <= 0:
         raise Refusal('--timeout must be positive')
+    for name in args.gate_env:
+        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+            raise Refusal(f'--gate-env needs a variable name, not {name!r}')
+    if not math.isfinite(args.max_budget_usd) or args.max_budget_usd <= 0:
+        raise Refusal('--max-budget-usd must be a finite number greater than 0')
     if args.demo:
         import fixture
         if Path(args.demo).exists():
@@ -344,9 +529,16 @@ def execute(args):
     calls = len(cases) * len(arms) * args.trials
     print(f'planned: {calls} builder calls, {calls} grader calls '
           f'({len(cases)} cases x {len(arms)} arms x {args.trials} trials)', flush=True)
-    external = [role for role, (_, fake) in adapters.items() if not fake]
+    external = [role for role, (_, fake, _) in adapters.items() if not fake]
     if external and not args.spend:
         raise Refusal(f'the {" and ".join(external)} adapter is not a built-in fake; pass --spend to allow it')
+    # Before the first paid call: every selected harness must have its binary and credential, or a builder call
+    # could be paid for and then never graded.
+    for harness in sorted({h for _, _, h in adapters.values() if h}):
+        try:
+            real_adapter.find_harness(harness)
+        except real_adapter.Refusal as error:
+            raise Refusal(f'cannot start a real run: {error}')
     out = Path(args.output)
     try:
         caselib.private_dir(out, must_be_new=True)
@@ -356,11 +548,14 @@ def execute(args):
         raise Refusal(str(error))
     (out / 'cases').mkdir()
     ctx = {'args': args, 'out': out, 'builder': adapters['builder'][0], 'grader': adapters['grader'][0],
-           'builder_fake': adapters['builder'][1], 'grader_fake': adapters['grader'][1]}
+           'builder_fake': adapters['builder'][1], 'grader_fake': adapters['grader'][1],
+           'builder_harness': adapters['builder'][2], 'grader_harness': adapters['grader'][2]}
     records, skipped, status = [], [], {}
     for case in cases:
         reason = case_skip_reason(case)
         case_record = {'id': case['id'], 'base_commit': case['base_commit'], 'gate_commands': case['gate_commands'],
+                       'gates_real_home': args.gates_real_home,
+                       'gate_env': list(args.gate_env),
                        'status': 'skipped' if reason else 'ran', 'reason': reason, 'trials': []}
         for trial in range(1, args.trials + 1):
             for arm in arms:

@@ -161,7 +161,12 @@ class SkipTests(BuilderCase):
         self.assertEqual(case['repo']['path'], str(self.fx.repo))
         self.assertEqual(case['owned_files'], 'src/a.py, src/b.py')
         self.assertTrue(case['provenance'])
-        # the case the builder writes must pass the runner's parser
+        # the runner refuses the case until a human has read the candidates and set gate_commands_reviewed
+        check = support.run_cli(support.RUNNER, ['--check', '--cases', out])
+        self.assertEqual(check.returncode, 2, check.stderr)
+        self.assertIn('gate_commands_reviewed', check.stderr)
+        case['gate_commands_reviewed'] = True
+        path.write_text(json.dumps(case))
         check = support.run_cli(support.RUNNER, ['--check', '--cases', out])
         self.assertEqual(check.returncode, 0, check.stderr)
 
@@ -260,10 +265,12 @@ class BaseSourceTests(BuilderCase):
             self.write_run_file('notes.md', template.format(sha=self.fx.base[:8]))
             return self.one()
 
-        for template in ('S2 merged @ {sha} today\n', 'unrelated note @ {sha}\n'):
+        for template in ('S2 merged @ {sha} today\n', 'unrelated note @ {sha}\n', 'S2 base @ {sha}\n'):
             with self.subTest(notes=template):
                 run, cases = with_notes(template)
                 self.assertEqual(cases, [], run.stdout)
+        run, cases = with_notes('S1 and S2 base @ {sha}\n')
+        self.assertEqual(len(cases), 1, 'a line that names this slice as well still counts')
         run, cases = with_notes('the base for S1 was @ {sha}\n')
         (path,) = cases
         self.assertIn(f'the base for S1 was @ {self.fx.base[:8]}', json.loads(path.read_text())['provenance'])

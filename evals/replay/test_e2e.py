@@ -28,8 +28,11 @@ class EndToEndTests(unittest.TestCase):
 
     def test_documented_demo_command_runs_both_arms_and_leaves_no_worktree(self):
         before = replay_entries()
-        run = support.run_cli(support.RUNNER, demo_args(self.tmp))
+        scratch = self.tmp / 'scratch'
+        scratch.mkdir()
+        run = support.run_cli(support.RUNNER, demo_args(self.tmp), env={'TMPDIR': str(scratch)})
         self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(list(scratch.glob('replay-*')), [], 'no trial clone dir is left behind')
         out = self.tmp / 'out'
         self.assertTrue((out / 'summary.json').is_file())
         record = support.case_record(out)

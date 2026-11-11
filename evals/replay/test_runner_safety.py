@@ -167,26 +167,34 @@ class GateTests(RunnerBase):
 
 
 class CleanupTests(RunnerBase):
+    def setUp(self):
+        super().setUp()
+        (self.tmp / 'tmpdir').mkdir(exist_ok=True)
+        self.tmpenv = {'TMPDIR': str(self.tmp / 'tmpdir')}
+
     def test_worktree_and_branch_are_gone_after_builder_failure(self):
         self.build()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'fail'])
+        support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'fail'], env=self.tmpenv)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
         self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'error')
 
     def test_worktree_is_gone_after_a_failing_gate(self):
         self.build(gates=('exit 3',))
-        run = support.replay(self.fx, self.out)
+        run = support.replay(self.fx, self.out, env=self.tmpenv)
         self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.case_record(self.out)['trials'][0]['gates'][0]['exit_code'], 3)
 
     def test_worktree_is_gone_when_the_runner_itself_raises(self):
         self.build()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        run = support.replay(self.fx, self.out, extra=['--inject-fault', 'after-worktree'])
+        run = support.replay(self.fx, self.out, extra=['--inject-fault', 'after-worktree'], env=self.tmpenv)
         self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
 
@@ -195,6 +203,7 @@ class CleanupTests(RunnerBase):
         branches = support.git(self.fx.repo, 'branch', '--list')
         env = os.environ.copy()
         env['AGENT_HANDOFFS_DIR'] = str(self.tmp / 'store')
+        env.update(self.tmpenv)
         proc = subprocess.Popen([sys.executable, str(support.RUNNER), *map(str, support.std_args(
             self.fx, self.out, extra=['--fake-builder-mode', 'sleep']))], env=env, cwd=str(support.ROOT),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -207,66 +216,66 @@ class CleanupTests(RunnerBase):
         proc.send_signal(signal.SIGINT)
         proc.communicate(timeout=60)
         self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.scratch_left(), [], 'the trial clone dir must be removed')
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
 
-
-    def slow_add_path(self):
-        """A git wrapper on PATH that finishes `worktree add`, then lingers, so a signal lands in the add window."""
+    def slow_clone_path(self):
+        """A git wrapper on PATH that finishes the trial repo's `fetch`, writes a marker, then lingers, so a signal lands in that window."""
         real = subprocess.run(['which', 'git'], capture_output=True, text=True).stdout.strip()
         wrapper = self.tmp / 'bin' / 'git'
         wrapper.parent.mkdir()
-        wrapper.write_text('#!/bin/sh\ncase " $* " in *" worktree add "*) ' + real + ' "$@"; rc=$?; sleep 30; exit $rc;; esac\n'
-                           'exec ' + real + ' "$@"\n')
+        self.window = self.tmp / 'window-open'
+        wrapper.write_text('#!/bin/sh\ncase " $* " in *" fetch "*) ' + real + ' "$@"; rc=$?; touch ' + str(self.window)
+                           + '; sleep 30; exit $rc;; esac\nexec ' + real + ' "$@"\n')
         wrapper.chmod(0o755)
         return f'{wrapper.parent}:{os.environ["PATH"]}'
 
-    def test_signal_during_worktree_add_leaves_no_worktree_or_branch(self):
+    def scratch_left(self):
+        return [p.name for p in (self.tmp / 'tmpdir').glob('replay-*')]
+
+    def test_signal_during_the_clone_leaves_no_scratch_clone_or_branch(self):
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             with self.subTest(signal=sig.name):
                 self.setUp()
                 self.build()
+                (self.tmp / 'tmpdir').mkdir(exist_ok=True)
                 branches = support.git(self.fx.repo, 'branch', '--list')
                 env = os.environ.copy()
-                env.update(AGENT_HANDOFFS_DIR=str(self.tmp / 'store'), PATH=self.slow_add_path())
+                env.update(AGENT_HANDOFFS_DIR=str(self.tmp / 'store'), PATH=self.slow_clone_path(),
+                           TMPDIR=str(self.tmp / 'tmpdir'))
                 proc = subprocess.Popen([sys.executable, str(support.RUNNER), *map(str, support.std_args(self.fx, self.out))],
                                         env=env, cwd=str(support.ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 for _ in range(300):
-                    if 'replay/' in support.git(self.fx.repo, 'branch', '--list'):
+                    if self.window.exists():
                         break
                     time.sleep(0.1)
-                self.assertIn('replay/', support.git(self.fx.repo, 'branch', '--list'), 'the add window never opened')
+                self.assertTrue(self.window.exists(), 'the clone window never opened')
                 proc.send_signal(sig)
                 proc.communicate(timeout=90)
                 self.assertNotEqual(proc.returncode, 0)
                 self.only_main_worktree()
                 self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+                self.assertEqual(self.scratch_left(), [])
 
-    def test_worktree_add_timeout_is_a_trial_error_and_cleans_up(self):
+    def test_clone_timeout_is_a_trial_error_and_cleans_up(self):
         self.build()
         branches = support.git(self.fx.repo, 'branch', '--list')
-        run = support.replay(self.fx, self.out, extra=['--timeout', '2'], env={'PATH': self.slow_add_path()})
+        run = support.replay(self.fx, self.out, extra=['--timeout', '2'],
+                             env={'PATH': self.slow_clone_path(), 'TMPDIR': str(self.tmp / 'tmpdir')})
         trial = support.case_record(self.out)['trials'][0]
         self.assertEqual(trial['outcome'], 'error')
         self.assertIn('timeout', trial['reason'])
         self.only_main_worktree()
         self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
-
-    def test_a_locked_worktree_is_still_removed(self):
-        self.build()
-        branches = support.git(self.fx.repo, 'branch', '--list')
-        run = support.replay(self.fx, self.out, extra=['--fake-builder-mode', 'lock'])
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'graded', 'the lock mode must really run')
-        self.only_main_worktree()
-        self.assertEqual(support.git(self.fx.repo, 'branch', '--list'), branches)
+        self.assertEqual(self.scratch_left(), [])
 
 
 class AdapterTests(RunnerBase):
     def spend_args(self, builder, grader=None):
         extra = ['--spend', '--builder-adapter', builder]
         extra += ['--grader-adapter', grader] if grader else ['--fake-grader']
-        return [a for a in support.std_args(self.fx, self.out) if a != '--fake'] + extra
+        return [a for a in support.std_args(self.fx, self.out) if a != '--fake'] + extra + ['--gate-env', 'STUB_MARKER']
 
     def test_adapter_path_with_spaces_runs(self):
         self.build()
@@ -327,6 +336,7 @@ class SpendGuardTests(RunnerBase):
         args = base + (['--fake-builder'] if builder_fake else ['--builder-adapter', builder])
         args += ['--fake-grader'] if grader_fake else ['--grader-adapter', grader]
         args += ['--spend'] if spend else []
+        args += ['--gate-env', 'STUB_MARKER', '--gate-env', 'STUB_STDOUT_FILE']
         env = os.environ.copy()
         env.update(STUB_MARKER=str(marker), STUB_STDOUT_FILE=str(stdout_file), AGENT_HANDOFFS_DIR=str(self.tmp / 'store'))
         with stdout_file.open('w') as handle:
