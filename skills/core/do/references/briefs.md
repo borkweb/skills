@@ -11,6 +11,7 @@ A brief carries a step's inputs to an agent. Handoffs are fast because briefs ar
 - **Resources**: relevant gate resources, isolation evidence and owner, recorded here or in the linked run notes ([test-resources.md](test-resources.md)). Shared or unknown resources serialize affected gates.
 - **Inputs**: paths to the spec, prior findings, `decisions.md`, and the absolute `repo-rules-<slice>/` path once the spec reviewer has recorded it ([repo-rules.md](repo-rules.md)).
 - **Return**: the output format below, written to an absolute result path under the run directory.
+- **Waits**: a subagent never ends its turn to wait and never starts a background waiter, because its own background task does not wake it once its turn ends. When it needs CI or a shared resource, it writes the need where the host watches (`waiting.md` in **land batch**) and returns. A message from the host wakes it.
 
 ## Reviewer
 

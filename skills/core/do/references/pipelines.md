@@ -24,6 +24,28 @@ For an existing change (branch, PR or working tree) that should reach SAFE TO LA
 
 A review-only request is step 1 plus step 2, then the verdict. It makes no fixes.
 
+## land batch
+
+For two or more existing PRs or branches that should each reach SAFE TO LAND, with whatever push, approval or comments the user asked for. Each PR runs **land** in its own lane. The host owns every wait and every shared resource, so no lane sits idle waiting, and no model turn is spent waiting on nothing.
+
+1. **Pin.** Do **review batch** step 1. Then record in `notes.md`, per PR: head SHA, base, frozen gates with commands, and for each gate whether it uses a shared resource ([test-resources.md](test-resources.md)), such as a sandbox, database or CI. Record the authority the user granted (push, approve, comment) verbatim under **Authority**.
+2. **Dispatch.** One subagent per PR, at most 4 at a time. A stacked pair is one lane, base first. Start the next queued PR as each lane returns. Each lane runs **land** steps 2–5 as host for its PR, in its own worktree under `<run>/pr-<number>/`. Its fixes are land fixes on an existing change, not build work. The brief ([briefs.md](briefs.md)) names the gates the lane may run itself (only those with no shared resource) and the ones it must request, and repeats its **Waits** rule.
+3. **Lane wait.** When a lane needs CI on a pushed head, or a gate that uses a shared resource, it writes `<run>/pr-<number>/waiting.md` with the head SHA and one line per need (`ci`, or the exact gate command), then ends its turn. It starts no background waiter, takes no lock and does not poll. A message from the host is the only thing that wakes it.
+4. **Host watcher.** While any lane is in flight, keep exactly one background shell task armed (`run_in_background`). It sleeps between checks, so it costs no tokens, and exits on the first of:
+   - a lane wrote or changed `result.md` or `waiting.md`;
+   - CI finished on a head named in a `waiting.md`;
+   - the deadline: 90 minutes since the last event, unless `notes.md` records another.
+
+   It prints which one fired. On each wake, act, then re-arm:
+   - **CI finished:** send the lane the result, one line per check, with `SendMessage`.
+   - **Shared-resource gate requested:** run it yourself on the lane's pushed head, one run at a time per resource, save the output under the lane directory, then send the lane the gate line and the path.
+   - **`result.md` written:** read it, update the plan, start the next queued PR.
+   - **Deadline:** treat it as a stall. A lane that is idle with neither file written gets a message to continue from its notes. CI still pending re-arms once more; at the second deadline, record that PR as blocked with the check name. Never stop a resource you did not start; reclaim a stale lock only as [test-resources.md](test-resources.md) says.
+
+   Never end a host turn while lanes are in flight and no watcher is armed.
+5. **Deliver.** At its endpoint each lane performs only the recorded authority: push without force, then an APPROVE review at SAFE TO LAND with CI green, or at the circuit breaker a COMMENT review with one inline comment per open item. A lane never approves a PR the user authored. When the request did not authorize posting, the lane drafts the review into its directory, and the host shows every draft together and confirms them as **review batch** step 5 does. The lane writes `result.md`: verdict, review URL or `not posted`, commits pushed, gate lines, open items.
+6. **Report.** One table with a row per PR: verdict, pushed SHAs, review URL or `not posted`, open items. Set the run state.
+
 ## ship
 
 For a new goal that should end merge-ready.

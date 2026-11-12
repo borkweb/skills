@@ -11,6 +11,13 @@ Record each gate's resource use, isolation evidence and owner in the existing ru
 - Browser profiles, accounts and backend state; separate tabs do not isolate shared server state.
 - Resource ownership and cleanup: a gate may reset or stop only the resources assigned to it, after their consumers finish.
 
+Prefer one owner over a lock: in a batch the host runs every gate on a shared resource, one at a time. When a lock cannot be avoided, such as a resource other sessions also use:
+
+- The lock records its owner (agent or session name, PR or slice) and the time it was taken, for example in an `owner` file inside a `mkdir` lock.
+- Only the agent that will run the gate in the foreground, right now, takes it. A background waiter never takes a lock for an agent that is idle.
+- Release it right after the gate, in the same command when you can.
+- A lock older than its limit (default 30 minutes, or the gate's measured run time plus a margin, recorded in the run notes) is stale. Reclaim it only after checking that nothing is running on the resource, and record the reclaim, with the old owner, in the run notes.
+
 A read-only check or a suite confined to its own temporary directory can run beside other gates when its implementation/configuration confirms no shared mutable resources. Static checks also need this assessment when they write caches or generated files. Do not assume isolation from a test's name or a claimed worktree boundary. No new scheduler or ledger is needed.
 
 Join all prerequisite gates before fixing, integrating or accepting their result. After integration, run the relevant final gates on the final combined revision and preserve raw results tied to that revision; green per-slice gates do not replace integration evidence. Independent review, frozen criteria and acceptance ownership remain unchanged. Repeat affected gates after a source change; unchanged evidence remains reusable.
