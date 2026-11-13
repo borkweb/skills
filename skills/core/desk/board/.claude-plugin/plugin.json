@@ -1,7 +1,7 @@
 {
 	"name": "desk-board",
 	"description": "A live board of bork do runs in Claude Code: what is in motion, what waits on you, what finished. A press on a run switches herdr to its tab.",
-	"version": "3.38.0",
+	"version": "3.39.0",
 	"author": {
 		"name": "Matthew Batchelder",
 		"email": "borkweb@gmail.com"
