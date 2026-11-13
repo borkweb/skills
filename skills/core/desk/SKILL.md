@@ -63,6 +63,7 @@ Report the agent status for runs in progress: `list` shows `[agent working]`, `[
 | `reopen <run> [--note <t>]` | Done or blocked becomes running again (the architect's own in-tab continuation). |
 | `resume --goal <t> [--repo <p>] [--candidate <dir>]... [--continue\|--new] [--json]` | A `do` architect's run dir in one call: `BORK_RUN_DIR`, then each candidate; a failed run is never reused, a done one only with `--continue`; otherwise it creates one. Prints the dir, then `created\|resumed\|reopened <state>`. |
 | `set <run> --state blocked\|failed --summary <t>` | Mark a stuck run. Done and blocked runs reopen through `tell` or `reopen`; a failed run is final. |
+| `clean <run>` or `clean --all [--dry-run] [--json]` | Remove the git worktrees inside a done or failed run dir and keep its text files. `set --state done\|failed` starts it in the background. An untracked `.lavish/` alone counts as scratch. A worktree with changes, with commits no branch or remote holds, or a full clone stays; `cleanup.log` in the run dir records each one. |
 
 A run is a run id or an absolute run dir. The run states are `running`, `needs-me`, `blocked`, `done` and `failed`.
 

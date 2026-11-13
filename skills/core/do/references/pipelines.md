@@ -81,7 +81,7 @@ For a review request that names two or more PRs. Each PR runs `pr-review` in its
 
    Free text edits a comment or picks other informational numbers. Don't re-litigate an answer.
 6. **Post.** For each confirmed PR, add the chosen findings from `informational.json` to `payload.json` and post it as `pr-review`'s Step 5c says, including its 422 handling. Post the PRs concurrently and print each review URL.
-7. **Clean up and report.** Remove each comment-only worktree as `pr-review`'s Step 7 cleanup says, and never with `--force`. Keep AUTO-FIX worktrees. Report one table with a row per PR: verdict, critical and informational counts, review URL or `not posted`, patch path, leads. For each DO NOT LAND, name **land** as the next step. Don't start it.
+7. **Clean up and report.** Remove each comment-only worktree as `pr-review`'s Step 7 cleanup says, and never with `--force`. Keep AUTO-FIX worktrees until the run ends: setting the run `done` or `failed` removes every clean worktree in the run directory, so the AUTO-FIX patch must be a file in `<run>/pr-<number>/`. Report one table with a row per PR: verdict, critical and informational counts, review URL or `not posted`, patch path, leads. For each DO NOT LAND, name **land** as the next step. Don't start it.
 
 ## Council during a pipeline
 

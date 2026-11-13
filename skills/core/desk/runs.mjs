@@ -5,7 +5,7 @@
 //
 // Node builtins only, no package.json: a herdr-spawned architect runs this from a
 // bare environment, and an untracked node_modules next to it must never matter.
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import {
   accessSync, chmodSync, closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync,
@@ -393,7 +393,119 @@ function cmdSet(o, [arg]) {
     if (o.delivery !== undefined) rec.delivery = o.delivery;
   });
   if (signalled(res)) nudgeOrchestrator(dir, res.rec);
+  if (res.wrote && o.state !== undefined && TERMINAL.has(res.rec.state)) spawnClean(dir);
   out(o.json ? JSON.stringify(res.rec) : `${res.rec.id} ${res.rec.state}`);
+}
+
+// ---- clean: remove a finished run's checkouts, keep its text files ---------------------------------
+//
+// A run dir keeps notes, reviews, patches and logs, but lanes also put git worktrees in it
+// (wt/, worktree/, pr-<n>/worktree/), and a large repo's worktree is gigabytes. Once a run is done
+// or failed, `clean` removes each linked worktree inside it through `git worktree remove` without
+// --force, so the branch stays in the main repo and git refuses a worktree with changes. It also
+// keeps a worktree whose HEAD holds commits no branch or remote has, and never touches a full clone.
+
+const CLEAN_DEPTH = 4;
+const CLEAN_LOG = 'cleanup.log';
+const GIT_TIMEOUT_MS = 300_000;
+
+function git(cwd, args) {
+  // A big repo's status can run to megabytes; ENOBUFS would hide "uncommitted changes" behind a git failure.
+  const r = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const why = r.error ? (r.error.code || r.error.message) : r.status !== 0 ? firstLine(r.stderr.trim() || `exit ${r.status}`, 200) : null;
+  return { ok: !why, out: (r.stdout || '').trim(), why };
+}
+
+// Every directory under the run dir (depth-limited, no symlinks) holding a .git entry; never descends into one.
+function checkoutsIn(dir) {
+  const found = [];
+  const walk = (d, depth) => {
+    for (const e of readdirSafe(d)) {
+      const p = join(d, e);
+      let st;
+      try { st = lstatSync(p); } catch { continue; }
+      if (!st.isDirectory()) continue;
+      if (statSyncOrNull(join(p, '.git'))) { found.push(p); continue; }
+      if (depth < CLEAN_DEPTH) walk(p, depth + 1);
+    }
+  };
+  walk(dir, 1);
+  return found;
+}
+
+// Why this checkout must stay, or null when `git worktree remove` may take it.
+function keepReason(dir, wt) {
+  let real;
+  try { real = realpathSync.native(wt); } catch { return 'path vanished'; }
+  if (!real.startsWith(`${dir}/`)) return 'outside the run dir';
+  if (lstatSync(join(wt, '.git')).isDirectory()) return 'a full clone, not a linked worktree';
+  const dirs = git(real, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir', '--show-toplevel']);
+  if (!dirs.ok) return `not readable by git (${dirs.why})`;
+  const [gitDir, common, top] = dirs.out.split('\n');
+  if (!common || gitDir === common) return 'not a linked worktree';
+  if (realpathSync.native(top) !== real) return 'not a worktree root';
+  let status = git(real, ['status', '--porcelain', '--ignore-submodules=none']);
+  if (!status.ok) return `git status failed (${status.why})`;
+  // Lavish review sessions leave an untracked .lavish/ in the checkout; it is scratch, never work.
+  if (status.out === '?? .lavish/') {
+    rmSync(join(real, '.lavish'), { recursive: true, force: true });
+    status = git(real, ['status', '--porcelain', '--ignore-submodules=none']);
+    if (!status.ok) return `git status failed (${status.why})`;
+  }
+  if (status.out) return 'uncommitted changes';
+  const orphan = git(real, ['log', '--oneline', '-1', 'HEAD', '--not', '--branches', '--remotes']);
+  if (!orphan.ok) return `git log failed (${orphan.why})`;
+  if (orphan.out) return 'commits that no branch or remote holds';
+  return null;
+}
+
+function cleanRun(dir, { dryRun = false } = {}) {
+  const rel = (p) => p.slice(dir.length + 1);
+  const results = [];
+  for (const wt of checkoutsIn(dir)) {
+    let keep;
+    try { keep = keepReason(dir, wt); } catch (e) { keep = `unreadable (${e.code ?? e.message})`; }
+    if (keep) { results.push({ path: rel(wt), action: 'kept', reason: keep }); continue; }
+    const real = realpathSync.native(wt);
+    const branch = git(real, ['symbolic-ref', '-q', '--short', 'HEAD']).out || null;
+    const head = git(real, ['rev-parse', 'HEAD']).out || null;
+    const common = git(real, ['rev-parse', '--path-format=absolute', '--git-common-dir']).out;
+    if (dryRun) { results.push({ path: rel(wt), action: 'would remove', branch, head }); continue; }
+    const rm = git(common, ['worktree', 'remove', real]);
+    results.push(rm.ok ? { path: rel(wt), action: 'removed', branch, head } : { path: rel(wt), action: 'kept', reason: `git worktree remove failed (${rm.why})` });
+  }
+  if (!dryRun && results.length) {
+    const at = nowIso();
+    const lines = results.map((r) => `${at} ${r.action} ${r.path}${r.branch ? ` branch ${r.branch}` : ''}${r.head ? ` head ${r.head}` : ''}${r.reason ? `: ${r.reason}` : ''}`);
+    writeFileSync(join(dir, CLEAN_LOG), `${lines.join('\n')}\n`, { flag: 'a', mode: 0o600 });
+  }
+  return results;
+}
+
+// set's hook: clean in a detached child so a multi-gigabyte delete never holds up `set`.
+function spawnClean(dir) {
+  try {
+    const child = spawn(process.execPath, [CLI_PATH, 'clean', dir], { detached: true, stdio: 'ignore', env: process.env });
+    child.on('error', () => {});
+    child.unref();
+  } catch { /* cleanup is best effort; `runs.mjs clean` can run it later */ }
+}
+
+function cmdClean(o, pos) {
+  if (o.all && pos.length) throw usageFail('give a run or --all, not both');
+  let targets;
+  if (o.all) targets = scanRuns().filter(({ rec }) => TERMINAL.has(rec.state)).map(({ name, dir }) => ({ id: name, dir }));
+  else {
+    const { id, dir } = resolveRun(pos[0]);
+    const rec = readRun(dir);
+    if (!TERMINAL.has(rec.state)) throw new Fail(`clean refused: run ${id} is ${rec.state}; only a done or failed run is cleaned`);
+    targets = [{ id, dir }];
+  }
+  const report = targets.map(({ id, dir }) => ({ id, results: cleanRun(dir, { dryRun: Boolean(o['dry-run']) }) }));
+  if (o.json) { out(JSON.stringify(report, null, 2)); return; }
+  for (const { id, results } of report) {
+    for (const r of results) out(`${id}  ${r.action} ${r.path}${r.branch ? ` (branch ${r.branch})` : ''}${r.reason ? `: ${r.reason}` : ''}`);
+  }
 }
 
 // ---- tell and reopen ---------------------------------------------------------------------------------------
@@ -919,8 +1031,9 @@ const SPEC = {
   tell: { vals: ['message', 'message-file'], bools: ['json'], pos: 1, run: cmdTell },
   reopen: { vals: ['note'], pos: 1, run: cmdReopen },
   resume: { vals: ['repo', 'goal', 'goal-file', 'slug', 'note'], multi: ['candidate'], bools: ['continue', 'new', 'json'], pos: 0, run: cmdResume },
+  clean: { bools: ['all', 'dry-run', 'json'], pos: (o) => (o.all ? 0 : 1), run: cmdClean },
 };
-const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen', 'resume']);
+const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen', 'resume', 'clean']);
 const USAGE = `usage: runs.mjs <${Object.keys(SPEC).join('|')}> [args]  (spec: skills/core/desk/SKILL.md)`;
 
 // An option takes the next token as its value whatever it looks like: goals may start with "-".
