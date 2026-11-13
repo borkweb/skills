@@ -18,7 +18,7 @@ Pick the pipeline that matches the request, run independent work concurrently an
 | New goal: idea or spec → plan → implement → ready | **ship** (runs **land** at the end) |
 | A plan or spec to build, or "delegate/offload this" | Build work (below) at the tier the work needs, then finish as **ship** step 5 says: one slice reruns only the final gates, a fleet runs **land**. Do not run a second ledger. |
 
-Read [pipelines.md](references/pipelines.md) for **land**, **land batch**, **ship** or **review batch**, and [briefs.md](references/briefs.md) before spawning any agent.
+Read [pipelines.md](references/pipelines.md) for **land**, **land batch**, **ship** or **review batch**, and [briefs.md](references/briefs.md) before spawning any agent. Read [gotchas.md](gotchas.md) before a **land batch** or **review batch**, and when a subagent's result goes missing or a delivery step is denied.
 
 ## Build work
 

@@ -50,7 +50,7 @@ errors << 'duplicate skill names' unless names.uniq == names
 # over budget only while it never grows. Once it is within budget its entry must go; when it shrinks, lower it.
 SIZE_BUDGET = 20_000
 SIZE_ALLOWLIST = {
-  'skills/core/offload/SKILL.md' => 26_064,
+  'skills/core/offload/SKILL.md' => 25_986,
   'skills/core/pr-review/SKILL.md' => 27_678
 }.freeze
 notes = []

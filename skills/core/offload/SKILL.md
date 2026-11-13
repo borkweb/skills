@@ -61,11 +61,10 @@ The external bridge supports native Claude and Codex architect identities. `hand
 - Verdicts come from raw gate numbers vs frozen gates, never the builder's narrative.
 - A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.
-- Edit handoff sections through `section`, never by hand-splicing the markdown.
 - The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
-- Resolve `$HANDOFF` via `resolve` on each turn; never hand-build a path or write to a
-  doc from `list` you don't own. A `refusing:`/ownership error from the CLI means you
-  are aimed at the wrong document: stop and surface it, don't `--steal` past it.
+- Resolve `$HANDOFF` each turn and edit only your own doc, through `section`. A
+  `refusing:`/ownership error means the wrong document: surface it, never `--steal`.
+- Read [gotchas.md](gotchas.md) before a slice that pushes or adds tools other agents run.
 
 ## The ledger
 
