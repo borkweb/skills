@@ -317,11 +317,11 @@ verdict lands on the ledger's rejected entry, so `ledger report` can count it as
 review-only or gate-failed. A one-slice run needs no `--id`: the corrective
 applies to the row for this handoff. From an unjudged state (`results-ready` or
 `dispatched`) it needs `--verdict`, which records the rejection. On a row you
-already set `rejected` (the sequence above, or a `--past-cap` retry after a
-round-cap refusal) the same `--verdict` is kept as a ledger note and no second
-rejection is recorded. In any other state (`accepted`, `merged`, `abandoned`,
-`returned`, `blocked`, `specced`) `--verdict` exits 2, names the state and sends
-nothing, so drop it for a follow-up. Run one call without
+already set `rejected` (the sequence above, or a `--past-cap` retry) the same
+`--verdict` is a ledger note, not a second rejection. On `accepted` work a
+later review sends back, it records the rejection. In any other state
+(`merged`, `abandoned`, `returned`, `blocked`, `specced`) it exits 2, prints
+the state, sends nothing; drop it for a follow-up. Run one call without
 `--id` at a time. When the builder that just
 reported is still at its prompt, the brief goes into its pane and it continues
 with the code already in context: no boot, no re-reading the plan. When the

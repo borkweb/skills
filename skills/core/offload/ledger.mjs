@@ -482,7 +482,17 @@ const CORRECTIVE = /\b(correct(ive|ion)?|fix(es|ing)?|redo|retry|follow-?up)\b/i
 // A rejection whose verdict names the independent review and no failed gate:
 // the frozen gates said done and the reviewer disagreed. The ratio of these to
 // all rejections is the single number the spec-review step exists to lower.
-const REVIEW_ONLY = (v) => /do not land|review/i.test(v) && !/\b(fail|failed|failing|red|inconclusive|429)\b/i.test(v);
+// Review-only: a reviewer sent the work back after every gate passed. The
+// first review signal is review wording or the provenance tag that review-only
+// verdicts carry. Verdicts state gate results before the review, so a failure
+// stated before that signal is a gate failure. A test count ("fail 0") or a
+// defect named after the review ("fails open") is not.
+const REVIEW_SIGNAL = /do not land|land with caution|\breview(?:er|ed)?\b|\bnamed\s+C\d+|\bunnamed\b/i;
+const GATE_FAILED = /\b(?:fail(?:s|ed|ing)?|red|inconclusive)\b(?!\s*[:=]?\s*0\b)(?![\s-]+(?:open|closed)\b)|\b429\b/i;
+const REVIEW_ONLY = (v) => {
+  const m = REVIEW_SIGNAL.exec(v);
+  return !!m && !GATE_FAILED.test(v.slice(0, m.index));
+};
 
 const sum = (xs) => (xs.some((x) => x != null) ? xs.reduce((a, x) => a + (x ?? 0), 0) : null);
 
@@ -600,8 +610,8 @@ export function reportLedger(l, p) {
   };
 }
 
-// The review-only rejection verdicts, one per line: the raw material for
-// do/references/review-criteria.md.
+// The review-only rejection verdicts, one per line: the raw material for the
+// private ~/.borkweb-skills/review-criteria.md that the dreaming pass maintains.
 // The run citation that review-criteria.md's `Source:` lines use:
 // `<repo basename>@<first 8 chars of the architect session>/<slice id>`.
 export const runCite = (r, sliceId) =>

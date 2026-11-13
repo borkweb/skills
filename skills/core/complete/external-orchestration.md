@@ -85,7 +85,8 @@ ones: every slice costs a spec review, a dispatch, a review and a handoff.
 Run these concurrently, as read-only agents:
 
 - for each slice, a **spec reviewer** (`do`'s briefs.md) with the `review`
-  checklist and `do`'s review-criteria.md over the slice spec, returning the
+  checklist and the review criteria (`~/.borkweb-skills/review-criteria.md`
+  when it exists, otherwise `do`'s seed review-criteria.md) over the slice spec, returning the
   acceptance criteria it would reject on (correctives skip this: their criteria
   are the blockers);
 - the plan review(s) the first slice's surface calls for (more than one can apply):

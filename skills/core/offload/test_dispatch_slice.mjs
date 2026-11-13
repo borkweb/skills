@@ -231,6 +231,16 @@ test('corrective after results records the rejection with its verdict; a follow-
   run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective']);
   s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.slice(-2).map((h) => h.state), ['accepted', 'dispatched'], 'a follow-up is not a rejection');
+
+  // A later review that sends accepted work back is a rejection, so the run
+  // report counts it (one run sent accepted work back three times and the
+  // ledger recorded none of them).
+  hoff(['status', doc, 'results-ready']);
+  hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'security review = DO NOT LAND: lockout guard fails open (unnamed)']);
+  s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
+  assert.deepEqual(s.history.slice(-3).map((h) => h.state), ['accepted', 'rejected', 'dispatched']);
+  assert.equal(s.history.at(-2).verdict, 'security review = DO NOT LAND: lockout guard fails open (unnamed)');
 });
 
 test('corrective from unjudged results without a verdict is refused and leaves the brief alone', () => {
@@ -472,11 +482,13 @@ test('an unrecordable verdict exits non-zero and sends nothing', () => {
 });
 
 // Declared change (decisions.md 10): `rejected` left this table. A verdict on an
-// already rejected row is recorded as a note, not refused (see below). The other
-// states exit 2 with or without --id.
-for (const state of ['accepted', 'returned', 'specced', 'blocked', 'merged', 'abandoned']) {
+// already rejected row is recorded as a note, not refused (see below). Declared
+// change (dream 2026-11-13): `accepted` left it too, because a verdict there is a
+// later review sending accepted work back (tested above). The other states exit
+// 2 with or without --id.
+for (const state of ['returned', 'specced', 'blocked', 'merged', 'abandoned']) {
   for (const idArgs of [[], ['--id', '1']]) {
-    test(`--verdict on ${state === 'accepted' ? 'an accepted' : `a ${state}`} row exits 2 and sends nothing${idArgs.length ? ' (with --id)' : ''}`, () => {
+    test(`--verdict on a ${state} row exits 2 and sends nothing${idArgs.length ? ' (with --id)' : ''}`, () => {
       const { R, WT, doc } = reported(`feat/v-${state}${idArgs.length ? '-id' : ''}`);
       hoff(['ledger', 'set', R, '1', '--state', state]);
       const before = hoff(['section', 'get', doc, 'Next slice']);

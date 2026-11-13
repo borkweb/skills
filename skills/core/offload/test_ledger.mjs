@@ -571,6 +571,25 @@ test('ledger report --verdicts lists only the review-only rejection verdicts', (
   assert.doesNotMatch(out, /SAFE TO LAND/);
 });
 
+test('ledger report --verdicts reads a failure only before the review signal as a gate failure', () => {
+  // The old filter dropped every verdict that said "fail" anywhere, so a review
+  // that found a guard failing open, or a test count of "fail 0", read as a
+  // failed gate and 12 review rejections in one run never reached dreaming.
+  const REPO = repo('verdicts-signal');
+  const rej = (id, verdict) => ({ id, title: id, state: 'rejected', verdict, history: hist(['dispatched', '09:00'], ['rejected', '09:30']) });
+  fixtureLedger(REPO, 'arch', [
+    rej('open', 'gates G1-G8 pass but independent review = DO NOT LAND: the guard fails open (unnamed)'),
+    rej('count', 'AS1 PASS: 990/990, fail 0 skipped 0; review = DO NOT LAND: thin headroom (unnamed)'),
+    rej('caution', 'review = land with caution, but 2 defects: crash on failed cd (unnamed)'),
+    rej('tagonly', 'corrective 3: gates PASS; security-r3 D1 (unnamed: the fix inverted the worst case)'),
+    rej('gate', 'GA2 gate failed: 2 failures; named C5 member refused'),
+    rej('mixed', 'AO7 whitespace fail; review = DO NOT LAND: provenance gap (unnamed)'),
+  ]);
+  const out = run(['ledger', 'report', REPO, '--verdicts']);
+  for (const id of ['open', 'count', 'caution', 'tagonly']) assert.match(out, new RegExp(`@arch/${id}\\b`), id);
+  for (const id of ['gate', 'mixed']) assert.doesNotMatch(out, new RegExp(`@arch/${id}\\b`), id);
+});
+
 // --- pane provenance survives a renamed tab ---------------------------------
 //
 // Anyone may rename a herdr tab, so the "builder" label cannot be the only proof

@@ -173,6 +173,7 @@ Record findings, verification coverage and user risk acceptance separately. A sk
 - **Cite specifics.** `file:line`, the red flag you matched, and when possible the CVE / catalog entry. No vague findings.
 - **Trace outside the diff when the pattern demands it.** Auth, trust boundaries, and regression prevention all require reading code the diff touches — not just the diff itself.
 - **Do not commit, push, or create PRs.** Apply fixes in the working tree only.
+- **Keep probes inert.** Write probe harnesses and hostile test inputs to files in your scratch directory with the file-write tool, never as a shell heredoc: a data line that matches the delimiter ends the heredoc, and the shell runs every line after it. Run probes from the scratch directory, never from the user's checkout, and point any URL at a local stub, never a real host.
 - **No preamble, no "looks good overall."** Findings or verdict — that's it.
 
 ---

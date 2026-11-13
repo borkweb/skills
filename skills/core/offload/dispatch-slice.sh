@@ -37,9 +37,11 @@
 #               first, so the run report can count and classify the rejection;
 #               a follow-up after acceptance is not a rejection. Required in
 #               that case; a review-only verdict needs "named C<n>" or "unnamed".
-#               On a row already rejected the verdict is kept as a ledger note
-#               (no second rejection). In any other state --verdict exits 2
-#               (naming the state) and sends nothing: drop it for a follow-up
+#               On an accepted row it records a rejection: a later review sent
+#               the accepted work back. On a row already rejected the verdict is
+#               kept as a ledger note (no second rejection). In any other state
+#               --verdict exits 2 (naming the state) and sends nothing: drop it
+#               for a follow-up
 #   --past-cap  with --corrective: the user's ruling to continue a slice already
 #               rejected more than OFFLOAD_ROUND_CAP (default 3) times; recorded
 #               as the slice's ledger note. Without it the corrective is refused
@@ -201,8 +203,9 @@ ledger_dispatched() {
 }
 
 # A corrective sends results back. With --verdict it records a rejection from
-# results-ready or dispatched, keeps the verdict as a note on a row already
-# rejected, and exits 2 in any other state. Without --verdict a judged row is
+# results-ready, dispatched or accepted (a later review sent accepted work back),
+# keeps the verdict as a note on a row already rejected, and exits 2 in any
+# other state. Without --verdict a judged row is
 # left as it is (a follow-up after acceptance, or a second corrective after a
 # recorded rejection, adds nothing).
 ledger_state() {
@@ -251,10 +254,17 @@ ledger_reject_results() {
         die "could not record the verdict note on slice $ID; nothing was sent"
       [ -z "$VERDICT" ] || VERDICT_NOTED=1
       ;;
+    accepted)
+      # A later review (security, integration, delta) that sends accepted work
+      # back is a rejection; without --verdict this is a follow-up and records
+      # nothing.
+      [ -z "$VERDICT" ] || hoff ledger set "$REPO" "$ID" --state rejected --verdict "$VERDICT" >/dev/null ||
+        die "--corrective on accepted work that a later review sent back needs a --verdict the ledger accepts (see the refusal above); nothing was sent"
+      ;;
     '') ;;
     *)
       [ -z "$VERDICT" ] || {
-        echo "dispatch-slice: --verdict records a rejection, but slice $ID is $st (only results-ready, dispatched or rejected take a verdict); drop --verdict for a follow-up. Nothing was sent." >&2
+        echo "dispatch-slice: --verdict records a rejection, but slice $ID is $st (only results-ready, dispatched, accepted or rejected take a verdict); drop --verdict for a follow-up. Nothing was sent." >&2
         exit 2
       }
       ;;
