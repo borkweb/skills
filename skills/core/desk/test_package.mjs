@@ -175,10 +175,12 @@ test('C44-C46 the desk SKILL offers tell, new run and the tab in that order, and
   assert.match(s, /exit 3[^\n]*architect did not get the work/);
 });
 
-test('C47 the do SKILL reopens before the terminal check, starts a new run for unrelated work and never lets a message answer a question', () => {
+// The reopen/terminal-check/new-run logic lives in `runs.mjs resume` (test_resume.mjs); the SKILL must route through it.
+test('C47 the do SKILL gets its run dir from resume, reopens with --continue, starts a new run for unrelated work and never lets a message answer a question', () => {
   const d = read('skills/core/do/SKILL.md');
-  assert.match(d, /reopen the run first[^\n]*`runs\.mjs reopen <run>`[^\n]*terminal check on `BORK_RUN_DIR` passes[^\n]*same run dir/);
-  assert.match(d, /`show` the run anyway and, if it reports the run done or blocked, run `runs\.mjs reopen <run>` first/);
-  assert.match(d, /Unrelated new work starts a new run/);
+  assert.match(d, /runs\.mjs resume --goal "<goal, verbatim>"/);
+  assert.match(d, /Pass `--continue` when the work continues this architect's own run's goal[^\n]*new instruction M<n>/);
+  assert.match(d, /Pass `--new` for unrelated new work/);
+  assert.match(d, /never create the directory by hand/);
   assert.match(d, /A message never answers an open question/);
 });

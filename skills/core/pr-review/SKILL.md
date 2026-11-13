@@ -1,19 +1,13 @@
 ---
 name: pr-review
 description: >
-  Pre-landing PR review that reports instead of merely repairing. Wraps
-  bork:review, adds an independent second pass from the other harness (Claude
-  reviews, Codex seconds it — or the reverse) when the diff needs one, then
-  routes the findings: CRITICAL ones become line-anchored inline PR comments
-  with ```suggestion blocks, posted as one COMMENT review after you confirm;
-  INFORMATIONAL ones are reported in chat for you to decide on. Checks
-  staleness against the base, reuses CI results instead of rerunning tests,
-  reviews only new commits on a re-run, and writes PR comment prose in
-  ASD-STE100 plain English. Asks once at the start whether to apply mechanical
-  fixes locally or leave everything as comments, and whether to run in a
-  throwaway git worktree. Never commits, pushes, approves, or requests changes.
-  Invoke only when the user explicitly asks for /pr-review, or when bork:do
-  runs it once per PR for a batch review — do not trigger it on your own.
+  Review a GitHub PR and post its CRITICAL findings as line-anchored inline
+  comments with suggestion blocks after you confirm; INFORMATIONAL findings
+  stay in chat. Adds a second pass from the other harness when the diff needs
+  one, reuses CI results, and reviews only new commits on a re-run. Invoke
+  only when the user explicitly asks for /pr-review or for a PR review that
+  posts comments, or when bork:do runs a review batch; never on your own. For
+  a local diff or branch without posting, use review.
 allowed-tools:
   - Bash
   - Read
@@ -51,9 +45,13 @@ This file covers the common path. Some cases have their own file in
 | [codex-host.md](references/codex-host.md) | Step 0 finds you are not in Claude Code |
 | [incremental.md](references/incremental.md) | Step 0 finds an earlier `/pr-review` review |
 | [peer.md](references/peer.md) | Step 2b records the peer as REQUIRED |
-| [checks.md](references/checks.md) | A CI check failed, or a check has to run on this machine |
+| [checks.md](references/checks.md) | Step 3a maps the checks to CI (every run), Step 3c waits on a pending check, a CI check failed, or a check has to run on this machine |
 | [edge-cases.md](references/edge-cases.md) | No PR, wrong repo, fork PR, peer failure, a 422 |
 | [batch.md](references/batch.md) | Step 0 finds `--prepare-only` (a `bork:do` batch lane) |
+| [setup.md](references/setup.md) | Step 0 starts (every run), or Step 2b finds the PR behind its base |
+| [worktree.md](references/worktree.md) | Step 2 sets up a worktree, or Step 7 removes one |
+| [host-contract.md](references/host-contract.md) | Step 3b dispatches the host pass, or a REQUIRED peer needs its brief |
+| [posting.md](references/posting.md) | Step 5a keeps at least one finding to anchor, show and post |
 
 ---
 
@@ -67,6 +65,8 @@ This file covers the common path. Some cases have their own file in
   asks anything.
 - **Nothing reaches the PR unseen.** Every comment is shown in full and confirmed
   before posting, critical ones included.
+- **Comments only.** Never commit, push, approve or request changes. The only
+  write to the PR is one COMMENT review the user confirmed.
 - **Two reviewers when the diff needs them, one reporter.** The peer finds; the
   host merges, decides, posts, and speaks.
 - **Peer first, checks next, host third, join last.** The passes overlap by
@@ -160,95 +160,10 @@ anything else.
 | `--solo` | Skip the peer pass |
 | `--prepare-only <dir>` | Run as one lane of a `bork:do` batch: prepare the review in `<dir>` and stop before Step 5b. **Read [batch.md](references/batch.md) now.** It overrides Steps 0–7 where they differ. |
 
-Then run these and keep the results — the Step 1 questions and later steps branch
-on them.
-
-```bash
-git rev-parse --show-toplevel
-git branch --show-current
-git status --porcelain
-git remote get-url origin
-```
-
-Then work out six things:
-
-1. **Harness — you are the host, the other one is the peer.** In a batch lane,
-   the brief names both; skip the detection below. Otherwise, if you have the
-   `Agent` tool and `AskUserQuestion`, you're in Claude Code: use subagent
-   dispatch in Step 3b and `AskUserQuestion` for the checkpoints. The peer is
-   Codex. **If you have neither, read
-   [codex-host.md](references/codex-host.md) now.** The peer is then Claude.
-
-   Confirm the peer CLI is actually there before promising a second pass:
-   `command -v codex` / `command -v claude`. State which harness is host, which
-   is peer, and whether the peer is available — one line, so the user can
-   redirect it.
-
-2. **GitHub host.** If the PR isn't on `github.com` (e.g. a GitHub Enterprise
-   host), every `gh`/`gh-axi` call needs `--hostname <host>` (or
-   `GH_HOST=<host>`). If the repo's own instructions name a wrapper alias for
-   `gh`, use it. In zsh, quote every API path that contains `?` or `&`.
-
-3. **The PR.** The user usually passes a **PR URL** — treat that as the primary
-   input. Resolve in this order:
-
-   - **A PR URL** (`https://<host>/<owner>/<repo>/pull/<number>`). Parse all four
-     parts out of it. The URL — not the current directory — is the authority on
-     host, owner, and repo.
-   - A bare PR number → the current repo.
-   - Nothing → `gh pr view` for the current branch.
-
-   Then fetch it, scoping the call to the URL's repo and host. One call returns
-   the PR, the head commit's CI results and the earlier reviews:
-
-   ```bash
-   gh pr view <number> --repo <owner>/<repo> \
-     --json number,title,url,headRefName,headRefOid,baseRefName,isCrossRepository,headRepositoryOwner,statusCheckRollup,reviews \
-     > <scratchpad>/pr.json
-   ```
-
-   Record `headRefOid` — the inline comments must be anchored to that commit.
-   **If there is no PR**, follow [edge-cases.md](references/edge-cases.md).
-
-4. **Does the PR's repo match where you are?** Compare the URL's
-   `<owner>/<repo>` against `origin`. On a mismatch, follow
-   [edge-cases.md](references/edge-cases.md). Never review a PR against the
-   wrong repository's files.
-
-5. **Earlier reviews on this PR.** Save your earlier `/pr-review` reviews, with
-   their bodies, and every existing inline comment. Step 5a, Step 7 and
-   [incremental.md](references/incremental.md) read both files:
-
-   ```bash
-   gh api user --jq .login                                  # → <me>
-   jq -c --arg me "<me>" '.reviews[] | select(.author.login == $me)
-         | select((.body // "") | (contains("<!-- pr-review sha=")
-                                   or startswith("Review via /pr-review")))
-         | {submittedAt, commit: .commit.oid, body}' \
-     <scratchpad>/pr.json > <scratchpad>/earlier-reviews.jsonl
-   jq -rs 'sort_by(.submittedAt) | last | .commit // empty' \
-     <scratchpad>/earlier-reviews.jsonl                     # → <last-reviewed>
-   ```
-
-   The inline comments come from the prefetch below. An empty
-   `<last-reviewed>` means this is the first review. Step 2b decides whether to
-   use it.
-
-6. **Start the prefetch, then ask.** Nothing in this job depends on a Step 1
-   answer, so launch it with `Bash(run_in_background: true)` **before** the
-   Step 1 questions. It runs while the user reads them:
-
-   ```bash
-   git fetch origin <base> <headRefName> --quiet     # fork: <base> pull/<number>/head
-   gh api --paginate "repos/<owner>/<repo>/pulls/<number>/comments" \
-     --jq '.[] | {path, line, original_line, user: .user.login,
-                  title: (.body | split("\n")[0]), url: .html_url}' \
-     > <scratchpad>/existing-comments.jsonl
-   ```
-
-   This is the only fetch in the run. Step 2 and Step 2b wait for the job's
-   completion notice, then read its results. If it fails, report the error and
-   run the fetch once in the foreground.
+**Read [setup.md](references/setup.md) now,** before running anything else. Its
+Step 0 section holds the commands and the six things to work out: the harness,
+the GitHub host, the PR, the repo match, the earlier reviews and the prefetch.
+The prefetch starts in the background before the Step 1 questions.
 
 ---
 
@@ -300,19 +215,8 @@ Act on the Step 1 worktree answer. Recommend, before asking:
   recommendation.
 - **In place** when you're already on the PR branch with a clean tree.
 
-**If worktree:** reuse one that is already detached at `<headRefOid>`
-(`git worktree list`), but only when `git -C <worktree> status --porcelain` is
-empty. A dirty one may hold fixes from an earlier AUTO-FIX run, and reviewing
-it would review those fixes too. Otherwise wait for the Step 0 prefetch, then
-create one under the scratchpad, so nothing lands in the user's project. The
-prefetch fetched `<headRefOid>`, for a fork PR too:
-
-```bash
-git worktree add --detach <scratchpad>/pr-review-<number> <headRefOid>
-```
-
-Run every subsequent step from the review directory, and note the path in your
-output.
+**If worktree:** read the Step 2 section of [worktree.md](references/worktree.md)
+before you reuse or create one.
 
 **If in place:** proceed in the current checkout, and say plainly in the final
 summary if uncommitted changes were part of the reviewed diff.
@@ -341,19 +245,9 @@ git rev-list --left-right --count <headRefOid>...<base-sha>
 
 **2. Staleness.** The last output is `<ahead> <behind>`. `<behind>` counts base
 commits the PR does not contain. If it is `0`, the status is **CURRENT**.
-Otherwise, find the files both sides changed since they split, and test the
-merge itself:
 
-```bash
-git diff --name-only <merge-base> <headRefOid> | sort > <scratchpad>/pr-files.txt
-git diff --name-only <merge-base> <base-sha> | sort > <scratchpad>/base-files.txt
-comm -12 <scratchpad>/pr-files.txt <scratchpad>/base-files.txt
-git merge-tree --write-tree --name-only --no-messages <base-sha> <headRefOid>
-```
-
-`git merge-tree` exits `0` for a clean merge and `1` for conflicts. On `1`, the
-lines after the tree OID name the conflicted files. Any other exit is an error —
-report it and treat the merge as untested. (`--write-tree` needs git 2.38+.)
+Otherwise, follow the Step 2b section of [setup.md](references/setup.md) to
+find the files both sides changed and to test the merge. Then set the status:
 
 | Status | Condition | Effect |
 |---|---|---|
@@ -423,35 +317,9 @@ describes, and do not block on it. Skip this when Step 2b recorded SKIPPED.
 reviewer and the peer are both told not to start test suites, so a review
 without this step always ends with missing evidence.
 
-1. **List the repo's checks.** Read `package.json` scripts, `composer.json`
-   scripts, the `Makefile`, `bin/`, and any `AGENTS.md`, `CLAUDE.md` or
-   `CONTRIBUTING.md` for the test, lint, type-check and static-analysis
-   commands.
-2. **Map them to CI.** Read the CI config at `<headRefOid>` (for example
-   `.github/workflows/*.yml`) to see which job runs which command. The head
-   commit's CI results are already in `pr.json` from Step 0. Check runs and
-   commit statuses arrive together:
-
-   ```bash
-   jq -r '.statusCheckRollup[]
-          | if .__typename == "CheckRun"
-            then [.name, .status, (.conclusion // "-"), .detailsUrl]
-            else [.context, .state, "-", .targetUrl] end | @tsv' <scratchpad>/pr.json
-   ```
-
-3. **Decide per check.** A local run is the exception, not the default. The
-   values are uppercase. A status context's `state` stands in for both columns.
-
-   | CI state for the check | Action |
-   |---|---|
-   | `COMPLETED` / `SUCCESS`, or state `SUCCESS` | `PASS (CI)` — don't run it locally |
-   | `COMPLETED` / `FAILURE`, or state `FAILURE` / `ERROR` | `FAIL (CI)` — compare with the base, as [checks.md](references/checks.md) describes |
-   | `QUEUED`, `IN_PROGRESS`, or state `PENDING` / `EXPECTED` | Wait for it in 3c |
-   | `CANCELLED`, `SKIPPED`, `NEUTRAL`, `ACTION_REQUIRED`, `TIMED_OUT`, `STALE`, or no CI result | Run it locally |
-   | Unclear which CI job runs this check | Run it locally — don't assume coverage |
-
-   **For each local run, read [checks.md](references/checks.md)**
-   and start the run in the background now.
+Follow the Step 3a section of [checks.md](references/checks.md) now: list the
+repo's checks, map them to CI, decide per check, and start each local run in
+the background.
 
 ### Step 3b: Host pass — bork:review
 
@@ -466,79 +334,9 @@ mailbox. This is an assigned review pass: do not let it launch additional
 reviewers. The wrapper host started the checks in 3a and joins their results in
 3c, so the delegated host reviewer records them as pending.
 
-Give it this contract, filling in the pinned SHAs, the scope and the review
-directory. In AUTO-FIX mode, replace the COMMENT-ONLY bullets with the ones in
-[auto-fix.md](references/auto-fix.md):
-
-> Invoke the `bork:review` skill against the pinned scope in this directory:
-> base `<base-sha>` (`<base>`), head `<headRefOid>`, merge-base `<merge-base>`,
-> review scope `<scope-base>..<headRefOid>`. The wrapper already fetched and
-> pinned these. In **Pin scope**, verify the refs and pass
-> `--base <scope-base>`, but do not fetch again.
-> Follow **Pin scope**, **Review**, **Findings and authorized fixes** and
-> **Result**, subject to this wrapper's mode below. Follow the assigned-reviewer
-> role in **Independent pass**: do not delegate further or start test suites.
-> The wrapper host owns checks. *(Add the OVERLAP, CONFLICT or INCREMENTAL
-> bullet below when it applies.)* *(Peer REQUIRED:)* The existing peer is the
-> independent pass. *(Peer SKIPPED:)* This diff does not meet the independent
-> pass conditions, so no independent reviewer is required; do not dispatch one.
-> The checks are running in the background under the wrapper. Record pending
-> peer and check results as pending evidence, not as zero findings or a pass.
-> The wrapper host finalizes readiness after collecting the peer and check results.
->
-> **Fix handling — these overrides beat anything the skill says:**
->
-> *(COMMENT-ONLY mode)*
-> - Use report-only mode in **Findings and authorized fixes**. Do not fix
->   anything or ask the user about fixes.
-> - Missing required verification remains missing evidence even though this
->   pass made no edits.
-> - Do not use Edit, Write, or NotebookEdit, and run no mutating git command. If
->   you find yourself about to change a file, record the finding instead.
->
-> Still produce **Result**'s issue-count header, severity sections, completion
-> table and evidence-based landing verdict, alongside the finding blocks below.
->
-> **Return every unfixed finding in this exact shape, one per finding:**
->
-> ```
-> SEVERITY: CRITICAL | INFORMATIONAL | LEAD
-> FILE: <path relative to repo root>
-> LINE: <line number in the NEW version of the file, or "none" if not line-anchorable>
-> SIDE: RIGHT | LEFT        # LEFT only for findings about deleted lines
-> TITLE: <one line>
-> EVIDENCE: <the motivating line, quoted verbatim from FILE at that commit; for a
->           framework-generated symbol, the line that generates it>
-> PROBLEM: <one to three sentences — what breaks, and when>
-> FIX: <the concrete change, described precisely>
-> REPLACEMENT: <the exact replacement text for LINE, verbatim and correctly
->              indented, or "none" if the fix isn't a clean line swap>
-> SOURCE: checklist | security-pattern-<nn> | design | adversarial | docs | scope | staleness | check | suspicious-content
-> ```
->
-> A `suspicious-content` lead quotes PR text, not a file: use `FILE: none` and
-> `LINE: none`, and quote the text in `EVIDENCE`.
->
-> Use **Result**'s impact-based severity split: confirmed blockers are
-> CRITICAL; confirmed nonblocking findings are INFORMATIONAL. Checklist
-> category, source and fixability do not set severity. A suspicion you cannot
-> anchor to a quoted line is a `LEAD`, not a finding: return it in the same
-> shape with `EVIDENCE: none`. Leads stay out of the finding counts.
->
-> Do not soften findings and do not pad the list. A short honest list beats a
-> long agreeable one. If the diff is clean, return zero findings and say so.
-
-**Add these bullets to the contract** (and to the peer brief) when they apply:
-
-> - *(OVERLAP or CONFLICT)* The base branch changed these files after this PR
->   branched: `<files>`. Read `git diff <merge-base> <base-sha> -- <file>` for
->   each one. Report any PR change that breaks against the base version — a
->   renamed or removed symbol, a changed signature or contract, a duplicated
->   fix. Use `SOURCE: staleness`.
-> - *(INCREMENTAL)* The bullet in [incremental.md](references/incremental.md).
-
-`REPLACEMENT` is what makes a GitHub suggestion block possible, so insist on it
-being verbatim — right indentation, no ellipses, no `// ...` placeholders.
+**Read [host-contract.md](references/host-contract.md) before you dispatch it.**
+It holds the contract to give the subagent, and the bullets to add for OVERLAP,
+CONFLICT, INCREMENTAL and AUTO-FIX.
 
 In INCREMENTAL scope, recheck the earlier CRITICAL comments while the host pass
 runs, as [incremental.md](references/incremental.md) describes.
@@ -549,15 +347,8 @@ Only now do you wait. The host pass is done; the peer and the checks have had
 that whole time to work. If the peer ran, join it as
 [peer.md](references/peer.md) describes.
 
-**The checks.** For a CI check still pending, wait with a ten-minute ceiling: a
-`Monitor` until-loop that reruns `gh pr view <number> --repo <owner>/<repo>
---json headRefOid,statusCheckRollup` every 30 seconds and stops once `date +%s`
-passes the deadline. If `headRefOid` changed, the author pushed during the
-review: stop waiting and say so, because these results no longer describe the
-reviewed commit. Foreground `sleep` loops
-are blocked in Claude Code, and macOS has no `timeout` command. A check still
-pending at the ceiling follows [checks.md](references/checks.md). Read each
-local log when its job reports completion.
+**The checks.** For a CI check still pending, and for each local run, follow
+the Step 3c section of [checks.md](references/checks.md).
 
 Record each check as `PASS (CI)`, `PASS (local)`, `FAIL (CI)`, `FAIL (local)`,
 `FAIL (baseline)`, `FAIL (base also red, new failures not ruled out)`,
@@ -648,53 +439,9 @@ correct the finding or demote it to a lead. The quote also confirms the anchor:
 `LINE` must point at the quoted line. A `SOURCE: check` finding with
 `FILE: none` is verified by its check result instead.
 
-**Check every anchor is inside the diff.** GitHub rejects (422) an inline comment
-on a line that isn't part of the PR's diff. For each CRITICAL finding:
-
-```bash
-git diff <merge-base> <headRefOid> -- <file>
-```
-
-Confirm the line appears in a hunk. Then:
-
-- **Line is in the diff** → inline comment, `side: RIGHT` (or `LEFT` for a
-  finding about a removed line).
-- **Line is not in the diff** (common for enum-completeness findings, which point
-  at untouched call sites) → it can't be inline. Move it into the review's summary
-  body with an explicit `file:line` reference and a note that it's outside the diff.
-- **Finding spans several lines** → use `start_line` + `line` for a multi-line
-  anchor rather than picking one arbitrarily.
-
-**Write each comment body** as:
-
-```markdown
-**CRITICAL — <title>**
-
-<problem, one to three sentences>
-
-<suggestion block, only when REPLACEMENT is a clean swap for the anchored lines>
-
-<"Flagged independently by both reviewers." — only when the tag is `both`>
-```
-
-The suggestion block must contain the complete replacement for *exactly* the
-anchored line range — that's what GitHub applies when the author clicks Commit.
-Wrong indentation or a partial line makes an unapplyable suggestion. When
-`REPLACEMENT` is `none`, or the fix spans multiple files, or it needs a design
-decision, **write the fix in prose and skip the suggestion block.** A suggestion
-the author can't safely click is worse than no suggestion.
-
-**Write all PR prose in ASD-STE100 Simplified Technical English.** This covers
-the title, the problem and any prose fix in every comment, and the review body.
-Use [ste100.md](../writing-plans/ste100.md), the same rules file that
-`bork:review` cites in **Result**. Read it before you write the first comment.
-Rewrite each finding here; do not paste `PROBLEM` and `FIX` unchanged, because
-the peer does not follow these rules.
-
-Keep code, identifiers, paths, error strings, the `**CRITICAL —**` label and the
-suggestion block exactly as written. STE applies to the prose around them, never
-inside a suggestion block. Chat output in Step 6 stays terse and is not bound by
-these rules.
+**Before you anchor the first finding, read [posting.md](references/posting.md).**
+Its Step 5a section covers the anchor check, the comment body and the
+ASD-STE100 rules for all PR prose.
 
 ### 5b: Show, then confirm once
 
@@ -702,46 +449,9 @@ Show everything that could go on the PR, then ask once. The critical comments
 and the informational choice share one confirmation, and the result is one
 review.
 
-First, print every planned critical comment exactly as it will appear:
-
-````
-Posting 3 inline comments to PR #<n> (<title>) as a COMMENT review:
-
-1. app/models/post.rb:42  [RIGHT]  [both]  — Race condition in status transition
-   **CRITICAL — Race condition in status transition**
-   Two concurrent publishes both read status='draft' and both write...
-   ```suggestion
-     .where(status: 'draft')
-     .update_all(status: 'published')
-   ```
-
-2. ...
-
-Plus 1 finding in the review summary (outside the diff):
-   lib/notifier.rb:88 — new `archived` status isn't handled here
-
-Staleness note in the review body:
-   This branch is 14 commits behind `trunk`. `trunk` also changed
-   `app/models/post.rb`. Rebase the branch, then run the checks again.
-````
-
-Then list the INFORMATIONAL findings, numbered and grouped by source. Show each
-one's planned comment exactly as it would be posted, so that nothing reaches the
-PR unseen:
-
-```
-INFORMATIONAL — 6 findings (post only the ones you pick)
-
-Error handling (2)
-  1. app/jobs/import.rb:31  [RIGHT]  [both]
-     **INFORMATIONAL — The timeout log does not include the job ID**
-     The log for an expected timeout does not include the job ID. Add the job
-     ID to the structured log.
-  2. ...
-
-Design (1)
-  ...
-```
+Print every planned comment exactly as it will appear, in the formats in the
+Step 5b section of [posting.md](references/posting.md): the critical comments
+first, then the INFORMATIONAL findings, numbered and grouped by source.
 
 Then one `AskUserQuestion` call with up to two questions. Leave out a question
 that has nothing to ask about. With no critical and no informational findings,
@@ -765,30 +475,8 @@ informational ones, with bodies labeled `**INFORMATIONAL — <title>**`. The
 informational ones follow the same anchor, duplicate and ASD-STE100 rules. The
 hidden marker on the first line lets the next run find this review in Step 0.
 
-```jsonc
-// <scratchpad>/pr-review-payload.json
-{
-  "commit_id": "<headRefOid>",
-  "event": "COMMENT",
-  "body": "<!-- pr-review sha=<headRefOid> -->\nReview via /pr-review (<host model> + <peer model, or 'no peer'>). <n> critical findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
-  "comments": [
-    { "path": "app/models/post.rb", "line": 42, "side": "RIGHT", "body": "..." }
-  ]
-}
-```
-
-```bash
-gh api --method POST /repos/<owner>/<repo>/pulls/<number>/reviews \
-  --input <scratchpad>/pr-review-payload.json
-```
-
-Spell out `<owner>/<repo>` from the PR URL rather than leaning on
-`{owner}/{repo}` placeholder substitution — the placeholders resolve from the
-current directory, which is not necessarily the PR's repo.
-
-Use plain `gh api` here rather than `gh-axi` — `gh-axi api` takes only flat
-`--field key=value` pairs and can't express the nested `comments` array. Add
-`--hostname <host>` for a non-github.com PR.
+The payload format and the `gh api` call are in the Step 5c section of
+[posting.md](references/posting.md).
 
 **`event` is always `COMMENT`.** Never `REQUEST_CHANGES` — this skill leaves a
 review gate on nobody's PR — and never `APPROVE`.
@@ -858,18 +546,9 @@ start it. `bork:do` runs its **land** pipeline to fix the PR until it is safe to
 land. Give it the unresolved CRITICAL findings as its starting blockers, so it
 checks the same bar this review used.
 
-**Cleanup.** If you created a worktree in Step 2, check it before removing it:
-
-```bash
-git -C <worktree> status --porcelain
-git worktree remove <worktree>          # only when the status output is empty
-```
-
-If local checks ran, delete the listed check artifacts first, as
-[checks.md](references/checks.md) describes. That file also covers
-the merge-base worktree. If the worktree still isn't clean, don't remove it. In
-AUTO-FIX mode, [auto-fix.md](references/auto-fix.md) says what to hand back.
-Leave a worktree you reused from `git worktree list` in place.
+**Cleanup.** If you created a worktree in Step 2, or local checks created one at
+the merge-base, follow the Step 7 section of
+[worktree.md](references/worktree.md) before you remove it.
 
 Never `--force` a worktree removal. That's how a review becomes a data-loss
 incident.

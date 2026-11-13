@@ -19,6 +19,8 @@ Locate the package using the loaded command path or its Claude/Codex manifests. 
 
 Inventory each entrypoint's name, description, invocation/model metadata, size, references and helper callers. Distinguish discovery metadata, invoked context, tool/retry cost and output cost. File bytes are not tokens or per-turn context.
 
+Read real usage before judging invocation: `node <package root>/hooks/skill-usage.mjs report [--since YYYY-MM-DD]` (add `--json` for parsing). It counts Skill tool calls and slash-typed commands per skill from `~/.agent-handoffs/usage/skills.jsonl`, and lists the package's skills and commands with no invocation in the window. Report the window it covers. Zero invocations can mean under-triggering, a skill you rarely need, or a log that only began recently. It is evidence for a closer look, not a verdict. The log covers Claude Code only, so Codex use is missing coverage, not zero use.
+
 Check these areas:
 - Contradictions between rules, examples, modes and output contracts; invented facts and fake precision.
 - Invocation on intended and adjacent prompts. Claude and Codex metadata have different semantics. Do not hide a skill solely because it can edit files; action authorization and discovery are separate. Frontmatter changes affect behavior.

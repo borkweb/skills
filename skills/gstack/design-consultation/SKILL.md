@@ -1,6 +1,6 @@
 ---
 name: design-consultation
-description: "Propose a product-specific design system and verified preview, grounded in existing brand assets and user constraints. Covers typography, color, layout, components and accessibility."
+description: "Propose a product-specific design system (typography, color, layout, components, accessibility) with a rendered preview, grounded in existing brand assets. Use for 'design system', 'pick fonts and colors', 'what should this look like' or a new product with no visual direction."
 
 allowed-tools:
   - Bash

@@ -1,6 +1,6 @@
 ---
 name: red-pen
-description: "Review or edit prose for clarity, economy and typography when requested. Supports report-only, batched revision or explicitly interactive editing; preserves facts and quotations."
+description: "Line-edit prose for clarity, economy and typography. Use for 'red pen', 'red-pen this', 'copyedit', 'line edit', 'proofread' or 'tighten this prose'. For making text sound less machine-written, use humanize."
 ---
 
 # Red Pen

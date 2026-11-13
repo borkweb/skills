@@ -1,6 +1,6 @@
 ---
 name: review
-description: "Review a PR or requested local diff for concrete defects, scope gaps and landing readiness. Report-only unless fixes are requested; includes independent review when warranted."
+description: "Pre-landing review of a local diff, branch or PR for concrete defects, scope gaps and landing readiness, ending in SAFE TO LAND, LAND WITH CAUTION or DO NOT LAND. Use for 'review this', 'review my branch', 'is this safe to land' or 'check this diff'. To post comments on a GitHub PR use pr-review; for a security audit use review-security."
 
 allowed-tools:
   - Bash

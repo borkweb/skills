@@ -1,6 +1,6 @@
 ---
 name: complete
-description: "Drive a coding goal to merge-ready through delegated slices, frozen gates and independent review. Use for complete, run the whole loop or take this to merge-ready; merging requires explicit authorization."
+description: "Drive a coding goal with two or more slices to merge-ready through delegated builders, frozen gates and independent review. Use for '/complete', 'run the whole loop', 'take this to merge-ready' or a plan that needs a fleet of builders. One slice goes to offload instead."
 ---
 
 # Complete

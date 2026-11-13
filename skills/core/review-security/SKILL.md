@@ -1,10 +1,8 @@
 ---
 name: review-security
 description: >
-  Deep security review of a diff or a specific file, grounded in 20
-  evidence-based pattern libraries extracted from 400+ real-world bugs in major
-  open-source projects (Linux kernel, OpenSSL, Chromium, Firefox, curl, Go,
-  Rust, Kubernetes, Next.js, etc.). Use when the user says "security review",
+  Deep security review of a diff or a specific file, checked against 20
+  vulnerability pattern files built from real CVEs. Use when the user says "security review",
   "security audit", "audit this for vulnerabilities", "threat model this",
   "check for CVEs", "check for injection/auth/crypto issues", or when a diff
   touches buffer handling, parsers, authentication, authorization,

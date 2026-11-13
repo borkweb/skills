@@ -38,6 +38,9 @@ Note the launch time. You'll want it in 3c.
 
 ## The brief
 
+The contract and the bullets from Step 3b are in
+[host-contract.md](host-contract.md). Read it before you launch the peer.
+
 The brief is the COMMENT-ONLY contract from Step 3b, with these changes. Don't
 write your own review checklist for the peer. `bork:review`'s **Independent
 pass** already defines the independent reviewer's brief, so point the peer at

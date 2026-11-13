@@ -5,6 +5,53 @@ machine. A local run happens when CI has no usable result for the check, when CI
 is still pending at the join, when a baseline comparison needs per-test results,
 or when AUTO-FIX reruns a check on fixed files.
 
+Step 3a reads the first section below on every run. Step 3c reads the second
+when a CI check is still pending.
+
+## Step 3a: Map each check to CI
+
+1. **List the repo's checks.** Read `package.json` scripts, `composer.json`
+   scripts, the `Makefile`, `bin/`, and any `AGENTS.md`, `CLAUDE.md` or
+   `CONTRIBUTING.md` for the test, lint, type-check and static-analysis
+   commands.
+2. **Map them to CI.** Read the CI config at `<headRefOid>` (for example
+   `.github/workflows/*.yml`) to see which job runs which command. The head
+   commit's CI results are already in `pr.json` from Step 0. Check runs and
+   commit statuses arrive together:
+
+   ```bash
+   jq -r '.statusCheckRollup[]
+          | if .__typename == "CheckRun"
+            then [.name, .status, (.conclusion // "-"), .detailsUrl]
+            else [.context, .state, "-", .targetUrl] end | @tsv' <scratchpad>/pr.json
+   ```
+
+3. **Decide per check.** A local run is the exception, not the default. The
+   values are uppercase. A status context's `state` stands in for both columns.
+
+   | CI state for the check | Action |
+   |---|---|
+   | `COMPLETED` / `SUCCESS`, or state `SUCCESS` | `PASS (CI)` — don't run it locally |
+   | `COMPLETED` / `FAILURE`, or state `FAILURE` / `ERROR` | `FAIL (CI)` — compare with the base, as [checks.md](checks.md) describes |
+   | `QUEUED`, `IN_PROGRESS`, or state `PENDING` / `EXPECTED` | Wait for it in 3c |
+   | `CANCELLED`, `SKIPPED`, `NEUTRAL`, `ACTION_REQUIRED`, `TIMED_OUT`, `STALE`, or no CI result | Run it locally |
+   | Unclear which CI job runs this check | Run it locally — don't assume coverage |
+
+   **For each local run, read [checks.md](checks.md)**
+   and start the run in the background now.
+
+## Step 3c: Wait for a pending CI check
+
+**The checks.** For a CI check still pending, wait with a ten-minute ceiling: a
+`Monitor` until-loop that reruns `gh pr view <number> --repo <owner>/<repo>
+--json headRefOid,statusCheckRollup` every 30 seconds and stops once `date +%s`
+passes the deadline. If `headRefOid` changed, the author pushed during the
+review: stop waiting and say so, because these results no longer describe the
+reviewed commit. Foreground `sleep` loops
+are blocked in Claude Code, and macOS has no `timeout` command. A check still
+pending at the ceiling follows [checks.md](checks.md). Read each
+local log when its job reports completion.
+
 ## A CI check failed
 
 CI reports pass or fail per job, not per test, and a PR can add new failures to

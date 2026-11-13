@@ -31,7 +31,7 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 
 ### Hooks
 
-Hooks are wired in [`hooks/hooks.json`](../hooks/hooks.json): `SessionStart`, `Stop` and `UserPromptSubmit`. None of them reviews code.
+Hooks are wired in [`hooks/hooks.json`](../hooks/hooks.json): `SessionStart`, `Stop`, `PreToolUse` and `UserPromptSubmit`. None of them reviews code. The `PreToolUse` hook and one `UserPromptSubmit` hook log skill usage to `~/.agent-handoffs/usage/skills.jsonl`: the name only, never arguments or prompt text. Read the log with `node hooks/skill-usage.mjs report [--since YYYY-MM-DD]`, and turn logging off with `BORK_SKILL_USAGE_LOG=0`.
 
 ---
 

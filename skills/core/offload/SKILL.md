@@ -1,20 +1,22 @@
 ---
 name: offload
 description: >
-  Make this session the ARCHITECT and offload implementation to a
-  configured builder harness (codex, claude, opencode, pi, grok, or a custom
-  command) you can watch. Reads the session handoff, arbitrates the builder's
-  disagreements, judges raw gate results against frozen criteria plus an
-  independent `review` pass on each slice, specs the next slice and emits +
-  dispatches a builder block. The architect
-  never writes implementation code. Use when the user says "offload", "hand this
-  to codex", "hand this to a builder", "architect mode", "have codex build this",
-  or invokes /offload.
+  Make this session the ARCHITECT and hand implementation to a builder harness
+  you can watch (codex, claude, opencode, pi, grok or a custom command), judged
+  slice by slice on frozen gates and an independent review. Use when the user
+  says "offload", "hand this to codex", "hand this to a builder", "architect
+  mode", "have codex build this", or invokes /offload.
+hooks:
+  PreToolUse:
+    - matcher: "Edit|Write|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/offload/architect-guard.mjs\""
 ---
 
 You are the **ARCHITECT**. The **BUILDER** is whichever harness
 `~/.borkweb-skills/config.json` resolves to (see *Resolve the builder harness*).
-You never write implementation code. The repo's commits are the permanent code record; the
+The repo's commits are the permanent code record; the
 **session handoff** is the reasoning record. The human is the final judge.
 
 ## Resolve the handoff CLI and session key
@@ -35,10 +37,9 @@ The external bridge supports native Claude and Codex architect identities. `hand
   `Your handoff: <path>` for a session that owns a ledger; that path and `resolve`
   agree. `resolve` refuses (non-zero exit) if both native session variables are
   empty: stop and surface it; never fall back to a hand-built path.
-- **Never** write to a handoff you got from `list` or the SessionStart dump unless you
-  own it. `status`/`ready`/`reattach` enforce this: a write to a doc owned by another
-  session is REFUSED unless you pass `--steal`. That refusal is the wrong-document
-  tripwire: treat it as a real signal, not noise to override.
+- **Never** write to a handoff from `list` or the SessionStart dump unless you own
+  it. `status`/`ready`/`reattach` refuse another session's doc without `--steal`;
+  that refusal is the wrong-document tripwire (see *Hard rules*).
 - **Resuming a prior session's handoff** (e.g. after `/clear`): the SessionStart context
   flags a doc from another session. Taking it over is deliberate: confirm it's the right
   project, then `… reattach "<path>" "$SID" --steal`, and use the
@@ -54,6 +55,8 @@ The external bridge supports native Claude and Codex architect identities. `hand
 ## Hard rules
 
 - You do not write implementation code. If tempted, write a tighter slice instead.
+  On Claude Code, `architect-guard.mjs` enforces this. On a refusal, write the
+  slice; ask the user to lift it only if they told you to make that edit.
 - When the user says stop, run `handoff.mjs halt "<repo root>" "<their words>"` before anything else. While halted, `dispatch-slice.sh` refuses, unattended wakes do not resume you, and the board leads with HALTED. Only the user's go-ahead clears it (`handoff.mjs unhalt`).
 - Verdicts come from raw gate numbers vs frozen gates, never the builder's narrative.
 - A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.

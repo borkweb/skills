@@ -1,6 +1,6 @@
 ---
 name: plan-design-review
-description: "Review a UI plan for interaction states, design-system fit, accessibility and visual acceptance. Improve the plan when requested; preserve existing brand choices."
+description: "Review a UI plan before it is built for interaction states, design-system fit, accessibility and visual acceptance. Use for 'design review this plan', 'review the UX of this spec' or a plan that changes user-facing screens. For rendered UI, use design-review."
 
 allowed-tools:
   - Read

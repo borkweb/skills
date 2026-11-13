@@ -1,5 +1,5 @@
 {
-  "description": "SessionStart is silent without saved work. session-budget auto-loads one pending handoff or lists several; offload lists persistent handoffs without taking ownership and hands a session that owns a ledger its board. Stop refuses once when that ledger still owes the architect a judgment, ruling or owner. Helper paths are resolved by the active skill. UserPromptSubmit fires throttled session-budget nudges.",
+  "description": "SessionStart is silent without saved work. session-budget auto-loads one pending handoff or lists several; offload lists persistent handoffs without taking ownership and hands a session that owns a ledger its board. Stop refuses once when that ledger still owes the architect a judgment, ruling or owner. Helper paths are resolved by the active skill. UserPromptSubmit fires throttled session-budget nudges. skill-usage appends the name of each Skill tool call (PreToolUse) and each slash-typed command (UserPromptSubmit) to ~/.agent-handoffs/usage/skills.jsonl; it never blocks and records no arguments. BORK_SKILL_USAGE_LOG=0 turns it off.",
   "hooks": {
     "SessionStart": [
       {
@@ -35,6 +35,18 @@
         ]
       }
     ],
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/skill-usage.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
@@ -43,6 +55,16 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/session-budget/budget-hook.mjs\"",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/skill-usage.mjs\"",
+            "timeout": 5
           }
         ]
       }

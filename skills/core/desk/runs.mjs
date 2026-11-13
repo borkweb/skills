@@ -324,6 +324,59 @@ function cmdInit(o) {
   out(o.json ? JSON.stringify(rec) : dir);
 }
 
+// One call that picks the run directory for a do run: BORK_RUN_DIR first, then each
+// --candidate in order (the launch prompt's dir, then notes.md's). A running,
+// needs-me or blocked run is resumed as it is. A done or blocked run is reopened
+// only with --continue (the work continues that run's goal). A failed run is never
+// reused, and a done run without --continue is skipped. With no usable candidate,
+// or with --new, it creates a run exactly as init does. Line 1 is the run dir;
+// line 2 is `created|resumed|reopened <state>`.
+function cmdResume(o) {
+  if (o.new && o.continue) throw usageFail('give --new or --continue, not both');
+  const goal = readGoal(o);
+  const skipped = [];
+  const candidates = o.new ? [] : [process.env.BORK_RUN_DIR, ...(o.candidate ?? [])].filter((c) => c);
+  for (const c of candidates) {
+    let dir;
+    let rec;
+    try {
+      ({ dir } = resolveRun(c));
+      rec = readRun(dir);
+    } catch (e) {
+      skipped.push(`${c}: ${e.message}`);
+      continue;
+    }
+    if (rec.state === 'failed') { skipped.push(`${rec.id}: failed runs are final`); continue; }
+    const closed = rec.state === 'done' || rec.state === 'blocked';
+    if (o.continue && closed) {
+      mutate(dir, (r, at) => {
+        refuseClosed(r, 'reopen');
+        if (r.state === 'running') return NOOP;
+        r.messages ??= [];
+        reopenRec(r, o.note || 'reopened by resume', at);
+      });
+      return report(dir, 'reopened');
+    }
+    if (rec.state === 'done') { skipped.push(`${rec.id}: done (pass --continue to reopen it)`); continue; }
+    return report(dir, 'resumed');
+  }
+  const repo = o.repo !== undefined ? gitTop(o.repo) : null;
+  const slug = o.slug ?? defaultSlug(repo);
+  checkId(slug);
+  const { dir } = createRun({ goal, repo, slug, herdrSelf: herdrSelf() });
+  return report(dir, 'created');
+
+  function report(dir, action) {
+    const rec = readRun(dir);
+    if (o.json) out(JSON.stringify({ run_dir: dir, action, state: rec.state, skipped }));
+    else {
+      out(dir);
+      out(`${action} ${rec.state}`);
+      for (const s of skipped) process.stderr.write(`runs: skipped ${s}\n`);
+    }
+  }
+}
+
 function cmdSet(o, [arg]) {
   const { dir } = resolveRun(arg);
   if (o.state === undefined && o.summary === undefined && o.delivery === undefined && o.note === undefined) throw usageFail('set needs --state, --summary, --delivery or --note');
@@ -865,8 +918,9 @@ const SPEC = {
   withdraw: { vals: ['note'], pos: 2, run: cmdWithdraw },
   tell: { vals: ['message', 'message-file'], bools: ['json'], pos: 1, run: cmdTell },
   reopen: { vals: ['note'], pos: 1, run: cmdReopen },
+  resume: { vals: ['repo', 'goal', 'goal-file', 'slug', 'note'], multi: ['candidate'], bools: ['continue', 'new', 'json'], pos: 0, run: cmdResume },
 };
-const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen']);
+const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen', 'resume']);
 const USAGE = `usage: runs.mjs <${Object.keys(SPEC).join('|')}> [args]  (spec: skills/core/desk/SKILL.md)`;
 
 // An option takes the next token as its value whatever it looks like: goals may start with "-".

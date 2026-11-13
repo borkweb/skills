@@ -1,6 +1,6 @@
 ---
 name: qa-only
-description: "Perform report-only QA at the selected browser, API, CLI, job or webhook surface with reproducible findings and coverage evidence. May read source for scoping; never edits application files or applies fixes."
+description: "Test an application at its browser, API, CLI, job or webhook surface and report reproducible bugs with evidence, without fixing them. Use for 'QA this and report', 'test the app', 'find bugs but don't fix', 'verify this flow works' or when do needs a runtime check of a change."
 
 allowed-tools:
   - Bash

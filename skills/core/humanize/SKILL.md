@@ -1,7 +1,7 @@
 ---
 name: humanize
 version: 2.8.0
-description: "Edit prose for natural, direct language while preserving facts, quotations and voice. Accept inline text or a file; apply file edits unless review-only is requested."
+description: "Edit prose so it reads natural and direct while keeping its facts, quotations and voice. Use for 'humanize this', 'make this sound less like AI', 'make it sound human', 'de-robot this', on inline text or a file. For a line edit of clarity and typography, use red-pen."
 
 allowed-tools:
   - Read
@@ -40,7 +40,7 @@ Tighten where possible. Meaning and coverage outrank a word-count target. A sour
 
 ## Output
 
-Return the final rewrite only for inline text. For a file, apply the edit and briefly identify the file and change. Show drafts, critique or a change log only when requested. Do not publish or send the text.
+Return the final rewrite only for inline text. For a file, apply the edit and briefly identify the file and change, unless the user asked for review only; then report the proposed changes without editing. Show drafts, critique or a change log only when requested. Do not publish or send the text.
 
 ## Examples
 

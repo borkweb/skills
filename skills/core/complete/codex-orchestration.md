@@ -41,7 +41,9 @@ worker state: that helper observes external processes and bridges.
    Skip unnecessary reviews for trivial work. If delegated, these reviews also
    use the resolved reviewer model.
 2. Before freezing a slice's gates, run a read-only spec reviewer (the resolved
-   reviewer model, `review` checklist in hand) over the slice spec and fold the
+   reviewer model, `review` checklist in hand, briefed per `do`'s
+   [briefs.md](../do/references/briefs.md) *Spec reviewer*, including its runtime
+   surface line) over the slice spec and fold the
    acceptance criteria it returns into the gates, so the worker and the later
    reviewer hold the same bar. Rule on every gap it lists before dispatch (fold
    it in, record it as out of scope, or ask the user when it changes scope).

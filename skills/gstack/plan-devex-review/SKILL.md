@@ -1,6 +1,6 @@
 ---
 name: plan-devex-review
-description: "Review developer-facing plans for setup, API/CLI ergonomics, errors and compatibility. Triage covers install and first-run errors; polish and expansion cover broader journeys."
+description: "Review a plan for a developer-facing surface (API, CLI, SDK, config or install) for setup friction, ergonomics, error messages and compatibility. Use for 'devex review', 'review the API design', 'is this CLI ergonomic' or 'review the onboarding for developers'."
 
 allowed-tools:
   - Read

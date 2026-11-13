@@ -6,7 +6,7 @@ An out-of-band pass that reads past runs and proposes changes to the user's priv
 
 The private copy, `~/.borkweb-skills/review-criteria.md`, is the one runs read and dreaming edits. It holds the `Source:` citations, the `Last seen:` dates and the `Last dreamed:` header, which name the user's repos and sessions. The repo's [review-criteria.md](review-criteria.md) is a public seed: the same classes in generic wording, with no provenance. Runs fall back to it when the private copy is missing. Dreaming never edits the seed. When the private copy is missing, the first approved write creates it from the seed: create `~/.borkweb-skills/` with mode 700 if it does not exist, and write the file with mode 600. A lesson goes into the seed only when the user asks for it, by a normal commit, in generic wording and without citations. The private copy and the repo-rules store may be symlinks into a private repo. Edit the target that `realpath` gives, so the link stays a link. Then tell the user which files changed in that repo, so they can commit them.
 
-Run it only when asked (`/dream`, or "dream" through `do`), never inside another run. A useful cadence is after five or more finished runs, or every two weeks.
+Run it only when the user invokes the `dream` skill, never inside another run. A useful cadence is after five or more finished runs, or every two weeks.
 
 ## Authority
 

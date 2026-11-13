@@ -1,6 +1,6 @@
 ---
 name: investigate
-description: "Investigate an error or unexpected behavior, establish its cause and apply a verified fix when requested. Uses focused paths for performance, environment and regression problems."
+description: "Find the root cause of an error, failing test, regression, slowdown or unexpected behavior before fixing it. Use for 'why is this failing', 'debug this', 'investigate', 'this broke after the upgrade' or 'figure out what's wrong'."
 
 allowed-tools:
   - Bash

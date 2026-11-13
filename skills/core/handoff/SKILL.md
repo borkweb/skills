@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Compact the current conversation into a handoff document for another agent to pick up.
+description: Write a handoff document so another agent or a fresh session can continue this work. Use for "handoff", "hand this off", "write a handoff", "continue this in a new session" or "pass this to another agent". For deciding whether to compact or clear, use session-budget.
 argument-hint: "What will the next session be used for?"
 ---
 

@@ -61,6 +61,7 @@ Report the agent status for runs in progress: `list` shows `[agent working]`, `[
 | `withdraw <run> Q<n>` | Drop a question that no longer applies. |
 | `tell <run> --message <t>` or `--message-file <f> [--json]` | Relay the user's words to the run's architect and reopen a done or blocked run. Exit 3: recorded, not delivered. |
 | `reopen <run> [--note <t>]` | Done or blocked becomes running again (the architect's own in-tab continuation). |
+| `resume --goal <t> [--repo <p>] [--candidate <dir>]... [--continue\|--new] [--json]` | A `do` architect's run dir in one call: `BORK_RUN_DIR`, then each candidate; a failed run is never reused, a done one only with `--continue`; otherwise it creates one. Prints the dir, then `created\|resumed\|reopened <state>`. |
 | `set <run> --state blocked\|failed --summary <t>` | Mark a stuck run. Done and blocked runs reopen through `tell` or `reopen`; a failed run is final. |
 
 A run is a run id or an absolute run dir. The run states are `running`, `needs-me`, `blocked`, `done` and `failed`.

@@ -1,6 +1,6 @@
 ---
 name: plan-eng-review
-description: "Review an implementation plan for architecture, contracts, failure paths, concurrency and verification. Improve the plan when requested; do not implement it."
+description: "Review an implementation plan's architecture, contracts, failure paths, concurrency and test strategy before code is written. Use for 'eng review this plan', 'review the architecture', 'is this plan sound' or when do runs plan reviews."
 
 allowed-tools:
   - Read
