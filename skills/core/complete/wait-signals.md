@@ -30,8 +30,13 @@ the missing IDs, one per line, and exits 4 when there are any.
 On exit 4 the work is not judged yet and nothing is wrong with it: like a missing
 `Loosened tests:` line, it is bookkeeping. Run `ledger set … --state returned`,
 then send a corrective without `--verdict` that names the missing IDs and asks for
-one line per ID. It records no rejection and costs no round. On exit 0 follow the
-table row as usual.
+one line per ID. It records no rejection and costs no round.
+
+Exit 5 (`stale:`) means the Gate results have no `Head:` line, or name a commit
+other than the worktree's HEAD. The evidence does not describe the work, so do not
+judge it. Run `ledger set … --state returned`, then send a corrective without
+`--verdict` that asks for every gate to be rerun at HEAD. It records no rejection
+and costs no round. On exit 0 follow the table row as usual.
 
 ## Arbitrate a stopped builder
 

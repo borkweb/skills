@@ -23,28 +23,24 @@ The repo's commits are the permanent code record; the
 
 The external bridge supports native Claude and Codex architect identities. `handoff.mjs key` reads `$CLAUDE_CODE_SESSION_ID`, or namespaced `$CODEX_SESSION_ID` when Claude's variable is absent. Never copy a Codex identity into a Claude variable. Do not run bridge commands during unrelated tasks.
 
-- Locate `handoff.mjs` beside this loaded `SKILL.md` and use its absolute path with
-  `node`. Check that it exists before running it. Startup notices from older plugin
-  versions may contain stale paths; the current skill location is authoritative.
-  If that location is also gone after an upgrade, refresh skill discovery and load
-  the current offload skill. Do not guess a cache version or create a replacement
-  helper. Resolve your session key with `SID=$(node "<…>/handoff.mjs" key)`. Use that key for explicit identity arguments.
-- **Resolve your handoff on each turn:**
-  `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD" "<project/slice title>")`. This derives
-  the one canonical path from the native session environment, creating it on the first turn
-  (the title is applied only at creation) and returning the same path on every later
-  turn. Shell variables do not survive between turns. The SessionStart hook prints
-  `Your handoff: <path>` for a session that owns a ledger; that path and `resolve`
-  agree. `resolve` refuses (non-zero exit) if both native session variables are
+- Locate `handoff.mjs` beside this loaded `SKILL.md`, check that it exists, and run it
+  with `node` by absolute path. Startup notices from older versions may name stale
+  paths; this skill's location is authoritative. If it is gone after an upgrade,
+  refresh skill discovery and load the current offload skill; never guess a cache
+  version or write a replacement helper. Resolve your session key with `SID=$(node "<…>/handoff.mjs" key)` and use it for explicit identity arguments.
+- **Resolve your handoff on each turn** (shell variables do not survive turns):
+  `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD" "<project/slice title>")`. It derives
+  one canonical path from the native session environment, creating the doc on the first
+  turn (the title applies only then). The SessionStart hook's `Your handoff: <path>`
+  agrees with it. `resolve` exits non-zero if both native session variables are
   empty: stop and surface it; never fall back to a hand-built path.
 - **Never** write to a handoff from `list` or the SessionStart dump unless you own
   it. `status`/`ready`/`reattach` refuse another session's doc without `--steal`;
-  that refusal is the wrong-document tripwire (see *Hard rules*).
+  that refusal is the wrong-document tripwire.
 - **Resuming a prior session's handoff** (e.g. after `/clear`): the SessionStart context
   flags a doc from another session. Taking it over is deliberate: confirm it's the right
-  project, then `… reattach "<path>" "$SID" --steal`, and use the
-  returned path. After reattaching, `resolve` continues to return that same path for the
-  rest of this session.
+  project, then `… reattach "<path>" "$SID" --steal` and use the returned path;
+  `resolve` returns it for the rest of this session.
 - **Edit a handoff's sections with the CLI, not by hand:**
   `… section get|append|set|clear "$HANDOFF" "<heading>" [--text s|--file f]`.
   Section writes carry the same ownership guard.
@@ -64,7 +60,7 @@ The external bridge supports native Claude and Codex architect identities. `hand
 - The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
 - Resolve `$HANDOFF` each turn and edit only your own doc, through `section`. A
   `refusing:`/ownership error means the wrong document: surface it, never `--steal`.
-- Read [gotchas.md](gotchas.md) before a slice that pushes or adds tools other agents run.
+- Read [gotchas.md](gotchas.md) before a slice that pushes, adds tools other agents run, or runs gates on a remote sandbox.
 
 ## The ledger
 
@@ -143,6 +139,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
    each with a one-line reason, recorded under *Decisions + why*. Clear the
    resolved disagreements. Use `council` for substantive judgment calls when multiple perspectives add value; routine rulings use the scope and evidence already available.
+   A ruling that changes what the work must say or do follows [judging.md](judging.md).
 3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
    numbers only; ignore *Work summary* and any narrative when grading. Then read the
    criteria evidence under *Gate results*: every frozen criterion needs a line, and a
@@ -153,7 +150,8 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    … --state returned`, then send the builder a `--corrective` without `--verdict` that
    names the missing IDs or the missing line, so it costs no rejection and no round.
    Coverage is not freshness: a line from an earlier round satisfies it, so read the
-   evidence itself. Before any review,
+   evidence itself. Apply [judging.md](judging.md) (stale head, merge onto the current
+   base) before any review and each corrective's review. Before any review,
    run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway
    detached worktree at the slice HEAD, removed afterward, never the builder's
    worktree) and each real-runtime run a criterion names; a failure there sends the

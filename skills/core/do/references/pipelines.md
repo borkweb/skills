@@ -85,4 +85,4 @@ For a review request that names two or more PRs. Each PR runs `pr-review` in its
 
 ## Council during a pipeline
 
-Give council one narrow question, the live evidence (file:line, gate output), the constraints and the options. Log the ruling in `decisions.md` and apply it. If the ruling changes a frozen gate or the scope, it's a user question, not a council question.
+Give council one narrow question, the live evidence (file:line, gate output), the constraints and the options. Log the ruling in `decisions.md` and apply it. A ruling that changes what the work must say or do follows offload's [judging.md](../../offload/judging.md): the text it dictates is checked against the code path, and it becomes a numbered criterion. If the ruling changes a frozen gate or the scope, it's a user question, not a council question.

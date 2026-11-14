@@ -70,6 +70,17 @@ const env = (extra = {}) => ({
 const hoff = (args) => execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env: env() }).trim();
 const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...env(), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
 
+// A builder's finish. `ready` refuses Gate results with no `Head:` line naming the
+// worktree's HEAD, so write that line, then flip the doc to results-ready.
+const headLine = (doc) => {
+  const cwd = /^cwd: (.*)$/m.exec(readFileSync(doc, 'utf8'))[1].trim();
+  hoff(['section', 'append', doc, 'Gate results', '--text', `Head: ${git(cwd, ['rev-parse', 'HEAD'])}`]);
+};
+const finish = (doc) => {
+  headLine(doc);
+  hoff(['status', doc, 'results-ready']);
+};
+
 // A fresh repo per test so worktrees and ledgers never collide.
 let n = 0;
 function repo() {
@@ -195,7 +206,7 @@ test('corrective into a warm builder: no new tab, the brief goes into the pane, 
   const doc = hoff(['path', WT, 'arch']);
   // The builder finished and reported; its process is still at the prompt.
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak (unnamed)']);
 
   const { stdout, log } = run([R, WT, 'feat/warm2', FIX, '--id', '2', '--corrective']);
@@ -220,7 +231,7 @@ test('corrective after results records the rejection with its verdict; a follow-
   run([R, WT, 'feat/verdict', BLOCK, '--id', '4', '--title', 'sort']);
   const doc = hoff(['path', WT, 'arch']);
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   hoff(['ledger', 'set', R, '4', '--state', 'results-ready']);
   run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
   let s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
@@ -235,7 +246,7 @@ test('corrective after results records the rejection with its verdict; a follow-
   // A later review that sends accepted work back is a rejection, so the run
   // report counts it (one run sent accepted work back three times and the
   // ledger recorded none of them).
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
   run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'security review = DO NOT LAND: lockout guard fails open (unnamed)']);
   s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
@@ -251,7 +262,7 @@ test('corrective from unjudged results without a verdict is refused and leaves t
   hoff(['ledger', 'init', R, 'g']);
   run([R, WT, 'feat/noverdict', BLOCK, '--id', '5', '--title', 'nv']);
   const doc = hoff(['path', WT, 'arch']);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   hoff(['ledger', 'set', R, '5', '--state', 'results-ready']);
   const before = hoff(['section', 'get', doc, 'Next slice']);
   let r = runFail([R, WT, 'feat/noverdict', FIX, '--id', '5', '--corrective']);
@@ -315,7 +326,7 @@ test('corrective when the builder is gone: re-dispatch cold and say so', () => {
   run([R, WT, 'feat/cold', BLOCK, '--title', 'cold']);
   const doc = hoff(['path', WT, 'arch']);
   rmSync(`${doc}.builder`, { force: true }); // builder exited
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   // Declared change (spec v2 section 5): a one-slice run has a ledger row now, so
   // the corrective carries --verdict and the rejection lands in the row's history.
   const { stdout, log } = run([R, WT, 'feat/cold', FIX, '--corrective', '--verdict', 'g2 failed 3/5']);
@@ -428,7 +439,7 @@ function reported(branch) {
   run([R, WT, branch, BLOCK, '--title', 'one']);
   const doc = hoff(['path', WT, 'arch']);
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   hoff(['ledger', 'set', R, '1', '--state', 'results-ready']);
   return { R, WT, doc };
 }
@@ -447,7 +458,7 @@ test('a corrective without --id applies to the most recently updated row with th
   git(R, ['worktree', 'add', '-q', '-b', 'feat/x', WT]);
   hoff(['ledger', 'init', R, 'g']);
   const doc = hoff(['init', WT, 'arch', 'x']);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   hoff(['ledger', 'add', R, '--id', '1', '--handoff', doc, '--state', 'results-ready']);
   hoff(['ledger', 'add', R, '--id', '2', '--handoff', doc, '--state', 'results-ready']);
   hoff(['ledger', 'set', R, '1', '--note', 'touched last']); // row 1 is the newest by updated
@@ -461,7 +472,7 @@ test('a corrective for a pre-ledger slice adds a row from the doc status, then r
   const WT = join(BOX, 'wt-backfill');
   git(R, ['worktree', 'add', '-q', '-b', 'feat/backfill', WT]);
   const doc = hoff(['init', WT, 'arch', 'old slice']);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   assert.ok(!ledgerExists(R), 'no ledger yet');
   run([R, WT, 'feat/backfill', FIX, '--corrective', '--verdict', 'g3 failed 2/4']);
   const s = row(R, '1');
@@ -515,7 +526,7 @@ const rejectedRow = (branch, idArgs) => {
   run([R, WT, branch, BLOCK, '--title', 'rj', ...idArgs]);
   const doc = hoff(['path', WT, 'arch']);
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   const id = idArgs[1] ?? '1';
   hoff(['ledger', 'set', R, id, '--state', 'rejected', '--verdict', 'g1 failed 2/5']);
   return { R, WT, id };
@@ -596,7 +607,7 @@ test('a corrective with --id and no session ledger opens one and records the ver
   const WT = join(BOX, 'wt-idnoledger');
   git(R, ['worktree', 'add', '-q', '-b', 'feat/idnoledger', WT]);
   const doc = hoff(['init', WT, 'arch', 'old slice']);
-  hoff(['status', doc, 'results-ready']);
+  finish(doc);
   assert.ok(!ledgerExists(R), 'no ledger yet');
   run([R, WT, 'feat/idnoledger', FIX, '--corrective', '--id', '5', '--verdict', 'g3 failed 2/4']);
   const s = row(R, '5');
@@ -785,6 +796,7 @@ test('a failed launch restores Frozen gates so a revised block can freeze again'
   assert.equal(status(doc), 'specced');
   assert.ok(!/C1: x/.test(frozenOf(doc)), 'the failed dispatch left no criteria behind');
   assert.match(frozenOf(doc), /Success criteria, frozen BEFORE results exist/, 'the template comment is kept');
+  headLine(doc);
   assert.equal(coverage(doc).code, 0);
   // A revised block then freezes cleanly.
   run([R, WT, 'feat/fz-fail', blockFile('fz-fail2.md', 'Execute.\nC1: revised\n')]);
@@ -799,6 +811,7 @@ test('a block with no criterion IDs warns once, still launches, and keeps the br
   assert.equal(stdout.split('\n').filter((l) => /warning/i.test(l)).length, 1, stdout);
   assert.equal(status(doc), 'dispatched');
   assert.match(stdout.trim().split('\n').pop(), /^NEXT \(background\):/);
+  headLine(doc);
   assert.equal(coverage(doc).code, 0, 'nothing frozen, so ready behaves as before');
 });
 

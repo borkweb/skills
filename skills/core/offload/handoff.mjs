@@ -19,7 +19,10 @@
 //                                                             4 when some are missing. Read-only, needs no session.
 //                                                             `ready` and `status results-ready` run the same check
 //                                                             and refuse with `incomplete:` (exit 4), after ownership
-//                                                             and even with --steal; it checks coverage, not freshness
+//                                                             and even with --steal; it checks coverage, not freshness.
+//                                                             When the doc names a worktree (`cwd:`), all three also
+//                                                             need a `Head: <sha>` line under Gate results that matches
+//                                                             the worktree's HEAD, and refuse with `stale:` (exit 5)
 //   node handoff.mjs end      <path>                      -> delete doc
 //   node handoff.mjs prune                                -> TTL reap + orphaned-sidecar sweep
 //
@@ -296,6 +299,8 @@ function setStatus(p, value, steal) {
     if (v === 'results-ready') {
       const missing = missingCriteria(b);
       if (missing.length) die(incompleteMessage(missing), 4);
+      const stale = staleHead(b);
+      if (stale) die(`stale: ${stale}`, 5);
     }
     return setField(setField(b, 'status', v), 'updated', nowIso());
   });
@@ -349,10 +354,61 @@ const incompleteMessage = (missing) =>
 
 function coverage(p) {
   requireDoc(p);
-  const missing = missingCriteria(readFileSync(p, 'utf8'));
-  if (!missing.length) return;
-  process.stdout.write(`${missing.join('\n')}\n`);
-  die(incompleteMessage(missing), 4);
+  const doc = readFileSync(p, 'utf8');
+  const missing = missingCriteria(doc);
+  if (missing.length) {
+    process.stdout.write(`${missing.join('\n')}\n`);
+    die(incompleteMessage(missing), 4);
+  }
+  const stale = staleHead(doc);
+  if (stale) die(`stale: ${stale}`, 5);
+}
+
+// --- gate head ------------------------------------------------------------
+// Gate results name the commit the final full gate run used, as a `Head: <sha>`
+// line. A doc whose frontmatter names a worktree (`cwd:`, set by every dispatch)
+// must carry at least one, and every one must be a prefix of that worktree's
+// HEAD: evidence from before a late edit then cannot pass as evidence for the
+// head. A doc with no `cwd:`, or whose `cwd:` is not inside a git work tree (a
+// hand-made doc, a test fixture), has no head to compare and is not checked. A
+// work tree whose HEAD git cannot read (no commit yet) refuses, never passes.
+const HEAD_LINE = /^\s*(?:[-*]\s+)?(?:\*\*)?Head:(?:\*\*)?\s+`?([0-9a-fA-F]{7,40})`?\s*$/;
+
+function frontmatterField(text, key) {
+  const m = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text);
+  if (!m) return '';
+  const line = new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(m[1]);
+  return line ? line[1].trim() : '';
+}
+
+function staleHead(doc) {
+  const text = doc.replace(/\r\n?/g, '\n');
+  const cwd = frontmatterField(text, 'cwd');
+  if (!cwd) return null;
+  const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  try {
+    if (git('rev-parse', '--is-inside-work-tree') !== 'true') return null;
+  } catch {
+    return null;
+  }
+  let head;
+  try {
+    head = git('rev-parse', '--verify', 'HEAD^{commit}').toLowerCase();
+  } catch {
+    return `cannot read HEAD in ${cwd}, so the gate head cannot be verified.`;
+  }
+  const plain = sectionText(text, 'Gate results').replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
+  const heads = plain.split('\n').map((l) => HEAD_LINE.exec(l)?.[1]?.toLowerCase()).filter(Boolean);
+  const short = head.slice(0, 12);
+  if (!heads.length) {
+    return `Gate results has no \`Head: <sha>\` line. Add the commit the final full gate run used; the worktree HEAD is ${short}.`;
+  }
+  const off = [...new Set(heads.filter((h) => !head.startsWith(h)))];
+  if (off.length) {
+    return `Gate results names ${off.join(', ')}, but the worktree HEAD is ${short}. ` +
+      'Rerun every gate and mutation at HEAD, then update the Head line.';
+  }
+  return null;
 }
 
 // --- sections -------------------------------------------------------------

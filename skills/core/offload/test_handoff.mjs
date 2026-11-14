@@ -1,7 +1,7 @@
 // test_handoff.mjs
 import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -45,6 +45,19 @@ const runFail = (args, { session, env } = {}) => {
 // Each test gets its own cwd subdir so docs from one test never leak into
 // another's listFiles() (which keys on the cwd hash).
 const repo = (name) => join(BOX, `repo-${name}`);
+
+// A git repo with one commit. `ready` checks a doc's `Head:` line against the
+// HEAD of the worktree its `cwd:` names, so a doc that must reach results-ready
+// needs a real repo there. git() commits with a fixed identity and no signing.
+const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: GIT_ENV }).trim();
+const commit = (dir, msg) => { git(dir, 'commit', '-q', '--allow-empty', '-m', msg); return git(dir, 'rev-parse', 'HEAD'); };
+const gitRepo = (name) => {
+  const dir = repo(name);
+  mkdirSync(dir, { recursive: true });
+  git(dir, 'init', '-q');
+  return { dir, head: commit(dir, 'base') };
+};
 
 test('init creates a doc under <box>/offload, idempotent for same session', () => {
   const REPO = repo('init');
@@ -101,7 +114,9 @@ test('two sessions in the same repo get distinct docs', () => {
 });
 
 test('ready flips status to results-ready for the owning session', () => {
-  const p = run(['init', repo('ready'), 'sess-C']);
+  const { dir, head } = gitRepo('ready');
+  const p = run(['init', dir, 'sess-C']);
+  run(['section', 'set', p, 'Gate results', '--text', `Head: ${head}`], { session: 'sess-C' });
   run(['ready', p], { session: 'sess-C' });
   assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
 });
@@ -167,9 +182,10 @@ test('status/ready REFUSE a write from a different session (the tripwire)', () =
 // the architect's id there. dispatch.sh carries it in $OFFLOAD_SESSION_ID too,
 // scoped to the one doc it handed the builder in $OFFLOAD_HANDOFF.
 test('a builder writes its assigned handoff with the carried architect id', () => {
-  const p = run(['init', repo('carried'), 'sess-ARCH']);
+  const { dir, head } = gitRepo('carried');
+  const p = run(['init', dir, 'sess-ARCH']);
   const builder = { session: 'sess-BUILDER', env: { OFFLOAD_HANDOFF: p, OFFLOAD_SESSION_ID: 'sess-ARCH' } };
-  run(['section', 'set', p, 'Gate results', '--text', 'PASS 3/3'], builder);
+  run(['section', 'set', p, 'Gate results', '--text', `Head: ${head}\nPASS 3/3`], builder);
   run(['ready', p], builder);
   const body = readFileSync(p, 'utf8');
   assert.match(body, /status: results-ready/);
@@ -212,7 +228,9 @@ test('a carried id that does not own the assigned handoff is still refused', () 
 });
 
 test('--steal lets a different session override the ownership guard', () => {
-  const p = run(['init', repo('steal'), 'sess-OWNER']);
+  const { dir, head } = gitRepo('steal');
+  const p = run(['init', dir, 'sess-OWNER']);
+  run(['section', 'set', p, 'Gate results', '--text', `Head: ${head}`], { session: 'sess-OWNER' });
   run(['ready', p, '--steal'], { session: 'sess-INTRUDER' });
   assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
 });
@@ -349,13 +367,14 @@ test('section names the sections present when the heading is unknown', () => {
 const codexId = '01a16a67-f178-70e2-9b40-c0babe791262';
 const codexEnv = { CODEX_SESSION_ID: codexId };
 test('Codex owns a stable namespaced handoff without pretending to be Claude', () => {
-  const cwd = repo('codex-native');
+  const { dir: cwd, head } = gitRepo('codex-native');
   const p = run(['resolve', cwd], { env: codexEnv });
   assert.equal(run(['resolve', cwd], { env: codexEnv }), p);
   assert.equal(run(['key'], { env: codexEnv }), `codex:${codexId}`);
   const body = readFileSync(p, 'utf8');
   assert.match(body, new RegExp(`architect_session: codex:${codexId}`));
   assert.doesNotMatch(body, new RegExp(`claude_session: .*${codexId}`));
+  run(['section', 'set', p, 'Gate results', '--text', `Head: ${head}`], { env: codexEnv });
   run(['ready', p], { env: codexEnv });
   assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
   const other = run(['resolve', cwd], { session: codexId });
@@ -363,9 +382,11 @@ test('Codex owns a stable namespaced handoff without pretending to be Claude', (
   assert.match(runFail(['ready', p], { session: codexId }), /wrong-document/);
 });
 test('Codex carries ownership only for its assigned builder handoff', () => {
-  const mine = run(['resolve', repo('codex-builder')], { env: codexEnv });
+  const { dir, head } = gitRepo('codex-builder');
+  const mine = run(['resolve', dir], { env: codexEnv });
   const foreign = run(['init', repo('codex-foreign'), 'foreign']);
   const builder = { session: 'builder', env: { OFFLOAD_HANDOFF: mine, OFFLOAD_SESSION_ID: `codex:${codexId}` } };
+  run(['section', 'set', mine, 'Gate results', '--text', `Head: ${head}`], builder);
   run(['ready', mine], builder);
   assert.match(runFail(['ready', foreign], builder), /wrong-document/);
 });
@@ -428,9 +449,9 @@ const cli = (args, { session, env: extra = {} } = {}) => {
 
 let docN = 0;
 // A doc with frontmatter, Frozen gates and Gate results; eol '\r\n' makes a CRLF doc.
-function mkDoc(frozen, results, { eol = '\n', status = 'dispatched', owner = 's' } = {}) {
+function mkDoc(frozen, results, { eol = '\n', status = 'dispatched', owner = 's', cwd } = {}) {
   const p = join(BOX, `cov-${++docN}.md`);
-  const head = ['---', `claude_session: ${owner}`, `status: ${status}`, 'updated: x', '---', ''];
+  const head = ['---', ...(cwd ? [`cwd: ${cwd}`] : []), `claude_session: ${owner}`, `status: ${status}`, 'updated: x', '---', ''];
   const body = [...head, '## Frozen gates', frozen, '## Gate results', results, ''];
   writeFileSync(p, body.join('\n').replace(/\n/g, eol));
   return p;
@@ -592,4 +613,86 @@ test('a CRLF doc that is incomplete is refused by ready', () => {
   const r = cli(['ready', p], { session: 's' });
   assert.equal(r.code, 4);
   assert.equal(readFileSync(p, 'utf8'), before);
+});
+
+// --- the gate head: ready refuses evidence from an earlier commit -------------
+test('ready refuses a worktree doc with no Head line: exit 5, stale:, no write', () => {
+  const { dir, head } = gitRepo('head-missing');
+  const p = mkDoc('C1: a\n', 'C1: pass\n', { cwd: dir });
+  const before = readFileSync(p, 'utf8');
+  const r = cli(['ready', p], { session: 's' });
+  assert.equal(r.code, 5);
+  assert.ok(r.err.startsWith('stale:'), r.err);
+  assert.match(r.err, /no `Head: <sha>` line/);
+  assert.ok(r.err.includes(head.slice(0, 12)), 'names the worktree HEAD');
+  assert.equal(readFileSync(p, 'utf8'), before);
+});
+
+test('ready refuses a Head line that names an earlier commit', () => {
+  const { dir, head: old } = gitRepo('head-old');
+  const now = commit(dir, 'late edit');
+  const p = mkDoc('C1: a\n', `Head: ${old.slice(0, 10)}\nC1: pass\n`, { cwd: dir });
+  const r = cli(['ready', p], { session: 's' });
+  assert.equal(r.code, 5);
+  assert.ok(r.err.includes(old.slice(0, 10)), r.err);
+  assert.ok(r.err.includes(now.slice(0, 12)), r.err);
+  assert.match(readFileSync(p, 'utf8'), /status: dispatched/);
+});
+
+test('one stale Head line among current ones still refuses', () => {
+  const { dir, head: old } = gitRepo('head-mixed');
+  const now = commit(dir, 'late edit');
+  const p = mkDoc('C1: a\n', `Head: ${now}\n- Head: ${old}\nC1: pass\n`, { cwd: dir });
+  assert.equal(cli(['ready', p], { session: 's' }).code, 5);
+});
+
+test('a short, bold, backticked or upper-case Head prefix of HEAD passes', () => {
+  const { dir, head } = gitRepo('head-forms');
+  for (const line of [`Head: ${head.slice(0, 7)}`, `**Head:** \`${head.slice(0, 12)}\``, `- Head: ${head.toUpperCase()}`]) {
+    const p = mkDoc('C1: a\n', `${line}\nC1: pass\n`, { cwd: dir });
+    const r = cli(['ready', p], { session: 's' });
+    assert.equal(r.code, 0, `${line}: ${r.err}`);
+    assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
+  }
+});
+
+test('a Head line inside a comment or mid-line does not count', () => {
+  const { dir, head } = gitRepo('head-comment');
+  for (const results of [`<!-- Head: ${head} -->\nC1: pass\n`, `C1: pass at Head: ${head}\n`, `Head: ${head} (after rebase)\nC1: pass\n`]) {
+    const p = mkDoc('C1: a\n', results, { cwd: dir });
+    assert.equal(cli(['ready', p], { session: 's' }).code, 5, results);
+  }
+});
+
+test('a work tree with no commit refuses instead of passing', () => {
+  const dir = repo('head-unborn');
+  mkdirSync(dir, { recursive: true });
+  git(dir, 'init', '-q');
+  const p = mkDoc('C1: a\n', 'Head: abcdef1\nC1: pass\n', { cwd: dir });
+  const r = cli(['ready', p], { session: 's' });
+  assert.equal(r.code, 5);
+  assert.match(r.err, /cannot read HEAD/);
+});
+
+test('a cwd that is not a git work tree has no head to check', () => {
+  const dir = repo('head-not-git');
+  mkdirSync(dir, { recursive: true });
+  for (const cwd of [dir, repo('head-missing-dir')]) {
+    const p = mkDoc('C1: a\n', 'C1: pass\n', { cwd });
+    assert.equal(cli(['ready', p], { session: 's' }).code, 0, cwd);
+  }
+});
+
+test('a cwd line in the body is not the frontmatter cwd', () => {
+  const p = mkDoc('C1: a\n', `cwd: ${repo('nowhere')}\nC1: pass\n`);
+  assert.equal(cli(['ready', p], { session: 's' }).code, 0);
+});
+
+test('coverage reports missing IDs first (exit 4), then a stale head (exit 5)', () => {
+  const { dir, head } = gitRepo('head-coverage');
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', '', { cwd: dir })]).code, 4);
+  const stale = cli(['coverage', mkDoc('C1: a\n', 'C1: pass\n', { cwd: dir })]);
+  assert.equal(stale.code, 5);
+  assert.ok(stale.err.startsWith('stale:'), stale.err);
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: pass\n`, { cwd: dir })]).code, 0);
 });
