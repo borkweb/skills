@@ -2,7 +2,7 @@
 // Runs an architect's mutation checks in a pool of throwaway worktrees: apply one edit, run its cmd, restore, repeat.
 // Usage and the full contract: `node mutate.mjs --help`, and offload SKILL.md step 3.
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { availableParallelism, tmpdir } from 'node:os';
 import { isAbsolute, join, posix, resolve } from 'node:path';
 
@@ -100,7 +100,7 @@ function parseArgs(argv) {
 const GITP = ['-c', 'core.hooksPath=/dev/null', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', '-c', 'core.fsmonitor=false'];
 const GITENV = allowlistedEnv([]);
 
-function gitRun(dir, args, { input } = {}) {
+function gitRun(dir, args, { input, buffer } = {}) {
   return new Promise((res) => {
     const c = spawn('git', [...GITP, '-C', dir, ...args], { env: GITENV, stdio: ['pipe', 'pipe', 'pipe'] });
     const out = []; const err = [];
@@ -108,7 +108,7 @@ function gitRun(dir, args, { input } = {}) {
     c.stderr.on('data', (d) => err.push(d));
     c.stdin.on('error', () => {});
     c.on('error', (e) => res({ status: -1, stdout: '', stderr: e.message }));
-    c.on('close', (status) => res({ status, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') }));
+    c.on('close', (status) => res({ status, stdout: buffer ? Buffer.concat(out) : Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') }));
     c.stdin.end(input ?? '');
   });
 }
@@ -155,9 +155,10 @@ function validateShape(raw) {
   return raw;
 }
 
-const occurrences = (text, find) => {
+// Edits work on bytes, so a file that is not valid UTF-8 changes only where the edit lands.
+const occurrences = (buf, find) => {
   let n = 0;
-  for (let i = text.indexOf(find); i >= 0; i = text.indexOf(find, i + find.length)) n++;
+  for (let i = buf.indexOf(find); i >= 0; i = buf.indexOf(find, i + find.length)) n++;
   return n;
 };
 
@@ -172,7 +173,7 @@ async function bindToHead(repo, sha, muts) {
   }
   const blobs = new Map();
   const blob = async (p) => {
-    if (!blobs.has(p)) blobs.set(p, (await gitRun(repo, ['cat-file', 'blob', `${sha}:${p}`])).stdout);
+    if (!blobs.has(p)) blobs.set(p, (await gitRun(repo, ['cat-file', 'blob', `${sha}:${p}`], { buffer: true })).stdout);
     return blobs.get(p);
   };
   for (const m of muts) {
@@ -186,14 +187,15 @@ async function bindToHead(repo, sha, muts) {
       if (r.status !== 0) usage(`${who}: patch is not a valid unified diff`);
       if (touched.length !== 1 || touched[0] !== m.file) usage(`${who}: patch must touch exactly ${m.file}`);
     } else {
-      const n = occurrences(await blob(m.file), m.find);
+      const n = occurrences(await blob(m.file), Buffer.from(m.find));
       if (n !== 1) m.preError = n === 0 ? 'edit-not-found' : 'edit-ambiguous';
     }
-    m.tests = m.testsGiven ?? [...new Set(m.cmd.split(/\s+/).map((t) => t.replace(/^(['"])(.*)\1$/, '$2')).filter((t) => tree.has(t)))];
+    m.cmdTokens = m.cmd.split(/\s+/).map((t) => t.replace(/^(['"])(.*)\1$/, '$2'));
+    m.tests = m.testsGiven ?? [...new Set(m.cmdTokens.filter((t) => tree.has(t)))];
     const deps = new Set(m.tests);
     for (const t of m.tests) {
       if (!tree.has(t)) continue;
-      for (const [, spec] of (await blob(t)).matchAll(IMPORT_RE)) {
+      for (const [, spec] of (await blob(t)).toString('utf8').matchAll(IMPORT_RE)) {
         const p = posix.normalize(posix.join(posix.dirname(t), spec));
         const hit = [p, `${p}.mjs`, `${p}.js`, `${p}.cjs`, `${p}.json`, `${p}/index.js`].find((c) => tree.has(c));
         if (hit) deps.add(hit);
@@ -230,11 +232,12 @@ async function decideCarries(repo, sha, muts, prev) {
     if (['file', 'find', 'replace', 'patch', 'cmd'].some((k) => p[k] !== m[k])) continue;
     if (!/^[0-9a-f]{40}$/.test(p.head ?? '')) continue;
     if ((await gitRun(repo, ['merge-base', '--is-ancestor', p.head, sha])).status !== 0) continue;
+    const old = await treeAt(p.head);
+    const mine = m.testsGiven ?? m.cmdTokens.filter((t) => old.has(t));
+    if (mine.length === 0) continue;
     const tests = [...new Set([...(p.tests ?? []), ...m.tests])];
-    if (tests.length === 0) continue;
     const deps = [...new Set([...(p.deps ?? []), ...m.deps])];
     const paths = [m.file, ...deps];
-    const old = await treeAt(p.head);
     if (!paths.every((x) => old.has(x))) continue;
     const changed = await changedSince(p.head);
     if (paths.some((x) => changed.has(x))) continue;
@@ -246,6 +249,23 @@ async function decideCarries(repo, sha, muts, prev) {
 // ---- running commands -------------------------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A read-only directory a command left behind makes rmSync throw. Make the tree writable (directories get u+rwx,
+// files u+w, so git sees no mode change) and try again. Returns whether the path is gone.
+function makeWritable(p) {
+  try {
+    const st = lstatSync(p);
+    if (st.isSymbolicLink()) return;
+    chmodSync(p, st.mode | (st.isDirectory() ? 0o700 : 0o200));
+    if (st.isDirectory()) for (const e of readdirSync(p)) makeWritable(join(p, e));
+  } catch { /* gone or not ours */ }
+}
+function forceRm(path) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { rmSync(path, { recursive: true, force: true }); return true; } catch { makeWritable(path); }
+  }
+  return !existsSync(path);
+}
 const live = new Set();
 const created = [];
 let poolRoot = null;
@@ -286,7 +306,7 @@ function runCommand(cmd, cwd, logFile, limitSec) {
       done = true;
       clearTimeout(timer); clearTimeout(escalate);
       if (child && child.pid) live.delete(child.pid);
-      rmSync(tmp, { recursive: true, force: true });
+      forceRm(tmp);
       res({ ms: Date.now() - started, timedOut, ...r });
     };
     try {
@@ -335,14 +355,16 @@ function cleanup(repoRoot) {
   for (const pid of live) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }
   const left = [];
   for (const w of created) {
-    const r = spawnSync('git', [...GITP, '-C', repoRoot, 'worktree', 'remove', '--force', w.path], { env: GITENV, stdio: 'ignore' });
-    if (r.status !== 0) {
-      rmSync(w.path, { recursive: true, force: true });
-      if (w.admin) rmSync(w.admin, { recursive: true, force: true });
-    }
+    try {
+      const r = spawnSync('git', [...GITP, '-C', repoRoot, 'worktree', 'remove', '--force', w.path], { env: GITENV, stdio: 'ignore' });
+      if (r.status !== 0) {
+        forceRm(w.path);
+        if (w.admin) forceRm(w.admin);
+      }
+    } catch { /* report below */ }
     for (const p of [w.path, w.admin]) if (p && existsSync(p)) left.push(p);
   }
-  if (poolRoot) rmSync(poolRoot, { recursive: true, force: true });
+  if (poolRoot) forceRm(poolRoot);
   if (poolRoot && existsSync(poolRoot)) left.push(poolRoot);
   for (const p of left) console.error(`mutate: left behind: ${p}`);
 }
@@ -418,7 +440,7 @@ async function main() {
   process.stdout.write(`Head: ${sha}\nLogs: ${logs}\nPool: ${poolSize}\n${prev ? `Since: ${prev.head}\n` : ''}`);
 
   const limit = opt.timeout;
-  const snapshotOf = async (w) => await gitOk(w.path, ['status', '--porcelain', '--ignored', '-z']);
+  const snapshotOf = async (w) => await gitOk(w.path, ['status', '--porcelain', '--ignored', '--untracked-files=normal', '-z']);
   const runSetup = (w, suffix = '') => runCommand(opt.setup, w.path, join(logs, `setup-${w.n}${suffix}.log`), limit);
 
   if (poolSize > 0 && opt.setup) {
@@ -426,7 +448,7 @@ async function main() {
     const bad = out.find(([, s]) => !green(s));
     if (bad) {
       const [w, s] = bad;
-      const token = s.spawnFailed ? 'spawn-failed' : s.timedOut ? 'timeout' : s.signal ? 'signal' : 'setup-failed';
+      const token = s.timedOut ? 'timeout' : 'setup-failed';
       errorAll(runnable, token, { exit: s.code ?? null, log: join(logs, `setup-${w.n}.log`) });
       runnable.length = 0;
     }
@@ -456,11 +478,15 @@ async function main() {
   };
 
   const restore = async (w) => {
-    await gitOk(w.path, ['reset', '--hard', '--quiet', sha]);
-    await gitOk(w.path, ['clean', '-ffdq']);
+    const step = async (args) => (await gitRun(w.path, args)).status === 0;
+    if (!(await step(['reset', '--hard', '--quiet', sha]))) return false;
+    if (!(await step(['clean', '-ffdq']))) {
+      makeWritable(w.path);
+      if (!(await step(['clean', '-ffdq']))) return false;
+    }
     const keep = new Set(w.snapshot.split('\0'));
     for (const rec of (await snapshotOf(w)).split('\0')) {
-      if (rec.startsWith('!! ') && !keep.has(rec)) rmSync(join(w.path, rec.slice(3)), { recursive: true, force: true });
+      if (rec.startsWith('!! ') && !keep.has(rec)) forceRm(join(w.path, rec.slice(3)));
     }
     if ((await snapshotOf(w)) === w.snapshot) return true;
     if (!opt.setup) return false;
@@ -487,10 +513,11 @@ async function main() {
       if (r.status !== 0) edit = ['patch-failed', r.stderr];
     } else {
       const p = join(w.path, m.file);
-      const text = readFileSync(p, 'utf8');
-      const i = text.indexOf(m.find);
+      const buf = readFileSync(p);
+      const find = Buffer.from(m.find);
+      const i = buf.indexOf(find);
       if (i < 0) edit = ['edit-not-found', `${m.find} not found in ${m.file}`];
-      else writeFileSync(p, text.slice(0, i) + m.replace + text.slice(i + m.find.length));
+      else writeFileSync(p, Buffer.concat([buf.subarray(0, i), Buffer.from(m.replace), buf.subarray(i + find.length)]));
     }
     let outcome;
     if (edit) {

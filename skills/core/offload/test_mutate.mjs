@@ -1,7 +1,7 @@
 // Tests for mutate.mjs. Every case drives the CLI the way the architect does, against a fixture repo in TMPDIR.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, chmodSync, symlinkSync, realpathSync, statSync } from 'node:fs';
 import { tmpdir, availableParallelism } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -508,14 +508,17 @@ test('C8a: with jobs 3 three mutations run at the same time', { timeout: 60000 }
     'grep -q alpha src/a.txt && exit 0',
     `D=${bar}`,
     'touch "$D/$1"',
-    'i=0',
-    'while [ "$(ls "$D" | wc -l)" -lt 3 ] && [ "$i" -lt 200 ]; do sleep 0.05; i=$((i + 1)); done',
+    'end=$(( $(date +%s) + 3 ))',
+    'while [ "$(ls "$D" | wc -l)" -lt 3 ] && [ "$(date +%s)" -lt "$end" ]; do sleep 0.05; done',
     'if [ "$(ls "$D" | wc -l)" -ge 3 ]; then exit 1; fi',
     'exit 0',
   ].join('\n');
   const dir = repo({ 'gate.sh': gate });
   const r = await go(dir, ['a', 'b', 'c'].map((x) => mk(x, 'alpha', { cmd: `sh gate.sh ${x}` })), ['--jobs', '3']);
-  for (const x of ['a', 'b', 'c']) assert.equal(r.results[x].status, 'killed', x);
+  for (const x of ['a', 'b', 'c']) {
+    assert.equal(r.results[x].status, 'killed', x);
+    assert.equal(r.results[x].timeout, false, `${x} was killed by the runner's timeout, not by the barrier`);
+  }
 });
 
 test('C8b: serial runs one command at a time', { timeout: 60000 }, async () => {
@@ -992,10 +995,97 @@ test('C13f: a replacement with dollar patterns is inserted byte for byte', async
   assert.equal(r.results.d.status, 'killed');
 });
 
+// ---- crash and leak paths, byte-exact edits, carry eligibility --------------------------------------------------
+
+const unlock = (dir) => { spawnSync('chmod', ['-R', 'u+w', dir]); };
+
+test('C26a: a read-only directory left in a command TMPDIR does not stop the run or its cleanup', async () => {
+  const dir = repo();
+  const before = wtList(dir);
+  const tmp = scratch('rtmp');
+  try {
+    const cmd = 'if grep -q alpha src/a.txt; then exit 0; fi; mkdir "$TMPDIR/ro"; touch "$TMPDIR/ro/f"; chmod 500 "$TMPDIR/ro"; exit 1';
+    const r = await go(dir, [mk('a', 'alpha', { cmd })], [], { tmp });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.results.a.status, 'killed');
+    assert.ok(existsSync(r.resultsFile), 'results.json written');
+    assert.equal(wtList(dir), before);
+    assert.deepEqual(readdirSync(tmp), [], 'the pool temp root is gone');
+  } finally {
+    unlock(tmp);
+  }
+});
+
+test('C26b: a read-only directory left in a worktree does not crash the run and cleanup removes every worktree', async () => {
+  const dir = repo();
+  const before = wtList(dir);
+  const tmp = scratch('rtmp');
+  try {
+    const m1 = mk('m1', 'alpha', { cmd: 'if grep -q alpha src/a.txt; then exit 0; fi; mkdir ro; touch ro/f; chmod 500 ro; exit 1' });
+    const r = await go(dir, [m1, mk('m2', 'beta')], ['--jobs', '1'], { tmp });
+    assert.notEqual(r.status, 3, r.stderr);
+    assert.deepEqual(r.order, ['m1', 'm2'], 'a result line for both mutations');
+    assert.ok(r.results.m1.status === 'killed' || (r.results.m1.status === 'error' && r.results.m1.token === 'restore-failed'));
+    assert.equal(wtList(dir), before);
+  } finally {
+    unlock(tmp);
+  }
+});
+
+test('C27: the restore snapshot ignores status.showUntrackedFiles', async () => {
+  const dir = repo();
+  git(dir, 'config', 'status.showUntrackedFiles', 'no');
+  const gate = (w) => `test -d deps || exit 0; sh t/c_${w}.sh`;
+  const r = await go(dir, [mk('m1', 'alpha', { cmd: gate('alpha') }), mk('m2', 'beta', { cmd: gate('beta') })], ['--jobs', '1', '--setup', 'mkdir -p deps; touch deps/x']);
+  assert.equal(r.results.m1.status, 'killed');
+  assert.equal(r.results.m2.status, 'killed');
+});
+
+test('C28: a git failure during restore is error restore-failed and the run continues', async () => {
+  const dir = repo();
+  const before = wtList(dir);
+  const poison = mk('m1', 'alpha', { cmd: 'if grep -q alpha src/a.txt; then exit 0; fi; touch "$(git rev-parse --git-dir)/index.lock"; exit 1' });
+  const r = await go(dir, [poison, mk('m2', 'beta'), mk('m3', 'gamma', { cmd: 'sh t/c_beta.sh' })], ['--jobs', '2']);
+  assert.equal(r.status, 1, r.stderr);
+  assert.equal(r.results.m1.status, 'error');
+  assert.equal(r.results.m1.token, 'restore-failed');
+  assert.equal(r.results.m2.status, 'killed');
+  assert.equal(r.results.m3.status, 'survived');
+  assert.equal(wtList(dir), before);
+});
+
+test('C29: an edit changes only the matched bytes of a file that is not valid UTF-8', async () => {
+  const tail = Buffer.from([0xe9, 0xff, 0xfe, 0x0a]);
+  const dir = repo({ 'bin/latin.txt': Buffer.concat([Buffer.from('alpha\n'), tail]) });
+  const probe = join(scratch(), 'tail.bin');
+  writeFileSync(probe, tail);
+  const sum = execFileSync('cksum', [probe], { encoding: 'utf8' }).split(' ').slice(0, 2).join(' ');
+  const cmd = `[ "$(tail -c 4 bin/latin.txt | cksum)" = "${sum}" ] || exit 0; grep -aq alpha bin/latin.txt`;
+  const r = await go(dir, [{ id: 'b', file: 'bin/latin.txt', find: 'alpha', replace: 'ALPHA', cmd }]);
+  assert.equal(r.results.b.status, 'killed', 'the bytes after the edit were rewritten');
+});
+
+test('C30: a setup killed by a signal is error setup-failed', async () => {
+  const dir = repo();
+  const r = await go(dir, [mk('a'), mk('b', 'beta')], ['--jobs', '1', '--setup', 'kill -9 $$']);
+  for (const id of ['a', 'b']) {
+    assert.equal(r.results[id].status, 'error', id);
+    assert.equal(r.results[id].token, 'setup-failed', id);
+  }
+});
+
+test('C31: a mutation that drops its tests array and has no derivable test file reruns', async () => {
+  const dir = repo();
+  const m = mk('a', 'alpha', { cmd: "sh -c 'grep -q alpha src/a.txt'" });
+  const { r1, r2 } = await twoRounds(dir, [{ ...m, tests: ['t/c_alpha.sh'] }], () => commitFiles(dir, { README: 'readme 2\n' }), [m]);
+  assert.equal(r1.results.a.status, 'killed');
+  assert.equal(r2.results.a.status, 'killed', 'reran, not carried');
+});
+
 // ---- docs -------------------------------------------------------------------------------------------------------
 
 test('C17: every mutate flag the skill docs name is one the runner accepts', async () => {
-  const docs = ['skills/core/offload/SKILL.md', 'skills/core/offload/correctives.md', 'skills/core/complete/codex-orchestration.md', 'skills/core/do/SKILL.md', 'skills/core/do/references/briefs.md'];
+  const docs = ['skills/core/offload/SKILL.md', 'skills/core/offload/correctives.md', 'skills/core/complete/codex-orchestration.md', 'skills/core/do/SKILL.md', 'skills/core/do/references/briefs.md', 'skills/core/offload/mutations.md'];
   const flags = new Set();
   for (const d of docs) {
     for (const line of readFileSync(join(ROOT, d), 'utf8').split('\n')) {
