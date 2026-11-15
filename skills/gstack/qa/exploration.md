@@ -29,6 +29,14 @@ Use task scope/time limits to bound exploration; zero findings is valid. No mini
 6. Measure performance where relevant: timings, oversized assets, repeated requests, layout shift and responsiveness under the recorded conditions. Treat thresholds as investigation signals; severity requires a demonstrated consequence or violated requirement. Do not infer memory leaks from console output alone.
 7. Reproduce suspected issues and record concrete steps, expected/actual behavior, severity, category and evidence promptly. Use screenshot pairs for visible interactive failures and logs/traces for failures screenshots cannot show. Distinguish deterministic reproduction from intermittent observations.
 
+## Proof rules
+
+- Check each entry point separately. Never report a skipped entry point as verified through another path; list it as not tested.
+- Use the real user path. Never use test-only setters, seeds or flags to reach a state.
+- Give a mutation a read-only second view of the stored value (another page, an API read or a query), not only the screen that made the change.
+- A bug-fix check names the correct final state and the broken final state, so it can tell a fix from the old bug.
+- Never weaken the journey to make it pass. A step that fails stays failed in the report.
+
 ## Framework-specific checks (only if applicable)
 
 - Next.js: hydration, client navigation and actual data requests for the installed version.
