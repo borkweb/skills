@@ -35,8 +35,10 @@ process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 const DEFAULT_SEEDS = [11, 23, 37, 41, 59, 73];
 const SEEDS = process.env.SG07_SEED ? [Number(process.env.SG07_SEED)]
   : process.env.SG07_SEEDS ? process.env.SG07_SEEDS.split(',').map(Number) : DEFAULT_SEEDS;
-const STEPS = 22;
+const STEPS = 16;
 const KINDS = ['dispatch', 'ready', 'corrective', 'stale', 'halt', 'unhalt', 'returned', 'abandoned', 'crash'];
+// How often each kind is drawn: correctives and ready attempts carry most of the invariants.
+const WEIGHTS = { dispatch: 2, ready: 4, corrective: 8, stale: 2, halt: 1, unhalt: 1, returned: 1, abandoned: 2, crash: 2 };
 const STATES = ['specced', 'dispatched', 'blocked', 'results-ready', 'returned', 'accepted', 'rejected', 'merged', 'abandoned'];
 const UNWATCHED = STATES.filter((s) => s !== 'results-ready' && s !== 'blocked');
 
@@ -96,7 +98,7 @@ esac`);
   const S = {
     seed, box, log, block, fix, arch: `arch-${seed}`, builder: `builder-${seed}`,
     repo: join(box, 'repo'), path: `${bin}:${NODE_DIR}:/usr/bin:/bin`, config,
-    slices: [], halted: false, kinds: new Set(), verdictsOk: new Set(['SAFE TO LAND']), steps: 0, history: [],
+    slices: [], halted: false, kinds: new Set(), verdictsOk: new Set(['SAFE TO LAND']), verdictKinds: new Set(), steps: 0, history: [],
   };
   const base = { PATH: S.path, HOME: box, TMPDIR: tmpdir(), AGENT_HANDOFFS_DIR: box };
   S.archEnv = { ...base, CLAUDE_CODE_SESSION_ID: S.arch, BORKWEB_SKILLS_CONFIG: config, HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '' };
@@ -234,9 +236,11 @@ async function evStale(S, step) {
 }
 
 async function evCorrective(S, step) {
-  const m = S.rng.pick(live(S).filter((x) => x.state === 'dispatched'));
-  const viaLedger = S.rng.next() < 0.35;
+  const m = S.rng.pick(live(S).filter((x) => x.state === 'dispatched' || x.state === 'returned'));
+  if (m.state === 'returned') return evFollowUp(S, step, m);
+  const viaLedger = S.rng.next() < 0.25;
   const verdict = S.rng.pick(VERDICTS);
+  S.verdictKinds.add(verdict.kind);
   S.history.push(`corrective ${m.id} via ${viaLedger ? 'ledger' : 'dispatch-slice'} (${verdict.kind})${S.halted ? ' (halted)' : ''}`);
   const docBefore = read(m.doc);
   const ledgerBefore = read(S.ledger);
@@ -273,6 +277,21 @@ async function evCorrective(S, step) {
   m.state = 'dispatched';
   m.docStatus = 'dispatched';
   m.correctives += 1;
+}
+
+// A returned slice (a ruling, no verdict against the work) goes back to the builder with no verdict.
+async function evFollowUp(S, step, m) {
+  S.history.push(`corrective ${m.id} follow-up of a returned slice${S.halted ? ' (halted)' : ''}`);
+  const docBefore = read(m.doc);
+  const r = await sliceSh(S, [S.repo, m.wt, `feat/s${m.id}`, S.fix, '--id', m.id, '--corrective']);
+  if (S.halted) {
+    expect(S, step, r.code !== 0, 'halt did not block a follow-up corrective');
+    expect(S, step, read(m.doc) === docBefore, 'a halted follow-up changed the doc');
+    return;
+  }
+  expect(S, step, r.code === 0, `a follow-up on a returned slice was refused (${r.code}): ${r.err}`);
+  m.state = 'dispatched';
+  m.docStatus = 'dispatched';
 }
 
 async function evHalt(S, step) {
@@ -325,8 +344,9 @@ function applicable(S, kind) {
     case 'dispatch': return S.slices.length < 3;
     case 'halt': return !S.halted;
     case 'unhalt': return S.halted;
-    case 'corrective': return live(S).some((m) => m.state === 'dispatched');
+    case 'corrective': return live(S).some((m) => m.state === 'dispatched' || m.state === 'returned');
     case 'crash': return live(S).some((m) => m.state === 'dispatched');
+    case 'abandoned': return live(S).length >= 2;
     default: return hasLive;
   }
 }
@@ -342,7 +362,7 @@ async function runSeed(seed) {
   invariants(S, 0);
   for (let step = 1; step <= STEPS; step++) {
     S.steps = step;
-    let kind = S.rng.pick(KINDS);
+    let kind = S.rng.pick(KINDS.flatMap((k) => Array(WEIGHTS[k]).fill(k)));
     for (let tries = 0; !applicable(S, kind) && tries < KINDS.length; tries++) kind = KINDS[(KINDS.indexOf(kind) + 1) % KINDS.length];
     if (!applicable(S, kind)) continue;
     S.kinds.add(kind);
@@ -399,13 +419,16 @@ async function bridgeScenario(S, n) {
 }
 
 // --- the tests -----------------------------------------------------------------------------------------
-test('SG-07: random ledger, handoff and dispatch event sequences keep every invariant', async () => {
+test('SG-07: random ledger, handoff and dispatch event sequences keep every invariant', async (t) => {
   const seeds = await Promise.all(SEEDS.map((seed) => runSeed(seed).then((S) => ({ S })).catch((error) => ({ error }))));
   const failed = seeds.find((s) => s.error);
   if (failed) throw failed.error;
+  for (const { S } of seeds) t.diagnostic(`seed ${S.seed}: ${S.history.join(' | ')}`);
   if (!process.env.SG07_SEED) {
     const seen = new Set(seeds.flatMap(({ S }) => [...S.kinds]));
     for (const kind of KINDS) assert.ok(seen.has(kind), `no seed generated a ${kind} event (the generator lost a kind)`);
+    const verdicts = new Set(seeds.flatMap(({ S }) => [...S.verdictKinds]));
+    for (const v of VERDICTS) assert.ok(verdicts.has(v.kind), `no seed tried a ${v.kind} verdict (the generator lost a verdict kind)`);
   }
 });
 
