@@ -39,8 +39,8 @@ For each batch of descriptive facts, spawn an isolated sub-agent without inherit
 You are reviewing the codebase at <REPO_PATH> to test what facts are easily
 discoverable from code alone — without any documentation.
 
-IMPORTANT: Do NOT read or search inside these files, as they are the
-documentation being audited:
+Do not read or search inside these files. They are the documentation being
+audited:
 <list of instruction file paths to exclude>
 
 For EACH question below, try to answer using code searches (grep, glob,
@@ -104,7 +104,7 @@ Rewrite each instruction file with only the surviving facts. Principles:
 ## Tips
 
 - For monorepos with multiple instruction files, test each file separately — a fact might be discoverable in one subproject's context but not another's
-- Facts about *conventions* (naming rules, branch patterns) are usually NOT discoverable even if examples exist in git history — keep them
+- Facts about *conventions* (naming rules, branch patterns) are usually not discoverable even if examples exist in git history — keep them
 - Facts about *auth mechanisms* are often buried in middleware — usually worth keeping
 - Facts about *known gotchas* (e.g., "use --forceExit," "don't mock the DB") are almost never discoverable — keep them
 - Facts about *file locations* ("tests live in __tests__/") are often easily discoverable from directory structure — good candidates for removal
