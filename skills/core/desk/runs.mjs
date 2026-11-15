@@ -535,7 +535,7 @@ function readMessage(o) {
 const ESCAPE_KINDS = ['revert', 'fix-forward', 'review-defect', 'post-merge-ci'];
 const ESCAPE_REF_RE = /^(?:[0-9a-f]{7,64}|https?:\/\/\S+)$/i;
 const ESCAPE_USAGE = `usage: runs.mjs escape <run> --kind <${ESCAPE_KINDS.join('|')}> --ref <7-64 hex sha | http(s) url> [--note <text> | --note-file <file>]`;
-const escapeListOk = (rec) => Array.isArray(rec.escapes) && rec.escapes.every((e) => e && typeof e === 'object' && typeof e.kind === 'string' && typeof e.ref === 'string');
+const escapeListOk = (rec) => Array.isArray(rec.escapes) && rec.escapes.every((e) => e && typeof e === 'object' && typeof e.kind === 'string' && typeof e.ref === 'string' && typeof e.at === 'string' && (e.note === null || typeof e.note === 'string'));
 
 // An escape is an annotation on a finished run, so it is allowed in every state and changes none of the
 // signal fields: an armed wait never fires for it. A duplicate (kind, ref) is a no-op.

@@ -142,7 +142,7 @@ test('C5l C5m a record without escapes reads as empty: show, show --json and lis
 });
 
 test('C19 a malformed escapes value warns in one line, prints the record and exits 0; list still works', () => {
-  for (const bad of ['x', [null], [{ kind: 'revert' }], { a: 1 }]) {
+  for (const bad of ['x', [null], [{ kind: 'revert' }], [{ kind: 'revert', ref: 'abc1234' }], [{ kind: 'revert', ref: 'abc1234', at: 'x', note: 5 }], { a: 1 }]) {
     const { id, dir } = mkRun(b);
     const good = mkRun(b);
     writeRec(dir, { escapes: bad });
