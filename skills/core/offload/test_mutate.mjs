@@ -1090,6 +1090,25 @@ test('C32: a mutation whose cmd test file was deleted since its recorded head re
   assert.notEqual(r2.results.a.status, 'carried', 'the test file the cmd names is gone');
 });
 
+test('C34a: a cmd with leading or trailing whitespace still carries when nothing it names changed', async () => {
+  const dir = repo();
+  const counter = join(scratch(), 'count');
+  const muts = [mk('a', 'alpha', { cmd: ` ${COUNTED(counter)} ` }), mk('b', 'alpha', { cmd: `${COUNTED(`${counter}.b`)}\n` })];
+  const { r1, r2 } = await twoRounds(dir, muts, () => commitFiles(dir, { README: 'readme 2\n' }));
+  assert.equal(r1.results.a.status, 'killed');
+  assert.equal(r1.results.b.status, 'killed');
+  assert.equal(r2.results.a.status, 'carried');
+  assert.equal(r2.results.b.status, 'carried');
+});
+
+test('C34b: a whitespace-padded cmd with no derivable test file reruns', async () => {
+  const dir = repo();
+  const m = mk('a', 'alpha', { cmd: " sh -c 'grep -q alpha src/a.txt' " });
+  const { r1, r2 } = await twoRounds(dir, [{ ...m, tests: ['t/c_alpha.sh'] }], () => commitFiles(dir, { README: 'readme 2\n' }), [m]);
+  assert.equal(r1.results.a.status, 'killed');
+  assert.equal(r2.results.a.status, 'killed', 'reran, not carried');
+});
+
 test('C33: forceRm never changes the mode of a hard-linked file outside the run', async () => {
   const dir = repo();
   const outside = join(scratch('outside'), 'file.txt');

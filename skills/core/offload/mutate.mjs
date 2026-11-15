@@ -201,7 +201,7 @@ async function bindToHead(repo, sha, muts) {
       const n = occurrences(await blob(m.file), Buffer.from(m.find));
       if (n !== 1) m.preError = n === 0 ? 'edit-not-found' : 'edit-ambiguous';
     }
-    m.cmdTokens = m.cmd.split(/\s+/).map((t) => t.replace(/^(['"])(.*)\1$/, '$2'));
+    m.cmdTokens = m.cmd.trim().split(/\s+/).map((t) => t.replace(/^(['"])(.*)\1$/, '$2'));
     m.tests = m.testsGiven ?? [...new Set(m.cmdTokens.filter((t) => tree.has(t)))];
     const deps = new Set(m.tests);
     for (const t of m.tests) {
@@ -226,11 +226,11 @@ async function decideCarries(repo, sha, muts, prev) {
   const trees = new Map();
   const diffs = new Map();
   const treeAt = async (h) => {
-    if (!trees.has(h)) trees.set(h, new Set((await gitRun(repo, ['ls-tree', '-r', '--name-only', '-z', h])).stdout.split('\0')));
+    if (!trees.has(h)) trees.set(h, new Set((await gitRun(repo, ['ls-tree', '-r', '--name-only', '-z', h])).stdout.split('\0').filter(Boolean)));
     return trees.get(h);
   };
   const changedSince = async (h) => {
-    if (!diffs.has(h)) diffs.set(h, new Set((await gitRun(repo, ['diff', '--no-renames', '--name-only', '-z', `${h}..${sha}`])).stdout.split('\0')));
+    if (!diffs.has(h)) diffs.set(h, new Set((await gitRun(repo, ['diff', '--no-renames', '--name-only', '-z', `${h}..${sha}`])).stdout.split('\0').filter(Boolean)));
     return diffs.get(h);
   };
   for (const m of muts) {
