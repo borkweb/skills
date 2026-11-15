@@ -164,6 +164,17 @@ const occurrences = (buf, find) => {
 
 const IMPORT_RE = /(?:from|import|require)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g;
 
+// The files a test file imports by a static relative import, one level, that `has` says are tracked.
+function importsOf(text, testPath, has) {
+  const found = [];
+  for (const [, spec] of text.matchAll(IMPORT_RE)) {
+    const p = posix.normalize(posix.join(posix.dirname(testPath), spec));
+    const hit = [p, `${p}.mjs`, `${p}.js`, `${p}.cjs`, `${p}.json`, `${p}/index.js`].find((c) => has(c));
+    if (hit) found.push(hit);
+  }
+  return found;
+}
+
 // Everything that needs the head's tree: file modes, edit validation, and each mutation's test and dependency set.
 async function bindToHead(repo, sha, muts) {
   const tree = new Map();
@@ -195,11 +206,7 @@ async function bindToHead(repo, sha, muts) {
     const deps = new Set(m.tests);
     for (const t of m.tests) {
       if (!tree.has(t)) continue;
-      for (const [, spec] of (await blob(t)).toString('utf8').matchAll(IMPORT_RE)) {
-        const p = posix.normalize(posix.join(posix.dirname(t), spec));
-        const hit = [p, `${p}.mjs`, `${p}.js`, `${p}.cjs`, `${p}.json`, `${p}/index.js`].find((c) => tree.has(c));
-        if (hit) deps.add(hit);
-      }
+      for (const d of importsOf((await blob(t)).toString('utf8'), t, (c) => tree.has(c))) deps.add(d);
     }
     m.deps = [...deps];
   }
@@ -237,7 +244,13 @@ async function decideCarries(repo, sha, muts, prev) {
     if (mine.length === 0) continue;
     const tests = [...new Set([...(p.tests ?? []), ...m.tests])];
     const deps = [...new Set([...(p.deps ?? []), ...m.deps])];
-    const paths = [m.file, ...deps];
+    const mineDeps = new Set(mine);
+    for (const t of mine) {
+      if (!old.has(t)) continue;
+      const text = (await gitRun(repo, ['cat-file', 'blob', `${p.head}:${t}`], { buffer: true })).stdout.toString('utf8');
+      for (const d of importsOf(text, t, (c) => old.has(c))) mineDeps.add(d);
+    }
+    const paths = [m.file, ...deps, ...mineDeps];
     if (!paths.every((x) => old.has(x))) continue;
     const changed = await changedSince(p.head);
     if (paths.some((x) => changed.has(x))) continue;
@@ -250,14 +263,15 @@ async function decideCarries(repo, sha, muts, prev) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// A read-only directory a command left behind makes rmSync throw. Make the tree writable (directories get u+rwx,
-// files u+w, so git sees no mode change) and try again. Returns whether the path is gone.
+// A read-only directory a command left behind makes rmSync throw. Make the directories writable and try again.
+// Unlinking a file needs write permission on its parent only, and a directory has no hard links, so no file outside
+// the run changes mode. Returns whether the path is gone.
 function makeWritable(p) {
   try {
     const st = lstatSync(p);
-    if (st.isSymbolicLink()) return;
-    chmodSync(p, st.mode | (st.isDirectory() ? 0o700 : 0o200));
-    if (st.isDirectory()) for (const e of readdirSync(p)) makeWritable(join(p, e));
+    if (!st.isDirectory()) return;
+    chmodSync(p, st.mode | 0o700);
+    for (const e of readdirSync(p)) makeWritable(join(p, e));
   } catch { /* gone or not ours */ }
 }
 function forceRm(path) {
@@ -477,7 +491,7 @@ async function main() {
     return mutQ.length > 0 && runningBaselines > 0 ? 'wait' : null;
   };
 
-  const restore = async (w) => {
+  const restoreWorktree = async (w) => {
     const step = async (args) => (await gitRun(w.path, args)).status === 0;
     if (!(await step(['reset', '--hard', '--quiet', sha]))) return false;
     if (!(await step(['clean', '-ffdq']))) {
@@ -492,6 +506,10 @@ async function main() {
     if (!opt.setup) return false;
     if (!green(await runSetup(w, '-rerun'))) return false;
     return (await snapshotOf(w)) === w.snapshot;
+  };
+  // Any failure while restoring, a throw included, retires the worktree and makes its mutation error restore-failed.
+  const restore = async (w) => {
+    try { return await restoreWorktree(w); } catch { return false; }
   };
 
   const classifyBaseline = (b, r, cmd) => {

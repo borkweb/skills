@@ -1082,6 +1082,31 @@ test('C31: a mutation that drops its tests array and has no derivable test file 
   assert.equal(r2.results.a.status, 'killed', 'reran, not carried');
 });
 
+test('C32: a mutation whose cmd test file was deleted since its recorded head reruns', async () => {
+  const dir = repo({ 't/x.sh': 'grep -q alpha src/a.txt\n', 't/y.sh': 'grep -q alpha src/a.txt\n' });
+  const m = mk('a', 'alpha', { cmd: 'sh t/y.sh' });
+  const { r1, r2 } = await twoRounds(dir, [{ ...m, tests: ['t/x.sh'] }], () => { git(dir, 'rm', '-q', 't/y.sh'); git(dir, 'commit', '-q', '-m', 'delete the cmd test'); return head(dir); }, [m]);
+  assert.equal(r1.results.a.status, 'killed');
+  assert.notEqual(r2.results.a.status, 'carried', 'the test file the cmd names is gone');
+});
+
+test('C33: forceRm never changes the mode of a hard-linked file outside the run', async () => {
+  const dir = repo();
+  const outside = join(scratch('outside'), 'file.txt');
+  writeFileSync(outside, 'x');
+  chmodSync(outside, 0o444);
+  const tmp = scratch('rtmp');
+  try {
+    const cmd = `if grep -q alpha src/a.txt; then exit 0; fi; mkdir "$TMPDIR/ro"; ln ${outside} "$TMPDIR/ro/f"; chmod 500 "$TMPDIR/ro"; exit 1`;
+    const r = await go(dir, [mk('a', 'alpha', { cmd })], [], { tmp });
+    assert.equal(r.results.a.status, 'killed', r.stderr);
+    assert.equal(statSync(outside).mode & 0o777, 0o444, 'the outside file kept its mode');
+  } finally {
+    chmodSync(outside, 0o644);
+    unlock(tmp);
+  }
+});
+
 // ---- docs -------------------------------------------------------------------------------------------------------
 
 test('C17: every mutate flag the skill docs name is one the runner accepts', async () => {
