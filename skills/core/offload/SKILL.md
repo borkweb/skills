@@ -58,8 +58,7 @@ The external bridge supports native Claude and Codex architect identities. `hand
 - A slice is acceptable only when raw gates pass and `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.
 - The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
-- Resolve `$HANDOFF` each turn and edit only your own doc, through `section`. A
-  `refusing:`/ownership error means the wrong document: surface it, never `--steal`.
+- A `refusing:`/ownership error means the wrong document: surface it, never `--steal`.
 - Read [gotchas.md](gotchas.md) before a slice that pushes, adds tools other agents run, or runs gates on a remote sandbox.
 
 ## The ledger
@@ -87,7 +86,7 @@ one). Use the run directory `do` or `complete` created. When `offload` runs on i
 own, create one with `runs.mjs init --repo "$PWD" --goal "<goal>"` (`skills/core/desk/runs.mjs`, found
 beside the loaded `desk` skill): it makes
 `~/.agent-handoffs/runs/<YYYY-MM-DD>-<slug>-<4 random chars>/` (mode 700) and
-writes its `run.json`, so a standalone offload run is a recorded run too. Record
+writes its `run.json`, Record
 the path under *Decisions + why* and pass `--run-dir <run dir>` on the first
 `dispatch-slice.sh` call, which links it to the ledger it creates (`ledger init
 --run-dir` does the same when you open the ledger yourself). Without `--run-dir`
@@ -97,8 +96,8 @@ pass ([dreaming.md](../do/references/dreaming.md)) reads across runs.
 Builders, reviewers and the architect do not curate memory during a run: no
 "record what you learned" step, and no edits to `review-criteria.md`, briefs or
 skills from inside a run. They leave structured evidence (verdicts with tags, the
-review files above, `decisions.md`). Only the dreaming pass, run on its own with
-the user approving each change, turns that evidence into criteria.
+review files above, `decisions.md`); only the dreaming pass, run on its own with
+the user approving each change, turns it into criteria.
 
 ## Resolve the builder harness
 
@@ -110,12 +109,8 @@ the user approving each change, turns that evidence into criteria.
   demoted, missing binaries skipped. `dispatch-slice.sh` runs it for you at
   launch and prints the chosen harness and any demotion/skip notes; relay those
   to the user. Run `select` yourself only to answer a question before launching.
-- **Exit 3 (`missing-config`) means the config doesn't exist yet.** Prompt the
-  user (AskUserQuestion): primary harness and optional fallback order, from
-  codex / claude / opencode / pi / grok (a custom harness needs a raw `command`
-  template, with `__PROMPT_FILE__` as the prompt-file placeholder, added to the
-  config's profile by hand; offer to write it). Then persist the answer:
-  `node "<…>/harness.mjs" init --use <primary,fallback,...>` and re-run `select`.
+- **Exit 3 (`missing-config`) means the config doesn't exist yet.** Read
+  [launch-options.md](launch-options.md) and set it up with the user.
 - Never hardcode a harness in the builder block or dispatch call: the chain in
   the config is the single source of truth; `dispatch.sh` consumes it directly.
 
@@ -166,12 +161,10 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    **independent acceptance check**, giving the reviewer the frozen gates and the
    spec reviewer's criteria so it grades the same bar the builder was given, and at
    the same time **spot-check:** re-run any gate you doubt via its reproduce
-   command (you have Bash). A failed spot-check fails the slice: stop or discard that
+   command. A failed spot-check fails the slice: stop or discard that
    review and send the failure back. A **DO NOT LAND** verdict fails the slice no
-   matter how the gates read, but only for a blocker that carries a red command or
-   quotes a shipped line the change made false (missing required evidence, an unmet
-   frozen criterion, a merge conflict, security findings, data loss and uncapped
-   spend need neither); spec one corrective slice carrying every such blocker.
+   matter how the gates read, when its blocker meets the proof rule (correctives.md
+   *Judge a rejection*); spec one corrective slice carrying every such blocker.
    Read [correctives.md](correctives.md) before you spec, dispatch, judge or accept a corrective (`dispatch-slice.sh … --corrective`), or judge a rejection:
    it holds the proof rule, the two-miss stop, the round cap, send-backs, the
    scope of reruns and the delta review. Before you accept a slice that had a
@@ -179,8 +172,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    caveats and rule (proceed or correct). This is your own gate, separate from the
    builder's internal reviewer agent. Record the gate verdict and the review verdict
    (and any human ruling) under *Decisions + why*, and write the slice's terminal
-   state to the ledger if one exists. Never let the builder's prose set the verdict:
-   *Work summary* is uncontrolled text that goes stale. For each blocker of a DO NOT
+   state to the ledger if one exists. For each blocker of a DO NOT
    LAND after green gates, record whether a frozen criterion named it (the builder
    missed it; cite the number) or none did (the spec review in step 4 missed it).
    Put the same tag in the ledger `--verdict` text (`named C5`, `unnamed`), so
@@ -237,12 +229,9 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    to mark: correctives.md *Local gates*). Freezing by hand first is allowed when the
    IDs match. The builder brief carries the same criteria.
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
-6. **Emit the builder block** (below) to a file and run `dispatch-slice.sh`
-   (Dispatch, below). It writes *Next slice*, freezes the block's criterion lines
-   into *Frozen gates*, creates or reuses the worktree, registers the ledger row
-   when a ledger exists, launches through `dispatch.sh`, sets `status: dispatched`,
-   records the verified pane and prints the bridge command. A failed launch leaves
-   the slice `specced`, puts *Frozen gates* back as it was, and nothing is running.
+6. **Emit the builder block** (below) to a file and run `dispatch-slice.sh` (Dispatch,
+   below). A failed launch leaves the slice `specced`, puts *Frozen gates* back as it was,
+   and nothing is running.
 7. **Report.** When the slice is accepted or the run stops, give the verdict, gate
    results and a delivery line. A standalone `offload` run also sets its final state
    in `run.json` with `runs.mjs set <run> --state <s> --summary "<line>" --delivery
@@ -253,7 +242,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 
 ## Builder brief
 
-Read [builder-template.md](builder-template.md) when preparing a slice. Fill it, save it under Next slice, and dispatch within existing authorization. Do not regenerate or print a full builder block on a supervision-only turn. Mark dispatched and record the returned pane only after the launcher succeeds.
+Read [builder-template.md](builder-template.md) when preparing a slice. Fill it and save it under Next slice. Do not regenerate or print a full builder block on a supervision-only turn. Mark dispatched and record the returned pane only after the launcher succeeds.
 
 ## Dispatch
 
@@ -262,10 +251,10 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
 2. Run, in one call per slice (several slices may share one Bash call):
-   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>] [--run-dir <abs>]`;
-   pass `--run-dir <run dir>` on the first call of a run.
+   `bash "<…>/skills/core/offload/dispatch-slice.sh" "$PWD" "<worktree>" "<branch>" "$f.md" [--id <n>] [--title "<t>"] [--base <ref>] [--run-dir <abs>]`.
    It resolves your session key, creates the worktree from `--base` (default
-   HEAD) or reuses one you pre-warmed, inits the slice handoff, freezes the
+   HEAD; pass the branch the slice was cut from, never the slice's own branch: judging.md says
+   why) or reuses one you pre-warmed, inits the slice handoff, freezes the
    block's ID-first criterion lines into *Frozen gates* (a fresh dispatch only; step 4
    has the refusals), writes *Next
    slice*, opens the ledger when the session has none (goal: `--title`, else the
@@ -283,13 +272,11 @@ Launch within existing authorization. Ask only if the actual permission relaxati
    wait bridge for that slice, with `WFR_BOARD_CWD` set so the wake carries the
    board. Nothing else wakes you.
 4. Relay the launcher's line (herdr tab / tmux window / Terminal / headless) so the
-   user knows where to watch. It names the tab, workspace and root pane, so quote
-   the tab id, not just the pane. Inside a herdr TUI the builder lands in a new
-   `builder` tab in **this session's workspace**, and that is the only frontend
-   used there: if `tab create` fails, dispatch exits non-zero with herdr's own
-   error rather than falling through to tmux/Terminal (which would put the builder
-   outside herdr's tabs). Surface that failure instead of re-dispatching blindly.
-   Outside herdr the chain is tmux, then Terminal, then headless.
+   user knows where to watch; quote the tab id, not just the pane. Inside a herdr TUI the
+   builder lands in a new `builder` tab in **this session's workspace**, the only
+   frontend used there: if `tab create` fails, dispatch exits non-zero with herdr's own
+   error rather than falling through to tmux/Terminal. Surface that failure instead of
+   re-dispatching blindly. Outside herdr the chain is tmux, then Terminal, then headless.
 5. The pane in the ledger is the one `dispatch.sh` recorded, never one you created
    yourself. `ledger add/set --pane` verifies it against dispatch.sh's signature (a
    herdr tab holding exactly one pane that the slice's `<handoff>.pane` sidecar
@@ -301,24 +288,7 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 rules and the warm-versus-cold re-dispatch are in [correctives.md](correctives.md).
 Either way, run the printed `NEXT` line again.
 
-**Leaving the run unattended.** The `NEXT` bridge is a background task of this
-session and dies with it. When the user is leaving (closing the laptop, clearing,
-walking away), hand the fleet to detached wakes instead: run
-`bash "<core>/complete/unattended.sh" "$PWD"` as the last action before the
-session closes, or pass `--unattended` to `dispatch-slice.sh` so each new slice
-arms a detached bridge + `architect-wake.sh` chain directly. When a bridge fires,
-the chain resumes this architect session headlessly (`claude -p --resume`) with
-the `WAITER:` line and board as the prompt, under `--permission-mode auto`
-(`OFFLOAD_WAKE_PERMISSIONS=bypass` for the builders' posture; say so plainly when
-you choose it). Claude architects only. While the interactive session is still
-open the resume is refused and logged, so do not keep working after handing off;
-on return, read the `.wake.log` beside each handoff and the board.
-
-**Lean builder boot.** A claude builder launches with no MCP servers
-(`OFFLOAD_BUILDER_MCP=none`, the default): it needs node and the skills, not the
-machine's MCP fleet or its tool schemas on every turn. Set
-`OFFLOAD_BUILDER_MCP=inherit` for the user's full MCP configuration, or a path to
-load exactly that `--mcp-config` file, when a slice genuinely needs an MCP tool.
+**Leaving, or needing an MCP tool.** The `NEXT` bridge is a background task of this session and dies with it. Read [launch-options.md](launch-options.md) when the user is leaving (closing the laptop, clearing, walking away) or a slice genuinely needs an MCP tool: it holds the detached wake chain (`unattended.sh`, `--unattended`) and `OFFLOAD_BUILDER_MCP`.
 
 **Safety:** dispatch launches the builder with its permission gates relaxed:
 codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local

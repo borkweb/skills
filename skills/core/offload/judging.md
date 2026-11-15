@@ -10,7 +10,7 @@ The `Head:` line is the builder's claim. A gate evidence file that records its o
 
 **A pure rebase keeps gate evidence.** A recorded `Head:` that is not HEAD is accepted when all four conditions hold, and for gate evidence only (`ready` and `coverage`):
 
-1. The handoff records the slice's base: `base: <sha>` and `base_ref: <full ref>`. `dispatch-slice.sh` writes both on a fresh dispatch. Pass `--base <ref>` on a slice's first dispatch, because without a recorded base the carry-over never applies. A reused worktree dispatched without `--base` records none.
+1. The handoff records the slice's base: `base: <sha>` and `base_ref: <full ref>`. `dispatch-slice.sh` writes both on a fresh dispatch. Pass `--base <ref>` on a slice's first dispatch, because without a recorded base the carry-over never applies. A reused worktree dispatched without `--base` records none. Pass the branch the slice was cut from: `main`, or the parent or integration branch for a stacked slice. Never pass the slice's own branch, a sha or a tag. `base_ref:` must be a full ref that follows the base; the slice's own branch makes the patch empty, so the carry-over refuses; a sha or a tag records no `base_ref:`, so nothing carries over. Do not infer the base from the default branch.
 2. `git patch-id --verbatim` of `base..<recorded head>` equals that of `<merge-base of HEAD and the current tip of base_ref>..HEAD`. Verbatim, not `--stable`: `--stable` ignores whitespace, which changes meaning inside a string or a Python indent. A binary or mode change counts.
 3. That patch is not empty.
 4. `git merge-tree --write-tree` of the base's current tip and HEAD is clean.
