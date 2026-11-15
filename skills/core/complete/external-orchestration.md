@@ -103,6 +103,8 @@ acceptance reviewer hold the same bar. For a DO NOT LAND after green gates later
 record under *Decisions + why* whether a frozen criterion named each blocker (the
 builder missed it) or none did (the spec review missed it, so the next one should
 cover it), and put the same tag (`named C5`, `unnamed`) in the ledger `--verdict`.
+A review-only rejection also carries `checkable: <tool>` or `checkable: no`, chosen
+per blocker as `offload` step 3 says; the ledger refuses one without it.
 
 ## 4. Resolve authorization once
 
@@ -143,7 +145,10 @@ frontend the check cannot see, not for routing around a failed dispatch.
 
 On the first turn, spec every slice the plan separates (step 3 already reviewed
 them), then dispatch every slice whose files are disjoint in this same turn, up to
-3–4 lanes. Each gets its own worktree, handoff doc, ledger row and bridge, from
+3–4 lanes. When two or more slices share a brief shape (the same kind of change in
+parallel files, such as several abilities), dispatch one first and the rest when it
+reaches its first judgment, so its rejection reasons go into their specs before
+they dispatch. Slices of different shapes still all dispatch in the first turn. Each gets its own worktree, handoff doc, ledger row and bridge, from
 one `dispatch-slice.sh` call per slice (offload's *Dispatch*); the calls fit in a
 single Bash invocation, and their `NEXT` lines then run as background calls in the
 same response. Pre-warm the worktrees (install, baseline suite) while the spec
@@ -153,7 +158,8 @@ follow [test gate resources](../do/references/test-resources.md): parallel gates
 require verified resource isolation recorded with ownership in the existing
 brief/ledger notes; shared or unknown resources serialize affected gates. Join
 prerequisites before final integration gates. A slice that waits for a sibling waits in `specced`,
-and you dispatch it in the turn the sibling's row goes terminal. There is no
+and you dispatch it in the turn the sibling's row goes terminal (for a sibling of the
+same brief shape, the turn it first reaches judgment). There is no
 turn-taking between slices and you never hold the fleet in your head.
 
 ### Each wake
@@ -174,7 +180,8 @@ turn-taking between slices and you never hold the fleet in your head.
    the acceptance `review`, which already applies the spec reviewer's criteria.
 3. Branch on the verdict:
    - gates or review fail → `ledger set … --state rejected --verdict "<why>"`
-     (required; a review-only verdict also carries `named C<n>` or `unnamed`);
+     (required; a review-only verdict also carries `named C<n>` or `unnamed`, plus
+     `checkable: <tool>` or `checkable: no`, and the ledger refuses one without them);
      relay every confirmed defect in one batch; `offload` specs one corrective
      slice onto the same branch and sends it with `dispatch-slice.sh … --corrective`,
      which reuses the warm builder when it is still at its prompt. When the same
@@ -184,6 +191,9 @@ turn-taking between slices and you never hold the fleet in your head.
      change) → `ledger set … --state returned`; made moot by a change of
      direction → `abandoned`. Neither is a rejection.
    - gates pass and review clean → `ledger set … --state accepted --verdict "<raw numbers>"`.
+     After a corrective with a `Carried:` line, run the full frozen gate set on that
+     head first; in a fleet, the integration gate counts only when it runs every gate
+     the slice carried.
    - scope left → dispatch the next ready slice(s).
    - goal met across all slices → step 7.
 4. `dispatch-slice.sh` has already set the row to `dispatched` with the verified

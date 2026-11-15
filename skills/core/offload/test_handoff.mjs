@@ -1,7 +1,7 @@
 // test_handoff.mjs
 import { execFileSync } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -19,13 +19,11 @@ process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 // reads $CLAUDE_CODE_SESSION_ID. Pass { session } to control it; omit to run
 // with no session in the env (to exercise the empty-id guard). { env } adds the
 // variables a dispatched builder carries ($OFFLOAD_HANDOFF, $OFFLOAD_SESSION_ID).
-// Both are cleared first, so a suite run inside a builder stays hermetic.
+// The env is built from PATH, HOME, TMPDIR and the test's own variables, so a suite
+// run inside a builder stays hermetic: nothing ambient reaches the CLI.
+const baseEnv = () => ({ PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), AGENT_HANDOFFS_DIR: BOX });
 const run = (args, { session, env: extra = {} } = {}) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.CODEX_SESSION_ID;
-  delete env.OFFLOAD_HANDOFF;
-  delete env.OFFLOAD_SESSION_ID;
+  const env = baseEnv();
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
   Object.assign(env, extra);
   return execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env }).trim();
@@ -49,7 +47,7 @@ const repo = (name) => join(BOX, `repo-${name}`);
 // A git repo with one commit. `ready` checks a doc's `Head:` line against the
 // HEAD of the worktree its `cwd:` names, so a doc that must reach results-ready
 // needs a real repo there. git() commits with a fixed identity and no signing.
-const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const GIT_ENV = { PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: GIT_ENV }).trim();
 const commit = (dir, msg) => { git(dir, 'commit', '-q', '--allow-empty', '-m', msg); return git(dir, 'rev-parse', 'HEAD'); };
 const gitRepo = (name) => {
@@ -439,8 +437,7 @@ test('updateDoc retries on a concurrent write instead of dropping it, and leaves
 
 // spawnSync keeps the exit code, stdout and stderr together, which runFail() drops.
 const cli = (args, { session, env: extra = {} } = {}) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
-  for (const k of ['CLAUDE_CODE_SESSION_ID', 'CODEX_SESSION_ID', 'OFFLOAD_HANDOFF', 'OFFLOAD_SESSION_ID']) delete env[k];
+  const env = baseEnv();
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
   Object.assign(env, extra);
   const r = spawnSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env });
@@ -449,9 +446,9 @@ const cli = (args, { session, env: extra = {} } = {}) => {
 
 let docN = 0;
 // A doc with frontmatter, Frozen gates and Gate results; eol '\r\n' makes a CRLF doc.
-function mkDoc(frozen, results, { eol = '\n', status = 'dispatched', owner = 's', cwd } = {}) {
+function mkDoc(frozen, results, { eol = '\n', status = 'dispatched', owner = 's', cwd, fm = [] } = {}) {
   const p = join(BOX, `cov-${++docN}.md`);
-  const head = ['---', ...(cwd ? [`cwd: ${cwd}`] : []), `claude_session: ${owner}`, `status: ${status}`, 'updated: x', '---', ''];
+  const head = ['---', ...(cwd ? [`cwd: ${cwd}`] : []), ...fm, `claude_session: ${owner}`, `status: ${status}`, 'updated: x', '---', ''];
   const body = [...head, '## Frozen gates', frozen, '## Gate results', results, ''];
   writeFileSync(p, body.join('\n').replace(/\n/g, eol));
   return p;
@@ -695,4 +692,466 @@ test('coverage reports missing IDs first (exit 4), then a stale head (exit 5)', 
   assert.equal(stale.code, 5);
   assert.ok(stale.err.startsWith('stale:'), stale.err);
   assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: pass\n`, { cwd: dir })]).code, 0);
+});
+
+// --- X6 / C25: a Carried: line is not a Head: line -------------------------------
+
+test('C25: a Carried: line beside the current Head: line never trips stale', () => {
+  const { dir, head } = gitRepo('carried');
+  const older = commit(dir, 'later work');
+  const p = mkDoc('C1: a\n', `Head: ${older}\nCarried: ${head} — G5\nC1: pass\n`, { cwd: dir });
+  assert.equal(cli(['coverage', p]).code, 0);
+  assert.equal(cli(['ready', p], { session: 's' }).code, 0);
+});
+
+// --- X2 / PS-04: `rulings` checks that every bar-changing ruling is backed by a criterion ---
+
+const BAR_BLOCK = [
+  '# Slice B', '', 'Execute the slice.', 'Acceptance:', 'C1: first criterion', 'C2a: a sub criterion', 'C2b: another',
+  '', 'Gates: G1 `make test`', 'C9: named after Gates, in prose', 'The slice owns C8: not an Acceptance line.', '',
+].join('\n');
+let rulingN = 0;
+const rulingsDocs = (decisions, block = BAR_BLOCK, eol = '\n') => {
+  const n = ++rulingN;
+  const d = join(BOX, `decisions-${n}.md`);
+  const b = join(BOX, `block-${n}.md`);
+  writeFileSync(d, `# Decisions\n\n${decisions}\n`.replace(/\n/g, eol));
+  writeFileSync(b, block.replace(/\n/g, eol));
+  return [d, b];
+};
+const rulings = (decisions, { slice = 'B', block, eol } = {}) => {
+  const [d, b] = rulingsDocs(decisions, block, eol);
+  return cli(['rulings', d, b, ...(slice === null ? [] : ['--slice', slice])]);
+};
+const unbackedLines = (r) => r.err.split('\n').filter((l) => l.startsWith('unbacked: '));
+
+test('C7a: rulings exits 0 with empty stderr when every slice-B marker names IDs that lead an Acceptance line', () => {
+  const r = rulings('Changes the bar (slice B): C1\n- **Changes the bar (slice B):** C1, C2a\n* Changes the bar (slice B): C2');
+  assert.deepEqual([r.code, r.err], [0, '']);
+});
+
+test('C7b: a marker naming an ID absent from Acceptance exits 6 with one unbacked line per offender', () => {
+  const one = rulings('Changes the bar (slice B): C1, C7');
+  assert.equal(one.code, 6);
+  assert.deepEqual(unbackedLines(one), ['unbacked: Changes the bar (slice B): C1, C7']);
+  const two = rulings('Changes the bar (slice B): C7\nChanges the bar (slice B): C1\nChanges the bar (slice B): C2b, C11');
+  assert.equal(two.code, 6);
+  assert.deepEqual(unbackedLines(two), ['unbacked: Changes the bar (slice B): C7', 'unbacked: Changes the bar (slice B): C2b, C11']);
+});
+
+test('C7c/C7d: a marker with no IDs, or with a token that is not an ID, is unbacked', () => {
+  for (const line of ['Changes the bar (slice B):', 'Changes the bar (slice B): C1, see notes', 'Changes the bar (slice B): none', 'Changes the bar (slice B): C1;C2a']) {
+    const r = rulings(line);
+    assert.equal(r.code, 6, line);
+    assert.deepEqual(unbackedLines(r), [`unbacked: ${line}`], line);
+  }
+});
+
+test('C7e: an ID that leads a line only outside Acceptance, or in a multi-ID line, backs nothing', () => {
+  const block = [
+    '# Slice', 'Acceptance:', 'C1: ok', 'C3, C4: both on one line', '', '```', 'C5: inside a fence', '```', 'Gates: G1', 'C6: after gates', 'Notes:', 'C7: under notes', '',
+  ].join('\n');
+  for (const id of ['C3', 'C4', 'C5', 'C6', 'C7']) {
+    const r = rulings(`Changes the bar (slice B): ${id}`, { block });
+    assert.equal(r.code, 6, id);
+  }
+  assert.equal(rulings('Changes the bar (slice B): C1', { block }).code, 0);
+});
+
+test('C22a/b: Acceptance runs to the template’s next known label; a parent ID is backed by its sub-IDs', () => {
+  const block = ['Acceptance:', 'C1a: x', 'Gates: nothing', 'C2: not Acceptance', ''].join('\n');
+  assert.equal(rulings('Changes the bar (slice B): C1', { block }).code, 0, 'C1 backed by C1a');
+  assert.equal(rulings('Changes the bar (slice B): C1a', { block }).code, 0);
+  assert.equal(rulings('Changes the bar (slice B): C2', { block }).code, 6, 'C2 follows a non-ID label');
+  assert.equal(rulings('Changes the bar (slice B): C1b', { block }).code, 6, 'a sibling sub-ID does not back C1b');
+});
+
+test('C22c: a line that contains Changes the bar but does not parse as a marker is unbacked', () => {
+  for (const line of ['Changes the bar slice B: C1', 'Changes the bar (slice B) C1', 'The ruling Changes the bar (slice B): C1', 'Changes the bar (B): C1']) {
+    const r = rulings(line);
+    assert.equal(r.code, 6, line);
+    assert.deepEqual(unbackedLines(r), [`unbacked: ${line}`], line);
+  }
+});
+
+test('C7f: markers for other slices are ignored and slice ids match exactly', () => {
+  assert.equal(rulings('Changes the bar (slice A): C9\nChanges the bar (slice B2): C9', { slice: 'B' }).code, 0);
+  assert.equal(rulings('Changes the bar (slice B): C9', { slice: 'B2' }).code, 0);
+  assert.equal(rulings('Changes the bar (slice B2): C9', { slice: 'B2' }).code, 6);
+});
+
+test('C7g: CRLF decisions and block files give the same results', () => {
+  const ok = rulings('Changes the bar (slice B): C1\n- **Changes the bar (slice B):** C2a', { eol: '\r\n' });
+  assert.deepEqual([ok.code, ok.err], [0, '']);
+  const bad = rulings('Changes the bar (slice B): C7\nChanges the bar (slice B): C1', { eol: '\r\n' });
+  assert.equal(bad.code, 6);
+  assert.deepEqual(unbackedLines(bad), ['unbacked: Changes the bar (slice B): C7']);
+});
+
+test('C7h: usage and IO errors are one-line messages, never a stack trace', () => {
+  const [d, b] = rulingsDocs('Changes the bar (slice B): C1');
+  for (const args of [['rulings'], ['rulings', d], ['rulings', d, b], ['rulings', d, b, '--slice']]) {
+    const r = cli(args);
+    assert.equal(r.code, 2, args.join(' '));
+    assert.match(r.err, /usage: handoff\.mjs rulings <decisions\.md> <block\.md> --slice <id>/);
+  }
+  for (const args of [['rulings', join(BOX, 'no-such-decisions.md'), b, '--slice', 'B'], ['rulings', d, join(BOX, 'no-such-block.md'), '--slice', 'B']]) {
+    const r = cli(args);
+    assert.notEqual(r.code, 0);
+    assert.notEqual(r.code, 6, 'an unreadable file is not an unbacked ruling');
+    assert.match(r.err, /no-such-(decisions|block)\.md/);
+    assert.equal(r.err.trim().split('\n').length, 1);
+    assert.doesNotMatch(r.err, /at .*\.m?js:\d+/);
+  }
+});
+
+// --- PS-03: gate evidence survives a pure rebase ----------------------------------
+//
+// A slice that is rebased onto an advanced base keeps its patch but gets new
+// shas, so every `Head:` line goes stale. The doc records the slice's base
+// (`base:` sha, `base_ref:` full ref); `ready` and `coverage` accept a recorded
+// head that differs from HEAD only when the two patches have the same
+// `git patch-id --verbatim`, the patch is not empty and the head still merges
+// onto the base's current tip. Everything unknown refuses with `stale:`.
+// These cases run real git (the shim cases wrap it).
+
+const REAL_GIT = execFileSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8', env: baseEnv() }).trim();
+const put = (dir, file, text) => { mkdirSync(dirname(join(dir, file)), { recursive: true }); writeFileSync(join(dir, file), text); };
+const addCommit = (dir, msg, ...files) => { git(dir, 'add', ...files); git(dir, 'commit', '-q', '-m', msg); return git(dir, 'rev-parse', 'HEAD'); };
+
+// main holds shared.txt at B0; `slice` carries the patch `files` (one or three
+// commits). Returns the recorded head (the patch tip before the rebase) and a
+// `rebase()` that advances main with an unrelated commit and rebases the slice.
+function rebaseRepo(name, { commits = 1, patch, baseFiles = {} } = {}) {
+  const dir = repo(name);
+  mkdirSync(dir, { recursive: true });
+  git(dir, 'init', '-q', '-b', 'main');
+  put(dir, 'shared.txt', 'line1\nline2\n');
+  for (const [file, text] of Object.entries(baseFiles)) put(dir, file, text);
+  const base = addCommit(dir, 'base', 'shared.txt', ...Object.keys(baseFiles));
+  git(dir, 'checkout', '-q', '-b', 'slice');
+  let recorded;
+  if (patch) recorded = patch(dir);
+  else {
+    for (let i = 1; i <= commits; i++) { put(dir, `p${i}.txt`, `patch ${i}\n`); recorded = addCommit(dir, `patch ${i}`, `p${i}.txt`); }
+  }
+  const advance = (file = 'unrelated.txt', text = 'main moves\n') => {
+    git(dir, 'checkout', '-q', 'main');
+    put(dir, file, text);
+    addCommit(dir, `main ${file}`, file);
+    git(dir, 'checkout', '-q', 'slice');
+  };
+  const rebase = (...opts) => { advance(); git(dir, 'rebase', '-q', ...opts, 'main'); };
+  return { dir, base, recorded, advance, rebase };
+}
+const docFor = (fx, { heads, fmExtra, omit = [] } = {}) => {
+  const fm = [`base: ${fx.base}`, 'base_ref: refs/heads/main'].filter((l) => !omit.some((o) => l.startsWith(`${o}:`)));
+  return mkDoc('C1: a\n', `${(heads ?? [fx.recorded]).map((h) => `Head: ${h}`).join('\n')}\nC1: pass\n`, { cwd: fx.dir, fm: [...fm, ...(fmExtra ?? [])] });
+};
+const docStatus = (p) => /^status: (.*)$/m.exec(readFileSync(p, 'utf8'))[1];
+
+// Each refusal case runs through coverage, ready and status: exit 5, `stale:`, the
+// condition's phrase, and `status` left alone.
+function assertRefused(p, phrase, env) {
+  const runs = [
+    ['coverage', cli(['coverage', p], { env })],
+    ['ready', cli(['ready', p], { session: 's', env })],
+    ['status results-ready', cli(['status', p, 'results-ready'], { session: 's', env })],
+  ];
+  for (const [what, r] of runs) {
+    assert.equal(r.code, 5, `${what}: ${r.err}`);
+    assert.ok(r.err.startsWith('stale:'), `${what}: ${r.err}`);
+    assert.match(r.err, phrase, what);
+  }
+  assert.equal(docStatus(p), 'dispatched', 'status unchanged');
+}
+
+test('C4a-c: a pure rebase keeps the gate evidence: coverage, ready and status all accept', () => {
+  const fx = rebaseRepo('rb-ok');
+  fx.rebase();
+  assert.notEqual(git(fx.dir, 'rev-parse', 'HEAD'), fx.recorded);
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0, 'coverage');
+  const p = docFor(fx);
+  assert.equal(cli(['ready', p], { session: 's' }).code, 0, 'ready');
+  assert.equal(docStatus(p), 'results-ready');
+  const q = docFor(fx);
+  assert.equal(cli(['status', q, 'results-ready'], { session: 's' }).code, 0, 'status');
+  assert.equal(docStatus(q), 'results-ready');
+});
+
+test('C4d: a three-commit patch rebased the same way is accepted (the range covers the whole patch)', () => {
+  const fx = rebaseRepo('rb-three', { commits: 3 });
+  fx.rebase();
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0);
+  // the recorded tip's own patch is not the whole patch: a doc naming only the first commit refuses
+  const first = git(fx.dir, 'rev-list', '--reverse', `${fx.base}..${fx.recorded}`).split('\n')[0];
+  assert.equal(cli(['coverage', docFor(fx, { heads: [first] })]).code, 5, 'a partial range is a different patch');
+});
+
+test('C4e: Head equal to HEAD passes with or without base; a doc with no cwd is not checked', () => {
+  const fx = rebaseRepo('rb-same');
+  const head = git(fx.dir, 'rev-parse', 'HEAD');
+  assert.equal(cli(['coverage', docFor(fx, { heads: [head] })]).code, 0);
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: pass\n`, { cwd: fx.dir })]).code, 0, 'no base lines');
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', 'C1: pass\n')]).code, 0, 'no cwd');
+});
+
+test('C5a: no base: refuses and names the missing base', () => {
+  const fx = rebaseRepo('rb-nobase');
+  fx.rebase();
+  assertRefused(docFor(fx, { omit: ['base'] }), /no `base:` line/);
+  assertRefused(docFor(fx, { omit: ['base_ref'] }), /no `base_ref:` line/);
+});
+
+test('C5b: a recorded head that git does not know refuses as unknown or unreachable', () => {
+  const fx = rebaseRepo('rb-unknown');
+  fx.rebase();
+  assertRefused(docFor(fx, { heads: ['deadbeefdead'] }), /recorded head deadbeefdead is unknown or unreachable/);
+});
+
+test('C5c: an empty patch refuses, never two empty ids comparing equal', () => {
+  const fx = rebaseRepo('rb-empty', { patch: (d) => { git(d, 'commit', '-q', '--allow-empty', '-m', 'empty'); return git(d, 'rev-parse', 'HEAD'); } });
+  fx.rebase('--empty=keep');
+  assert.notEqual(git(fx.dir, 'rev-parse', 'HEAD'), fx.recorded);
+  assertRefused(docFor(fx), /patch is empty/);
+});
+
+test('C5d: a late content commit with no rebase refuses as a patch-id mismatch', () => {
+  const fx = rebaseRepo('rb-late');
+  put(fx.dir, 'late.txt', 'late edit\n');
+  addCommit(fx.dir, 'late', 'late.txt');
+  assertRefused(docFor(fx), /patch-id mismatch/);
+});
+
+test('C5e: a whitespace-only change inside a line refuses (verbatim, not --stable)', () => {
+  const cases = [
+    ['inline', 's = "a b"\n', 's = "ab"\n', 'ws.txt'],
+    ['indent', 'if x:\n    y = 1\n', 'if x:\ny = 1\n', 'ws.py'],
+  ];
+  for (const [name, before, after, file] of cases) {
+    const fx = rebaseRepo(`rb-ws-${name}`, { patch: (d) => { put(d, file, before); return addCommit(d, 'ws', file); } });
+    fx.rebase();
+    assert.equal(cli(['coverage', docFor(fx)]).code, 0, `${name}: unchanged patch is accepted`);
+    put(fx.dir, file, after);
+    git(fx.dir, 'add', file);
+    git(fx.dir, 'commit', '-q', '--amend', '--no-edit');
+    // sanity: --stable cannot tell the two patches apart, which is why verbatim is required
+    const stable = (r) => execFileSync('/bin/sh', ['-c', `git diff -U0 --binary --full-index ${r} | git patch-id --stable`], { cwd: fx.dir, encoding: 'utf8', env: GIT_ENV }).split(' ')[0];
+    assert.equal(stable(`${fx.base} ${fx.recorded}`), stable(`main HEAD`), `${name}: --stable sees no difference`);
+    assertRefused(docFor(fx), /patch-id mismatch/);
+  }
+});
+
+test('C5f: a binary content change, and a mode-only change, refuse', () => {
+  const bin = rebaseRepo('rb-bin', { patch: (d) => { writeFileSync(join(d, 'b.bin'), Buffer.from([1, 2, 0, 3])); return addCommit(d, 'bin', 'b.bin'); } });
+  bin.rebase();
+  writeFileSync(join(bin.dir, 'b.bin'), Buffer.from([1, 2, 0, 4]));
+  git(bin.dir, 'add', 'b.bin');
+  git(bin.dir, 'commit', '-q', '--amend', '--no-edit');
+  assertRefused(docFor(bin), /patch-id mismatch/);
+
+  const mode = rebaseRepo('rb-mode', { patch: (d) => { put(d, 's.sh', 'echo hi\n'); return addCommit(d, 'sh', 's.sh'); } });
+  mode.rebase();
+  chmodSync(join(mode.dir, 's.sh'), 0o755);
+  git(mode.dir, 'add', 's.sh');
+  git(mode.dir, 'commit', '-q', '--amend', '--no-edit');
+  assertRefused(docFor(mode), /patch-id mismatch/);
+});
+
+test('C5g: a conflict with the base’s current tip refuses; merge-tree runs against the tip, not the recorded base', () => {
+  const fx = rebaseRepo('rb-conflict', { patch: (d) => { put(d, 'shared.txt', 'line1\npatched\n'); return addCommit(d, 'edit shared', 'shared.txt'); } });
+  fx.rebase();
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0, 'clean before the base moves again');
+  fx.advance('shared.txt', 'line1\nmain wins\n');
+  assertRefused(docFor(fx), /merge conflict/);
+});
+
+// A `git` that runs the real one but fails for a chosen subcommand or flag.
+function shimGit(name, failWhen, code) {
+  const dir = join(BOX, `shim-${name}`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'git'), `#!/bin/bash\nfor a in "$@"; do case "$a" in ${failWhen}) exit ${code};; esac; done\nexec ${REAL_GIT} "$@"\n`);
+  chmodSync(join(dir, 'git'), 0o755);
+  return { PATH: `${dir}:${process.env.PATH}` };
+}
+
+test('C5h: every git error refuses naming a git error, not a patch mismatch or conflict', () => {
+  const fx = rebaseRepo('rb-giterr');
+  fx.rebase();
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0, 'the fixture is accepted by real git');
+  for (const [label, env] of [
+    ['patch-id exits 128', shimGit('patch-id', 'patch-id', 128)],
+    ['merge-tree exits 128', shimGit('merge-tree', 'merge-tree', 128)],
+    ['--verbatim unsupported (129)', shimGit('verbatim', '--verbatim|--write-tree', 129)],
+  ]) {
+    const p = docFor(fx);
+    const r = cli(['coverage', p], { env });
+    assert.equal(r.code, 5, label);
+    assert.match(r.err, /git error/, label);
+    assert.doesNotMatch(r.err, /patch-id mismatch|merge conflict/, label);
+    assertRefused(docFor(fx), /git error/, env);
+  }
+  const gone = rebaseRepo('rb-gone');
+  gone.rebase();
+  git(gone.dir, 'branch', '-q', '-D', 'main');
+  assertRefused(docFor(gone), /git error: `base_ref: refs\/heads\/main` no longer resolves/);
+  const lost = rebaseRepo('rb-lost');
+  lost.rebase();
+  assertRefused(mkDoc('C1: a\n', `Head: ${lost.recorded}\nC1: pass\n`, { cwd: lost.dir, fm: [`base: ${'1'.repeat(40)}`, 'base_ref: refs/heads/main'] }), /git error: `base: 1{40}` no longer resolves/);
+});
+
+test('C5i: two Head lines, one rebase-equivalent and one whose patch differs, refuse', () => {
+  const fx = rebaseRepo('rb-two');
+  git(fx.dir, 'checkout', '-q', '-b', 'other', fx.base);
+  put(fx.dir, 'other.txt', 'different patch\n');
+  const other = addCommit(fx.dir, 'other', 'other.txt');
+  git(fx.dir, 'checkout', '-q', 'slice');
+  fx.rebase();
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0, 'the equivalent head alone is accepted');
+  assertRefused(docFor(fx, { heads: [fx.recorded, other] }), /patch-id mismatch/);
+});
+
+test('C5j: a base that is not a full hex sha is refused and never reaches git as an option', () => {
+  const fx = rebaseRepo('rb-inject');
+  fx.rebase();
+  const pwned = join(BOX, 'pwned');
+  for (const bad of [`--output=${pwned}`, 'HEAD', 'main']) {
+    const p = mkDoc('C1: a\n', `Head: ${fx.recorded}\nC1: pass\n`, { cwd: fx.dir, fm: [`base: ${bad}`, 'base_ref: refs/heads/main'] });
+    assertRefused(p, /not a full commit sha/);
+    assert.ok(!existsSync(pwned), `${bad}: nothing was written`);
+  }
+  for (const bad of ['--output=/x', 'main', 'refs/tags/v1']) {
+    const p = mkDoc('C1: a\n', `Head: ${fx.recorded}\nC1: pass\n`, { cwd: fx.dir, fm: [`base: ${fx.base}`, `base_ref: ${bad}`] });
+    assertRefused(p, /base_ref:.* is not a full refs/);
+  }
+});
+
+test('C5k: ambient GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE do not redirect the git children', () => {
+  const fx = rebaseRepo('rb-env');
+  fx.rebase();
+  const other = rebaseRepo('rb-env-other');
+  const hostile = { GIT_DIR: join(other.dir, '.git'), GIT_WORK_TREE: other.dir, GIT_INDEX_FILE: join(other.dir, '.git', 'index') };
+  assert.equal(cli(['coverage', docFor(fx)], { env: hostile }).code, 0, 'C4a unchanged');
+  const late = rebaseRepo('rb-env-late');
+  put(late.dir, 'late.txt', 'late\n');
+  addCommit(late.dir, 'late', 'late.txt');
+  assertRefused(docFor(late), /patch-id mismatch/, hostile);
+});
+
+test('C5l: the same added line moved to another place in the file is a different patch', () => {
+  // With zero context a patch is only its changed lines, so moving a line would keep its patch-id.
+  // The patch-id comparison therefore keeps git's default context.
+  const before = 'function a() {\n  const x = 1;\n  return x;\n}\n\nfunction b() {\n  const y = 2;\n  return y;\n}\n';
+  const fx = rebaseRepo('rb-moved', { baseFiles: { 'f.js': before }, patch: (d) => {
+    put(d, 'f.js', before.replace('  const x = 1;\n', '  const x = 1;\n  guard();\n'));
+    return addCommit(d, 'guard in a', 'f.js');
+  } });
+  fx.rebase();
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0, 'the unmoved patch is accepted');
+  put(fx.dir, 'f.js', before.replace('  const y = 2;\n', '  const y = 2;\n  guard();\n'));
+  git(fx.dir, 'add', 'f.js');
+  git(fx.dir, 'commit', '-q', '--amend', '--no-edit');
+  assertRefused(docFor(fx), /patch-id mismatch/);
+});
+
+// --- corrective round 1 --------------------------------------------------------------
+
+test('K1: a marker for C1 is not backed by C12, nor C2 by C20; only a lowercase-letter sub-ID backs a parent', () => {
+  const block = ['Acceptance:', 'C12: twelve', 'C20: twenty', 'C3a: sub', 'Gates: G1', ''].join('\n');
+  for (const id of ['C1', 'C2']) {
+    const r = rulings(`Changes the bar (slice B): ${id}`, { block });
+    assert.equal(r.code, 6, id);
+    assert.deepEqual(unbackedLines(r), [`unbacked: Changes the bar (slice B): ${id}`], id);
+  }
+  assert.equal(rulings('Changes the bar (slice B): C3', { block }).code, 0, 'C3a still backs C3');
+  assert.equal(rulings('Changes the bar (slice B): C12, C20', { block }).code, 0, 'the IDs themselves are backed');
+});
+
+// The moved-line fixture (C5l) under a given repository or user git config: the pure rebase is
+// accepted, and the moved line is refused as a patch-id mismatch, never as an empty patch.
+const JS_BEFORE = 'function a() {\n  const x = 1;\n  return x;\n}\n\nfunction b() {\n  const y = 2;\n  return y;\n}\n';
+function guardFixture(name) {
+  const fx = rebaseRepo(name, { baseFiles: { 'f.js': JS_BEFORE }, patch: (d) => {
+    put(d, 'f.js', JS_BEFORE.replace('  const x = 1;\n', '  const x = 1;\n  guard();\n'));
+    return addCommit(d, 'guard in a', 'f.js');
+  } });
+  fx.rebase();
+  return fx;
+}
+function moveGuard(fx) {
+  put(fx.dir, 'f.js', JS_BEFORE.replace('  const y = 2;\n', '  const y = 2;\n  guard();\n'));
+  git(fx.dir, 'add', 'f.js');
+  git(fx.dir, 'commit', '-q', '--amend', '--no-edit');
+}
+function assertGuardCases(name, { repoConfig = [], env } = {}) {
+  const fx = guardFixture(name);
+  for (const [k, v] of repoConfig) git(fx.dir, 'config', k, v);
+  assert.equal(cli(['coverage', docFor(fx)], { env }).code, 0, `${name}: the pure rebase is accepted`);
+  moveGuard(fx);
+  const p = docFor(fx);
+  const r = cli(['coverage', p], { env });
+  assert.equal(r.code, 5, `${name}: ${r.err}`);
+  assert.match(r.err, /patch-id mismatch/, name);
+  assert.doesNotMatch(r.err, /patch is empty/, name);
+  assertRefused(p, /patch-id mismatch/, env);
+}
+
+test('K2a: repository config (diff.context 0, color.diff always, diff.noprefix, mnemonicPrefix) never changes the patch comparison', () => {
+  assertGuardCases('k2a-context', { repoConfig: [['diff.context', '0']] });
+  assertGuardCases('k2a-color', { repoConfig: [['color.diff', 'always'], ['color.ui', 'always']] });
+  assertGuardCases('k2a-prefix', { repoConfig: [['diff.noprefix', 'true'], ['diff.mnemonicPrefix', 'true']] });
+});
+
+test('K2b: user git config in HOME (context, color, prefix, ignoreSubmodules) never changes the carry-over', () => {
+  const home = join(BOX, 'k2b-home');
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, '.gitconfig'), '[diff]\n\tcontext = 0\n\tnoprefix = true\n\tignoreSubmodules = all\n[color]\n\tui = always\n\tdiff = always\n');
+  assertGuardCases('k2b-home', { env: { HOME: home } });
+});
+
+test('K3: a builder holding OFFLOAD_HANDOFF and OFFLOAD_SESSION_ID cannot rewrite base or base_ref', () => {
+  const dir = repo('k3');
+  const doc = run(['init', dir, 'arch-k3', 'k3']);
+  const sha = 'a'.repeat(40);
+  run(['base', doc, sha, 'refs/heads/main'], { session: 'arch-k3' });
+  const before = readFileSync(doc, 'utf8');
+  const builder = { session: 'builder-k3', env: { OFFLOAD_HANDOFF: doc, OFFLOAD_SESSION_ID: 'arch-k3' } };
+  const err = runFail(['base', doc, 'b'.repeat(40), 'refs/heads/slice'], builder);
+  assert.match(err, /owned by session arch-k3/);
+  assert.equal(readFileSync(doc, 'utf8'), before, 'the frontmatter is byte-identical');
+  run(['status', doc, 'dispatched'], builder); // the carried id still works for status, as the builder needs
+  run(['base', doc, 'c'.repeat(40)], { session: 'arch-k3' });
+  assert.match(readFileSync(doc, 'utf8'), /^base: c{40}$/m, 'the architect can still record a base');
+});
+
+// --- D11: the Acceptance span ends only at the template's own labels ---------------------------
+// `Gates:` and `Result file:` at column 0, a ``` fence, or the end of the file. A prose label such as
+// `Fixture:` inside a criterion block no longer hides the IDs after it.
+
+const spanRulings = (lines, ids = 'C9') => rulings(`Changes the bar (slice D): ${ids}`, { slice: 'D', block: lines.join('\n') });
+
+test('C8a: a column-0 prose label does not end the Acceptance span', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'Fixture: two gates', 'C9: b', 'Gates: G1', '']).code, 0);
+});
+test('C8b: a column-0 Gates: ends the span, so a later ID backs nothing', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'Gates: G1', 'C9: b', '']).code, 6);
+});
+test('C8c: a column-0 Result file: ends the span', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'Result file: /x/result.md', 'C9: b', '']).code, 6);
+});
+test('C8d: a ``` fence ends the span', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', '```', 'C9: b', '```', '']).code, 6);
+});
+test('C8e: the span runs to the end of the file: an ID on the last line, with no terminator, backs its marker', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'C9: b']).code, 0);
+});
+test('C8f: only the exact labels end it: an indented Gates: or a Gate notes: label does not', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', '  Gates: none', 'Gate notes: x', 'C9: b', '']).code, 0);
+});
+test('C8h: the acceptanceIds comment and the rulings header line name the new terminators', () => {
+  const src = readFileSync(HANDOFF, 'utf8');
+  const region = src.slice(src.indexOf('// --- bar-changing rulings'), src.indexOf('function acceptanceIds'));
+  assert.ok(region.includes('Result file:') && region.includes('Gates:'), 'the comment above acceptanceIds');
+  const header = src.slice(0, src.indexOf('node handoff.mjs base '));
+  assert.ok(header.includes('Result file:'), 'the rulings header line');
 });

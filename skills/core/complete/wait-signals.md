@@ -32,6 +32,11 @@ On exit 4 the work is not judged yet and nothing is wrong with it: like a missin
 then send a corrective without `--verdict` that names the missing IDs and asks for
 one line per ID. It records no rejection and costs no round.
 
+`coverage` runs no gate. A builder can also stop because `ready` refused it with
+`red:` (exit 7) on a frozen local gate, and `coverage` still exits 0 then. Before you
+escalate a stopped builder, read the saved local-gate output (the path the refusal
+named, under `<doc>.gates/`) or rerun the failing check yourself.
+
 Exit 5 (`stale:`) means the Gate results have no `Head:` line, or name a commit
 other than the worktree's HEAD. The evidence does not describe the work, so do not
 judge it. Run `ledger set … --state returned`, then send a corrective without

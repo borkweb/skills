@@ -92,6 +92,7 @@ A gate is anything that would have made this change fail: a test, an assertion, 
 - Version mismatch between PR title and VERSION/CHANGELOG files
 - CHANGELOG entries that describe changes inaccurately
 - Comments/docstrings that describe old behavior after the code changed
+- A new code comment that justifies a workaround (why it is acceptable, why it can stay): an investigation lead. Read the code for the root cause the comment excuses
 
 #### LLM Prompt Issues
 - Ambiguous indexing contracts between prompts, parsers and consumers; check actual output handling rather than assuming a model always uses one indexing style

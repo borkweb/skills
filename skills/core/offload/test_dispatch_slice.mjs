@@ -59,13 +59,13 @@ writeFileSync(BLOCK, 'Execute the nav slice in the worktree.\nAcceptance: 3 crit
 const FIX = join(BOX, 'fix.md');
 writeFileSync(FIX, 'Corrective: blocker B1 token leak; blocker B2 missing test.\n');
 
-// Hermetic: run-dir and round-cap settings from the architect that runs these tests must not leak in.
-const AMBIENT_DROPPED = ['BORK_RUN_DIR', 'OFFLOAD_UNATTENDED_TURN', 'OFFLOAD_ROUND_CAP'];
-const ambientEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !AMBIENT_DROPPED.includes(k)));
+// Hermetic: the child env is an allowlist (PATH, HOME, TMPDIR and this test's own
+// variables), never the ambient one, so the architect's BORK_RUN_DIR, run
+// registry, round cap or session ids cannot reach a dispatch.
 const env = (extra = {}) => ({
-  ...ambientEnv(),
+  PATH: TEST_PATH, HOME: BOX, TMPDIR: tmpdir(),
   AGENT_HANDOFFS_DIR: BOX, CLAUDE_CODE_SESSION_ID: 'arch', BORKWEB_SKILLS_CONFIG: CONFIG,
-  HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '', PATH: TEST_PATH, ...extra,
+  HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '', ...extra,
 });
 const hoff = (args) => execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env: env() }).trim();
 const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...env(), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
@@ -207,7 +207,7 @@ test('corrective into a warm builder: no new tab, the brief goes into the pane, 
   // The builder finished and reported; its process is still at the prompt.
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
   finish(doc);
-  hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak (unnamed)']);
+  hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak (unnamed) checkable: no']);
 
   const { stdout, log } = run([R, WT, 'feat/warm2', FIX, '--id', '2', '--corrective']);
   assert.doesNotMatch(log, /tab create/, 'no second builder was launched');
@@ -233,10 +233,10 @@ test('corrective after results records the rejection with its verdict; a follow-
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
   finish(doc);
   hoff(['ledger', 'set', R, '4', '--state', 'results-ready']);
-  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint']);
   let s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
-  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3)');
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint');
 
   hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
   run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective']);
@@ -248,10 +248,10 @@ test('corrective after results records the rejection with its verdict; a follow-
   // ledger recorded none of them).
   finish(doc);
   hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
-  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'security review = DO NOT LAND: lockout guard fails open (unnamed)']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'security review = DO NOT LAND: lockout guard fails open (unnamed) checkable: test']);
   s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.slice(-3).map((h) => h.state), ['accepted', 'rejected', 'dispatched']);
-  assert.equal(s.history.at(-2).verdict, 'security review = DO NOT LAND: lockout guard fails open (unnamed)');
+  assert.equal(s.history.at(-2).verdict, 'security review = DO NOT LAND: lockout guard fails open (unnamed) checkable: test');
 });
 
 test('corrective from unjudged results without a verdict is refused and leaves the brief alone', () => {
@@ -446,10 +446,40 @@ function reported(branch) {
 
 test('a one-slice corrective records --verdict', () => {
   const { R, WT } = reported('feat/c1');
-  run([R, WT, 'feat/c1', FIX, '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
+  run([R, WT, 'feat/c1', FIX, '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint']);
   const s = row(R, '1');
   assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
-  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3)');
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint');
+});
+
+// X1: a review-only verdict without `checkable:` is refused on every corrective
+// path that records a rejection, before the brief changes or anything is sent.
+for (const [label, prep] of [
+  ['results-ready', () => {}],
+  ['accepted', (R) => hoff(['ledger', 'set', R, '1', '--state', 'accepted', '--verdict', 'SAFE TO LAND'])],
+]) {
+  test(`C1c: --corrective --verdict without a checkable tag is refused on a ${label} row`, () => {
+    const { R, WT, doc } = reported(`feat/x1-${label}`);
+    prep(R);
+    const before = hoff(['section', 'get', doc, 'Next slice']);
+    const ledgerBefore = readFileSync(hoff(['ledger', 'path', R]));
+    const r = runFail([R, WT, `feat/x1-${label}`, FIX, '--corrective', '--verdict', 'DO NOT LAND unnamed: x']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /checkable: <tool>/);
+    assert.match(r.stderr, /checkable: no/);
+    assert.equal(r.log, '', 'nothing was sent and nothing was launched');
+    assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'Next slice unchanged');
+    assert.equal(row(R, '1').state, label);
+    assert.ok(ledgerBefore.equals(readFileSync(hoff(['ledger', 'path', R]))), 'ledger bytes unchanged');
+  });
+}
+
+test('C1d: --corrective --verdict accepts checkable: <tool>, checkable: no and checkable:lint', () => {
+  for (const [i, tag] of ['checkable: grep-ratchet', 'checkable: no', 'checkable:lint'].entries()) {
+    const { R, WT } = reported(`feat/x1-ok-${i}`);
+    run([R, WT, `feat/x1-ok-${i}`, FIX, '--corrective', '--verdict', `review = DO NOT LAND: x (unnamed) ${tag}`]);
+    assert.equal(row(R, '1').history.find((h) => h.state === 'rejected').verdict.endsWith(tag), true, tag);
+  }
 });
 
 test('a corrective without --id applies to the most recently updated row with this handoff', () => {
@@ -566,29 +596,14 @@ test('a round-cap refusal re-run with the same --verdict plus --past-cap succeed
   assert.match(s.note, /corrective verdict: g4 failed/, 'and the verdict is not replaced by it');
 });
 
-test('an ambient OFFLOAD_ROUND_CAP and OFFLOAD_UNATTENDED_TURN do not reach the dispatch tests', () => {
-  const saved = { cap: process.env.OFFLOAD_ROUND_CAP, un: process.env.OFFLOAD_UNATTENDED_TURN };
-  process.env.OFFLOAD_ROUND_CAP = '0';
-  process.env.OFFLOAD_UNATTENDED_TURN = '1';
-  try {
-    const R = repo();
-    const WT = join(BOX, 'wt-ambientcap');
-    hoff(['ledger', 'init', R, 'g']);
-    run([R, WT, 'feat/ambientcap', BLOCK, '--id', '9', '--title', 'cap']);
-    for (let i = 1; i <= 3; i++) { // a leaked cap of 0 would refuse the first of these
-      hoff(['ledger', 'set', R, '9', '--state', 'results-ready']);
-      run([R, WT, 'feat/ambientcap', FIX, '--id', '9', '--corrective', '--verdict', `g${i} failed`]);
-    }
-    hoff(['ledger', 'set', R, '9', '--state', 'results-ready']);
-    const args = [R, WT, 'feat/ambientcap', FIX, '--id', '9', '--corrective', '--verdict', 'g4 failed'];
-    assert.match(runFail(args).stderr, /rejected 4 times \(cap 3\)/);
-    run([...args, '--past-cap', 'user: one more']); // a leaked unattended marker would refuse this
-    assert.equal(row(R, '9').state, 'dispatched');
-  } finally {
-    for (const [k, v] of [['OFFLOAD_ROUND_CAP', saved.cap], ['OFFLOAD_UNATTENDED_TURN', saved.un]]) {
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
-    }
-  }
+test('the dispatch env is an allowlist: no run pointer, round cap or session id beyond the test’s own', () => {
+  // Replaces the two cases that set an ambient OFFLOAD_ROUND_CAP, OFFLOAD_UNATTENDED_TURN
+  // and BORK_RUN_DIR in process.env and checked they did not leak. The env is now
+  // built from nothing ambient, so the leak cannot exist; C11c's sentinel run checks it.
+  assert.deepEqual(Object.keys(env()).sort(), [
+    'AGENT_HANDOFFS_DIR', 'BORKWEB_SKILLS_CONFIG', 'CLAUDE_CODE_SESSION_ID', 'HERDR_ENV',
+    'HERDR_WORKSPACE_ID', 'HOME', 'PATH', 'TMPDIR', 'TMUX',
+  ]);
 });
 
 // --- argument parsing, ledger-less correctives and BORK_RUN_DIR hygiene ---
@@ -629,15 +644,11 @@ test('a BORK_RUN_DIR whose run.json is done or failed is not linked; a running o
   assert.equal(linked, dir);
 });
 
-test('the dispatch tests ignore an ambient BORK_RUN_DIR', () => {
-  const d = join(BOX, 'run-ambient');
-  mkdirSync(d, { recursive: true });
-  process.env.BORK_RUN_DIR = d;
-  try {
-    const R = repo();
-    run([R, join(BOX, 'wt-ambient'), 'feat/ambient', BLOCK, '--title', 't']);
-    assert.equal(ledger(R).run_dir, '');
-  } finally { delete process.env.BORK_RUN_DIR; }
+test('a fresh dispatch with no BORK_RUN_DIR links no run dir', () => {
+  // Replaces 'the dispatch tests ignore an ambient BORK_RUN_DIR' (see the env test above).
+  const R = repo();
+  run([R, join(BOX, 'wt-ambient'), 'feat/ambient', BLOCK, '--title', 't']);
+  assert.equal(ledger(R).run_dir, '');
 });
 
 test('the usage line and header document --run-dir and the one-call-without---id limit', () => {
@@ -862,5 +873,390 @@ test('--corrective writes nothing when Frozen gates holds no IDs yet', () => {
     run([R, WT, `feat/empty-${mode}`, corrective, '--corrective']);
     assert.equal(frozenOf(doc), before, `${mode}: Frozen gates untouched`);
     assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*C2: another/);
+  }
+});
+
+// --- PS-04: a fresh dispatch refuses a run whose decisions.md has an unbacked ruling ---
+
+const BLOCK_C = join(BOX, 'block-criteria.md');
+writeFileSync(BLOCK_C, 'Slice 7\nAcceptance:\nC1: first\nC2: second\nGates: G1\n');
+const UNBACKED = 'Changes the bar (slice 7): C99';
+let rdN = 0;
+// A run dir with the files a case needs; `state` writes run.json.
+const runDir = ({ decisions, state } = {}) => {
+  const d = join(BOX, `rd-${++rdN}`);
+  mkdirSync(d, { recursive: true });
+  if (decisions !== undefined) writeFileSync(join(d, 'decisions.md'), `# Decisions\n\n${decisions}\n`);
+  if (state) writeFileSync(join(d, 'run.json'), JSON.stringify({ schema: 1, state }));
+  return d;
+};
+const noRowDispatched = (R) => assert.ok(!ledger(R).slices.some((s) => s.state === 'dispatched'), 'no row is left dispatched');
+
+// Run a fresh dispatch of slice 7 that must refuse, and check what a refusal leaves behind.
+function refused(R, WT, extraArgs = [], extraEnv = {}) {
+  const r = runFail([R, WT, 'feat/rl', BLOCK_C, '--id', '7', ...extraArgs], extraEnv);
+  assert.equal(r.status, 6);
+  assert.match(r.stderr, new RegExp(`^unbacked: ${UNBACKED.replace(/[().]/g, '\\$&')}$`, 'm'));
+  assert.equal(r.log, '', 'no launch, no pane send, no stub call');
+  assert.doesNotMatch(hoff(['section', 'get', hoff(['path', WT, 'arch']), 'Frozen gates']), /C1:/, 'Frozen gates unchanged');
+  noRowDispatched(R);
+  return r;
+}
+
+test('C8a: --run-dir whose decisions.md holds an unbacked marker for the --id refuses with exit 6', () => {
+  const R = repo();
+  refused(R, join(BOX, 'wt-rl-a'), ['--run-dir', runDir({ decisions: UNBACKED })]);
+});
+
+test('C8b: the run dir may come only from the ledger run_dir link', () => {
+  const R = repo();
+  hoff(['ledger', 'init', R, 'g', '--run-dir', runDir({ decisions: UNBACKED })]);
+  refused(R, join(BOX, 'wt-rl-b'));
+});
+
+test('C8c: a live BORK_RUN_DIR is consulted; a done one is not', () => {
+  const R = repo();
+  refused(R, join(BOX, 'wt-rl-c1'), [], { BORK_RUN_DIR: runDir({ decisions: UNBACKED, state: 'running' }) });
+  const R2 = repo();
+  const { log } = run([R2, join(BOX, 'wt-rl-c2'), 'feat/rl2', BLOCK_C, '--id', '7'], { BORK_RUN_DIR: runDir({ decisions: UNBACKED, state: 'done' }) });
+  assert.match(log, /tab create/, 'a dead run dir’s decisions.md is not consulted');
+});
+
+test('C8d/C8e: backed markers, no markers and no decisions.md all dispatch', () => {
+  for (const [i, d] of [
+    runDir({ decisions: 'Changes the bar (slice 7): C1, C2\nChanges the bar (slice 8): C99' }),
+    runDir({ decisions: 'A ruling with no marker line.' }),
+    runDir({}),
+  ].entries()) {
+    const R = repo();
+    const { log } = run([R, join(BOX, `wt-rl-d${i}`), `feat/rl-d${i}`, BLOCK_C, '--id', '7', '--run-dir', d]);
+    assert.match(log, /tab create/, `case ${i}`);
+    assert.equal(row(R, '7').state, 'dispatched');
+  }
+});
+
+test('C8f: --corrective never runs rulings', () => {
+  const R = repo();
+  const d = runDir({ decisions: UNBACKED });
+  const WT = join(BOX, 'wt-rl-f');
+  hoff(['ledger', 'init', R, 'g', '--run-dir', runDir({})]);
+  run([R, WT, 'feat/rl-f', BLOCK, '--id', '7']);
+  const doc = hoff(['path', WT, 'arch']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  finish(doc);
+  hoff(['ledger', 'set', R, '7', '--state', 'rejected', '--verdict', 'g1 failed 1/2']);
+  const l = JSON.parse(hoff(['ledger', 'show', R]));
+  writeFileSync(hoff(['ledger', 'path', R]), JSON.stringify({ ...l, run_dir: d }));
+  const { log } = run([R, WT, 'feat/rl-f', FIX, '--id', '7', '--corrective']);
+  assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*blocker B1 token leak/);
+  assert.match(log, /pane run w9:p7/);
+});
+
+test('C8g/C23: the rulings child gets an allowlisted env and its exit code passes through', () => {
+  const canary = join(BOX, 'canary.cjs');
+  const trace = join(BOX, 'canary.log');
+  rmSync(trace, { force: true });
+  writeFileSync(canary, `require('fs').appendFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv) + '\\n');\n`);
+  const R = repo();
+  const r = refused(R, join(BOX, 'wt-rl-g'), ['--run-dir', runDir({ decisions: UNBACKED })], { NODE_OPTIONS: `--require ${canary}` });
+  assert.equal(r.status, 6);
+  const seen = existsSync(trace) ? readFileSync(trace, 'utf8') : '';
+  assert.ok(seen.includes('handoff.mjs'), 'the canary fires in the children that inherit NODE_OPTIONS');
+  assert.doesNotMatch(seen, /rulings/, 'but not in the rulings child');
+});
+
+// --- PS-03: a fresh dispatch records the slice's base commit and ref in the handoff ---
+
+const fm = (doc, key) => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(readFileSync(doc, 'utf8').split('\n## ')[0])?.[1];
+const baseRepo = () => {
+  const R = repo();
+  git(R, ['branch', 'trunk']);
+  return R;
+};
+const tip = (dir, ref = 'HEAD') => git(dir, ['rev-parse', ref]);
+
+test('C3a/C19a: --base <branch> on a created worktree records the resolved sha and the full ref; advancing the branch changes nothing', () => {
+  const R = baseRepo();
+  const want = tip(R, 'trunk');
+  const WT = join(BOX, 'wt-b-a');
+  run([R, WT, 'feat/b-a', BLOCK, '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), want);
+  assert.match(want, /^[0-9a-f]{40}$/);
+  assert.equal(fm(doc, 'base_ref'), 'refs/heads/trunk');
+  git(R, ['commit', '-q', '--allow-empty', '-m', 'trunk moves']);
+  git(R, ['branch', '-f', 'trunk', 'HEAD']);
+  assert.equal(fm(doc, 'base'), want, 'the recorded sha does not follow the branch');
+});
+
+test('C3b: a created worktree without --base records the repo HEAD sha and its branch ref', () => {
+  const R = baseRepo();
+  const want = tip(R);
+  const WT = join(BOX, 'wt-b-b');
+  run([R, WT, 'feat/b-b', BLOCK]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), want);
+  assert.equal(fm(doc, 'base_ref'), 'refs/heads/main');
+});
+
+test('C3c: a reused worktree with --base records the resolved sha', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-b-c');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/b-c', WT]);
+  run([R, WT, 'feat/b-c', BLOCK, '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), tip(R, 'trunk'));
+  assert.equal(fm(doc, 'base_ref'), 'refs/heads/trunk');
+});
+
+test('C3d: a reused worktree without --base writes no base and no base_ref, never a guess', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-b-d');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/b-d', WT]);
+  git(WT, ['commit', '-q', '--allow-empty', '-m', 'work']);
+  run([R, WT, 'feat/b-d', BLOCK]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), undefined);
+  assert.equal(fm(doc, 'base_ref'), undefined);
+});
+
+test('C19a: a --base that is a sha or a tag records base but no base_ref', () => {
+  const R = baseRepo();
+  git(R, ['tag', 'v1']);
+  for (const [i, ref] of [tip(R), 'v1'].entries()) {
+    const WT = join(BOX, `wt-b-ref${i}`);
+    run([R, WT, `feat/b-ref${i}`, BLOCK, '--base', ref]);
+    const doc = hoff(['path', WT, 'arch']);
+    assert.equal(fm(doc, 'base'), tip(R), ref);
+    assert.equal(fm(doc, 'base_ref'), undefined, ref);
+  }
+});
+
+test('C3e: --corrective, warm or cold, leaves base and base_ref byte-identical', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-b-e');
+  run([R, WT, 'feat/b-e', BLOCK, '--id', '1', '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  const before = [fm(doc, 'base'), fm(doc, 'base_ref')];
+  git(R, ['branch', '-f', 'trunk', 'HEAD']);
+  git(R, ['commit', '-q', '--allow-empty', '-m', 'main moves']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  finish(doc);
+  hoff(['ledger', 'set', R, '1', '--state', 'rejected', '--verdict', 'g1 failed 1/2']);
+  run([R, WT, 'feat/b-e', FIX, '--id', '1', '--corrective']);
+  assert.deepEqual([fm(doc, 'base'), fm(doc, 'base_ref')], before, 'warm');
+  rmSync(`${doc}.builder`, { force: true });
+  hoff(['ledger', 'set', R, '1', '--state', 'rejected', '--verdict', 'g1 failed 1/2']);
+  run([R, WT, 'feat/b-e', FIX, '--id', '1', '--corrective']);
+  assert.deepEqual([fm(doc, 'base'), fm(doc, 'base_ref')], before, 'cold');
+});
+
+test('C3f: a --base that does not resolve to a commit is never written', () => {
+  const R = baseRepo();
+  for (const [i, bad] of ['no-such-branch', '--output=/nope'].entries()) {
+    const WT = join(BOX, `wt-b-f${i}`);
+    const r = runFail([R, WT, `feat/b-f${i}`, BLOCK, '--base', bad]);
+    assert.notEqual(r.status, 0, bad);
+    assert.equal(r.log, '', 'nothing was launched');
+    const doc = hoff(['path', WT, 'arch']);
+    assert.ok(!existsSync(doc) || fm(doc, 'base') === undefined, bad);
+  }
+  const WT = join(BOX, 'wt-b-f-reused');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/b-f-reused', WT]);
+  const r = runFail([R, WT, 'feat/b-f-reused', BLOCK, '--base', 'no-such-branch']);
+  assert.notEqual(r.status, 0);
+  assert.equal(r.log, '');
+});
+
+test('K4: a refused freeze leaves base and base_ref exactly as they were', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-k4');
+  run([R, WT, 'feat/k4', BLOCK_C, '--id', '1', '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  const before = readFileSync(doc, 'utf8').split('\n## ')[0];
+  assert.match(before, /^base: [0-9a-f]{40}$/m);
+  git(R, ['commit', '-q', '--allow-empty', '-m', 'main moves']);
+  const other = join(BOX, 'block-other-ids.md');
+  writeFileSync(other, 'Other slice\nAcceptance:\nC7: different criterion\n');
+  const r = runFail([R, WT, 'feat/k4', other, '--id', '1', '--base', 'main']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Frozen gates .* already hold criteria/);
+  assert.equal(r.log, '', 'nothing was launched');
+  assert.equal(readFileSync(doc, 'utf8').split('\n## ')[0], before, 'the frontmatter is byte-identical');
+});
+
+// --- AT-02: local gate lines are frozen beside the criteria ---------------------------
+// A local gate is `L<n>: local: <command>`. The freeze copies a block's local lines verbatim into
+// Frozen gates, refuses a malformed one before anything launches, and handoff.mjs's `ready` runs them.
+// The freeze keeps its own copy of the parser; the table below runs one set of lines through both.
+
+const spawnEnv = (extra = {}) => ({ ...env(), ...extra });
+const localsOf = (doc) => frozenOf(doc).split('\n').filter((l) => /local\s*:/.test(l) && !/^\s*(?:[-*]\s+)?C\d/.test(l));
+
+// [name, line, runs?]. Every command appends the row's label to a file, so what ran is visible.
+const LOCAL_TABLE = [
+  ['plain', 'L1: local: CMD', true],
+  ['dash list marker', '- L2: local: CMD', true],
+  ['star list marker', '* L3: local: CMD', true],
+  ['numbered', '1. L4: local: CMD', true],
+  ['indented', '   L5: local: CMD', true],
+  ['spaces around the colons', 'L6 : local : CMD', true],
+  ['trailing spaces are not part of the command', 'L7: local: CMD   ', true],
+  ['a criterion line that says local:', 'C20: local: CMD', false],
+  ['a criterion line with a dash list', '- C21 local: CMD', false],
+  ['an ID with no local marker', 'L8: CMD', false],
+  ['a mid-line mention', 'see L9: local: CMD', false],
+  ['a one-line comment', '<!-- L10: local: CMD -->', false],
+  ['a lowercase id', 'l11: local: CMD', false],
+];
+const labeled = (out) => LOCAL_TABLE.map(([, line], i) => line.replace('CMD', `echo row${i} >> ${out}/ran`));
+
+function blockWith(lines) { return `Execute the slice.\nAcceptance:\nC1: x\n${lines.join('\n')}\nGates: none\n`; }
+
+test('C1b: the freeze copy and handoff.mjs read the same local lines (table, with a comment, an unclosed opener and CRLF)', () => {
+  for (const crlf of [false, true]) {
+    const out = join(BOX, `lt-${crlf ? 'crlf' : 'lf'}`);
+    mkdirSync(out, { recursive: true });
+    const lines = [...labeled(out), '<!-- unclosed', `L12: local: echo row-hidden >> ${out}/ran`, '', `L13: local: echo row-after >> ${out}/ran`];
+    const text = blockWith(lines);
+    const R = repo();
+    const WT = join(BOX, `wt-lt-${crlf ? 'crlf' : 'lf'}`);
+    run([R, WT, `feat/lt-${crlf ? 'crlf' : 'lf'}`, blockFile(`lt-block-${crlf}.md`, crlf ? text.replace(/\n/g, '\r\n') : text)]);
+    const doc = hoff(['path', WT, 'arch']);
+    const frozenRows = localsOf(doc).map((l) => /echo (row[\w-]+)/.exec(l)?.[1]);
+    // handoff.mjs side: the same lines as Frozen gates in a doc over a real repo; every gate it runs appends its label.
+    const R2 = repo();
+    const other = hoff(['init', R2, 'arch', 'lt']);
+    hoff(['section', 'set', other, 'Frozen gates', '--text', text.replace(/\n/g, crlf ? '\r\n' : '\n')]);
+    // C20 and C21 are criterion lines that merely say `local:`, so they need Gate results lines like any criterion.
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok\nC20: ok\nC21: ok`]);
+    const r = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(join(out, 'ran')), 'ready ran no local gate');
+    const ran = readFileSync(join(out, 'ran'), 'utf8').trim().split('\n');
+    assert.deepEqual(frozenRows, ran, `freeze and ready disagree (crlf=${crlf})`);
+    assert.deepEqual(ran, ['row0', 'row1', 'row2', 'row3', 'row4', 'row5', 'row6', 'row-after']);
+    rmSync(join(out, 'ran'), { force: true });
+  }
+});
+
+test('C1b: the freeze and handoff.mjs both refuse the same malformed lines', () => {
+  for (const [what, lines] of [['empty command', ['L1: local:']], ['spaces only', ['L1: local:    ']], ['duplicate id', ['L1: local: true', 'L1: local: true']], ['no colon after local', ['L1: local true']],
+    ['decorated id', ['**L1**: local: make']], ['backticked line', ['`L1: local: make`']], ['table row', ['| L1: local: make |']], ['bold list form', ['- **L1: local:** make']], ['Local in another case', ['L1: Local: make']]]) {
+    const R = repo();
+    const WT = join(BOX, `wt-bad-${what.replace(/\W/g, '')}`);
+    const r = runFail([R, WT, `feat/bad-${what.replace(/\W/g, '')}`, blockFile(`bad-${what.replace(/\W/g, '')}.md`, blockWith(lines))]);
+    assert.notEqual(r.status, 0, `${what}: the freeze must refuse`);
+    const R2 = repo();
+    const other = hoff(['init', R2, 'arch', 'bad']);
+    hoff(['section', 'set', other, 'Frozen gates', '--text', blockWith(lines)]);
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok`]);
+    const q = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
+    assert.notEqual(q.status, 0, `${what}: ready must refuse`);
+  }
+});
+
+test('C1g/C1h: a malformed local line in the block refuses the dispatch: nothing launched, Frozen gates untouched', () => {
+  for (const [what, lines] of [['empty', ['L1: local:']], ['duplicate', ['L1: local: true', 'L1: local: echo again']]]) {
+    const R = repo();
+    const WT = join(BOX, `wt-refuse-${what}`);
+    git(R, ['worktree', 'add', '-q', '-b', `feat/refuse-${what}`, WT]);
+    const doc = hoff(['init', WT, 'arch', what]);
+    const before = readFileSync(doc, 'utf8').match(/^## Frozen gates\n[\s\S]*?(?=^## )/m)[0];
+    const r = runFail([R, WT, `feat/refuse-${what}`, blockFile(`refuse-${what}.md`, blockWith(lines))]);
+    assert.notEqual(r.status, 0, what);
+    assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
+    assert.equal(readFileSync(doc, 'utf8').match(/^## Frozen gates\n[\s\S]*?(?=^## )/m)[0], before);
+  }
+});
+
+test('C2a: a fresh dispatch copies every local line verbatim beside the criterion lines', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lcopy');
+  const lines = ['L1: local: node --test a.mjs', '- L2: local: ruby scripts/validate-skills.rb --strict'];
+  run([R, WT, 'feat/lcopy', blockFile('lcopy.md', blockWith(lines))]);
+  const doc = hoff(['path', WT, 'arch']);
+  const frozen = frozenOf(doc).split('\n');
+  for (const l of ['C1: x', ...lines]) assert.ok(frozen.includes(l), `frozen verbatim: ${l}`);
+  assert.deepEqual(coverage(doc).ids, ['C1'], 'a local line is not a criterion');
+});
+
+test('C2b: a block with local lines and no criterion IDs still freezes the local lines', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lonly');
+  const { stdout } = run([R, WT, 'feat/lonly', blockFile('lonly.md', 'Execute it.\nL1: local: true\n')]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.ok(frozenOf(doc).split('\n').includes('L1: local: true'));
+  assert.doesNotMatch(stdout, /warning/i, 'a block with a local gate is not a block with nothing frozen');
+});
+
+test('C2c: --corrective never changes Frozen gates, local lines included', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lcorr');
+  run([R, WT, 'feat/lcorr', blockFile('lcorr.md', blockWith(['L1: local: true']))]);
+  const doc = hoff(['path', WT, 'arch']);
+  rmSync(`${doc}.builder`, { force: true });
+  hoff(['status', doc, 'returned']);
+  hoff(['ledger', 'set', R, '1', '--state', 'returned']);
+  const before = frozenOf(doc);
+  run([R, WT, 'feat/lcorr', blockFile('lcorr-fix.md', 'Corrective.\nC1: x\nL1: local: exit 9\nL2: local: true\n'), '--corrective']);
+  assert.equal(frozenOf(doc), before);
+});
+
+test('C2d: a second fresh dispatch with the same block leaves Frozen gates byte-identical', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lagain');
+  const block = blockFile('lagain.md', blockWith(['L1: local: true']));
+  run([R, WT, 'feat/lagain', block]);
+  const doc = hoff(['path', WT, 'arch']);
+  const before = frozenOf(doc);
+  rmSync(`${doc}.builder`, { force: true });
+  run([R, WT, 'feat/lagain', block]);
+  assert.equal(frozenOf(doc), before);
+  assert.equal(frozenOf(doc).split('\n').filter((l) => l.startsWith('L1:')).length, 1, 'no duplicated local line');
+});
+
+test('C2e: the same criterion IDs with different local lines refuse the dispatch', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-ldiff');
+  run([R, WT, 'feat/ldiff', blockFile('ldiff.md', blockWith(['L1: local: true']))]);
+  const doc = hoff(['path', WT, 'arch']);
+  rmSync(`${doc}.builder`, { force: true });
+  const before = frozenOf(doc);
+  const r = runFail([R, WT, 'feat/ldiff', blockFile('ldiff2.md', blockWith(['L1: local: exit 9']))]);
+  assert.notEqual(r.status, 0);
+  assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
+  assert.equal(frozenOf(doc), before);
+});
+
+test('C2f: a failed launch restores Frozen gates, local lines included', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lfail');
+  const r = runFail([R, WT, 'feat/lfail', blockFile('lfail.md', blockWith(['L1: local: true']))], { HERDR_STUB_MODE: 'fail-create' });
+  assert.notEqual(r.status, 0);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.ok(!/L1: local/.test(frozenOf(doc)), 'the failed dispatch left a local line behind');
+  assert.ok(!/C1: x/.test(frozenOf(doc)));
+});
+
+test('C9h: the dispatch-slice.sh header documents freezing local lines', () => {
+  const head = readFileSync(SLICE, 'utf8').split('\nset -uo pipefail')[0];
+  assert.match(head, /local: <command>/);
+  assert.match(head, /malformed|empty command/);
+});
+
+test('K1: a near-miss local line in the block refuses the dispatch, naming the line: nothing launched, Frozen gates untouched', () => {
+  for (const line of ['**L1**: local: make', '`L1: local: make`', '| L1: local: make |', '- **L1: local:** make', 'L1: Local: make']) {
+    const R = repo();
+    const tag = Buffer.from(line).toString('hex').slice(0, 10);
+    const WT = join(BOX, `wt-near-${tag}`);
+    git(R, ['worktree', 'add', '-q', '-b', `feat/near-${tag}`, WT]);
+    const doc = hoff(['init', WT, 'arch', 'near']);
+    const before = frozenOf(doc);
+    const r = runFail([R, WT, `feat/near-${tag}`, blockFile(`near-${tag}.md`, blockWith([line]))]);
+    assert.notEqual(r.status, 0, line);
+    assert.ok(r.stderr.includes(line), `the refusal names the line: ${r.stderr}`);
+    assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
+    assert.equal(frozenOf(doc), before);
   }
 });

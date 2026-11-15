@@ -24,6 +24,11 @@
 //                                       [--note n] [--pane w:p1] [--handoff p] [--branch b]
 //   node handoff.mjs ledger goal  <cwd> "<goal text>"
 //   node handoff.mjs ledger report [<cwd>] [--all [--since YYYY-MM-DD]] [--json|--verdicts]   -> build/judge minutes per slice, rejections, concurrency
+//                                       (--json adds rejection_entries: slice, at, verdict, review_only, provenance, checkable)
+//
+// A rejection needs a verdict. A review-only one (the review sent back work whose gates passed) also needs
+// a provenance tag ("named C<n>" or "unnamed") and a checkable tag ("checkable: <tool>" or "checkable: no");
+// a failed gate needs neither. The check runs on write only: old ledgers whose history lacks the tags still load.
 //   node handoff.mjs board        <cwd> [--json] [--no-git] [--no-pane]
 //
 // Ownership: the ledger filename is keyed on $CLAUDE_CODE_SESSION_ID, and every
@@ -207,7 +212,11 @@ function applyFields(slice, f) {
 // had none. A send-back with no verdict against the work is `returned`, not
 // `rejected`. A review-only rejection also carries its provenance tag: whether a
 // frozen criterion named the blocker (`named C5`) or none did (`unnamed`).
-const VERDICT_TAG = /\b(named\s+C\d+|unnamed)\b/i;
+// It also carries `checkable: <tool>` (one lowercase token naming the kind of
+// deterministic check that could have caught the blocker) or `checkable: no`, so
+// the dreaming pass can count how much review work a lint or test could take over.
+const VERDICT_TAG = /\b(named\s+C\d+[a-z]?|unnamed)\b/i;
+const CHECKABLE_TAG = /\bcheckable:\s*(no\b|[a-z0-9][a-z0-9._\/-]*)/i;
 export function assertVerdict(fields) {
   if (fields.state !== 'rejected') return;
   const v = String(fields.verdict ?? '').trim();
@@ -223,6 +232,13 @@ export function assertVerdict(fields) {
       `refusing a review-only rejection without a provenance tag: "${v}"\n` +
       'Add "named C<n>" when a frozen criterion named the blocker (the builder missed it),\n' +
       'or "unnamed" when no criterion did (the spec review missed it).',
+    );
+  }
+  if (REVIEW_ONLY(v) && !CHECKABLE_TAG.test(v)) {
+    die(
+      `refusing a review-only rejection without a checkable tag: "${v}"\n` +
+      'Add "checkable: <tool>" (grep-ratchet, lint, test, type, phpcs...) when a deterministic check\n' +
+      'could have caught the blocker, or "checkable: no" when only a reviewer could.',
     );
   }
 }
@@ -542,6 +558,19 @@ export function sliceTiming(s) {
     ? rejectedEntries.map((h) => h.at || '')
     : (s.state === 'rejected' ? [s.updated || ''] : []);
   const reviewOnlyDates = verdicts.map((v, i) => (REVIEW_ONLY(v) ? verdictDates[i] : null)).filter((d) => d !== null);
+  // One object per rejected entry, for the dreaming pass: whether it was
+  // review-only, which provenance and checkable tags it carried. An entry
+  // recorded before X1 has no checkable tag and reads null.
+  const rejectionEntries = verdicts.map((verdict, i) => {
+    const reviewOnly = REVIEW_ONLY(verdict);
+    const prov = reviewOnly ? VERDICT_TAG.exec(verdict) : null;
+    const check = reviewOnly ? CHECKABLE_TAG.exec(verdict) : null;
+    return {
+      slice: s.id, at: verdictDates[i] || '', verdict, review_only: reviewOnly,
+      provenance: prov ? prov[1].toLowerCase().replace(/^named\s+c/, 'named C').replace(/\s+/g, ' ') : null,
+      checkable: check ? check[1].toLowerCase() : null,
+    };
+  });
   const terminalEntry = [...history].reverse().find((h) => TERMINAL_STATES.has(h.state));
   const terminal = terminalEntry ? terminalEntry.t : (TERMINAL_STATES.has(s.state) ? parseAt(s.updated) : null);
   // A slice reopened after acceptance (a follow-up sent to the warm builder)
@@ -561,6 +590,7 @@ export function sliceTiming(s) {
     review_only_rejections: reviewOnlyVerdicts.length,
     review_only_verdicts: reviewOnlyVerdicts,
     review_only_dates: reviewOnlyDates,
+    rejection_entries: rejectionEntries,
     judged: landed || rejections > 0,
     first_pass: landed && !corrective && rounds.length - returnedRounds <= 1 && rejections === 0,
     dispatched_at: rounds.length ? rounds[rounds.length - 1].start : null,
@@ -602,6 +632,7 @@ export function reportLedger(l, p) {
     redispatches: total('redispatches'),
     rejections: total('rejections'),
     review_only_rejections: total('review_only_rejections'),
+    rejection_entries: slices.flatMap((x) => x.rejection_entries),
     judged: slices.filter((s) => s.judged).length,
     first_pass: slices.filter((s) => s.first_pass).length,
     median_build_min: median(slices.map((s) => s.build_min)),
@@ -630,6 +661,15 @@ export function renderVerdicts(runs) {
   return out || '(no review-only rejections recorded)\n';
 }
 
+// `checkable: <t> of <n> review-only tagged with a tool (<k> no, <u> untagged)`:
+// <n> counts every review-only rejection in scope, tagged or not.
+const checkableLine = (entries) => {
+  const ro = entries.filter((e) => e.review_only);
+  const no = ro.filter((e) => e.checkable === 'no').length;
+  const untagged = ro.filter((e) => e.checkable === null).length;
+  return `checkable: ${ro.length - no - untagged} of ${ro.length} review-only tagged with a tool (${no} no, ${untagged} untagged)`;
+};
+
 export function renderReport(runs, { json = false } = {}) {
   const totals = { runs: runs.length, slices: 0, accepted: 0, rejected: 0, merged: 0, abandoned: 0 };
   const SUMMED = ['correctives', 'redispatches', 'rejections', 'review_only_rejections', 'judged', 'first_pass'];
@@ -657,7 +697,8 @@ export function renderReport(runs, { json = false } = {}) {
     out += `       ${rework(r)}\n`;
     out += `       review-only rejections: ${r.review_only_rejections} of ${r.rejections}`;
     out += ` · median build ${fmtMin(r.median_build_min)} · median judge ${fmtMin(r.median_judge_min)}`;
-    out += ` · max concurrent builders: ${r.max_concurrent} · span ${fmtMin(r.span_min)}\n\n`;
+    out += ` · max concurrent builders: ${r.max_concurrent} · span ${fmtMin(r.span_min)}\n`;
+    out += `       ${checkableLine(r.rejection_entries)}\n\n`;
     out += `${pad('ID', 5)}${pad('STATE', 11)}${pad('SLICE', 32)}${pad('BUILD', 7)}${pad('JUDGE', 7)}${pad('RNDS', 5)}VERDICT\n`;
     out += `${'-'.repeat(105)}\n`;
     for (const s of r.slices) {
@@ -671,6 +712,7 @@ export function renderReport(runs, { json = false } = {}) {
     out += `       ${rework(totals)}\n`;
     out += `       review-only rejections: ${totals.review_only_rejections} of ${totals.rejections}`;
     out += ` · median build ${fmtMin(totals.median_build_min)} · median judge ${fmtMin(totals.median_judge_min)}\n`;
+    out += `       ${checkableLine(runs.flatMap((r) => r.rejection_entries))}\n`;
   }
   return out;
 }

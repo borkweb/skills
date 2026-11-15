@@ -20,11 +20,9 @@ const NODE = process.execPath;
 const BOX = mkdtempSync(join(tmpdir(), 'ofl-stop-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 
+// An allowlisted child env (PATH, HOME, TMPDIR, the ledger dir), never the ambient one.
 const envFor = (session) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.HERDR_ENV;
-  delete env.BORK_RUN_DIR;
+  const env = { PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), AGENT_HANDOFFS_DIR: BOX };
   if (session) env.CLAUDE_CODE_SESSION_ID = session;
   return env;
 };
@@ -196,3 +194,20 @@ for (const [name, body, schemaNote] of [
     assert.equal(JSON.parse(res).decision, 'block');
   });
 }
+
+// C14c: dispatch-slice.sh and dispatch.sh treat a BORK_RUN_DIR whose directory is gone as no run
+// (one shared predicate); the hook must agree, so it falls back to the ledger's run_dir.
+test('a BORK_RUN_DIR that does not exist is ignored and the ledger run_dir (needs-me) allows the stop', () => {
+  const ledgerRun = runDirWith('ledger-needs-me-missing', runJson('needs-me'));
+  const REPO = owedRepo('env-missing-ledger-needs-me', ledgerRun);
+  assert.equal(fireRun({ session_id: 'arch', cwd: REPO }, join(BOX, 'no-such-run-dir')), '');
+});
+
+// K6: `[ -d ]` in env_run_dir_live is false for a regular file; the hook must agree.
+test('a BORK_RUN_DIR that names a regular file is ignored and the ledger run_dir (needs-me) allows the stop', () => {
+  const ledgerRun = runDirWith('ledger-needs-me-file', runJson('needs-me'));
+  const REPO = owedRepo('env-file-ledger-needs-me', ledgerRun);
+  const file = join(BOX, 'run-is-a-file');
+  writeFileSync(file, 'not a directory\n');
+  assert.equal(fireRun({ session_id: 'arch', cwd: REPO }, file), '');
+});

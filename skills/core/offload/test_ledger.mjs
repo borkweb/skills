@@ -19,13 +19,12 @@ const NODE = process.execPath;
 const BOX = mkdtempSync(join(tmpdir(), 'ldg-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 
+// The child env is an allowlist (PATH, HOME, TMPDIR and this test's own
+// variables), never the ambient one: a BORK_RUN_DIR, run registry, session id or
+// secret in the architect's shell must not reach the CLI.
 const run = (args, { session = 'arch', env: extra = {} } = {}) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX, ...extra };
-  delete env.CLAUDE_CODE_SESSION_ID;
+  const env = { PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), AGENT_HANDOFFS_DIR: BOX, ...extra };
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
-  // Real herdr must never be consulted by a test; only the cases that opt into
-  // the fake CLI below set HERDR_ENV.
-  if (!extra.HERDR_ENV) delete env.HERDR_ENV;
   return execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env }).trim();
 };
 
@@ -530,11 +529,11 @@ test('a state change stores the verdict it was judged with in history', () => {
   run(['ledger', 'init', REPO, 'g']);
   run(['ledger', 'add', REPO, '--id', '1', '--title', 't']);
   run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
-  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = do not land (unnamed)']);
+  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = do not land (unnamed) checkable: no']);
   run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
   const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
   const rejected = s.history.find((h) => h.state === 'rejected');
-  assert.equal(rejected.verdict, 'review = do not land (unnamed)');
+  assert.equal(rejected.verdict, 'review = do not land (unnamed) checkable: no');
   assert.equal(s.history.filter((h) => h.state === 'dispatched').every((h) => !('verdict' in h)), true);
 });
 
@@ -713,7 +712,7 @@ test('a rejection needs a verdict, and a review-only one needs its provenance ta
   // A failed gate is not review-only, so it needs no tag; returned needs no verdict.
   run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'g3 failed 0/3']);
   run(['ledger', 'set', REPO, '1', '--state', 'dispatched']);
-  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = DO NOT LAND: leak (named C2)']);
+  run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'review = DO NOT LAND: leak (named C2) checkable: lint']);
   run(['ledger', 'set', REPO, '1', '--state', 'returned']);
   const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
   assert.equal(s.state, 'returned');
@@ -775,4 +774,166 @@ test('board leads with HALTED while the run is halted, and its JSON carries the 
   run(['unhalt', REPO]);
   assert.doesNotMatch(board(REPO), /HALTED/);
   assert.match(runFail(['halted', REPO]), /^$/);
+});
+
+// --- X1: a review-only rejection names the deterministic check that could have caught it ---
+//
+// Every review-only rejection carries `checkable: <tool>` or `checkable: no`, so
+// the dreaming pass can see how much review work a lint or test could take over.
+// A gate-failed rejection needs no tag; old ledgers keep loading and report null.
+
+const ledgerFile = (REPO) => run(['ledger', 'path', REPO]);
+const REVIEW = 'review = DO NOT LAND: token leaks (unnamed)';
+const rejectedRow = (REPO) => {
+  run(['ledger', 'init', REPO, 'g']);
+  run(['ledger', 'add', REPO, '--id', '1', '--title', 't', '--state', 'dispatched']);
+};
+
+test('C1a: ledger add refuses a review-only rejection with no checkable tag and leaves the file alone', () => {
+  const REPO = repo('x1-add');
+  run(['ledger', 'init', REPO, 'g']);
+  const before = readFileSync(ledgerFile(REPO));
+  const err = runFail(['ledger', 'add', REPO, '--id', '1', '--state', 'rejected', '--verdict', 'DO NOT LAND unnamed: token leaks']);
+  assert.match(err, /checkable: <tool>/);
+  assert.match(err, /checkable: no/);
+  assert.ok(before.equals(readFileSync(ledgerFile(REPO))), 'ledger bytes unchanged');
+});
+
+test('C1b: ledger set refuses it too, and the row keeps its state and history', () => {
+  const REPO = repo('x1-set');
+  rejectedRow(REPO);
+  const before = readFileSync(ledgerFile(REPO));
+  const err = runFail(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'DO NOT LAND named C3: x']);
+  assert.match(err, /checkable: <tool>/);
+  assert.match(err, /checkable: no/);
+  assert.ok(before.equals(readFileSync(ledgerFile(REPO))), 'ledger bytes unchanged');
+  const s = JSON.parse(run(['ledger', 'show', REPO])).slices[0];
+  assert.equal(s.state, 'dispatched');
+  assert.deepEqual(s.history.map((h) => h.state), ['dispatched']);
+});
+
+test('C1d: checkable: <tool>, checkable: no and checkable:lint (no space) are accepted by add and set', () => {
+  for (const [i, tag] of ['checkable: grep-ratchet', 'checkable: no', 'checkable:lint'].entries()) {
+    const REPO = repo(`x1-ok-${i}`);
+    run(['ledger', 'init', REPO, 'g']);
+    const added = JSON.parse(run(['ledger', 'add', REPO, '--id', '1', '--state', 'rejected', '--verdict', `${REVIEW} ${tag}`]));
+    assert.equal(added.state, 'rejected', `add ${tag}`);
+    run(['ledger', 'add', REPO, '--id', '2', '--title', 't', '--state', 'dispatched']);
+    const set = JSON.parse(run(['ledger', 'set', REPO, '2', '--state', 'rejected', '--verdict', `${REVIEW} ${tag}`]));
+    assert.equal(set.state, 'rejected', `set ${tag}`);
+  }
+});
+
+test('C1e: near-miss tags are refused', () => {
+  const REPO = repo('x1-near');
+  run(['ledger', 'init', REPO, 'g']);
+  for (const [i, near] of ['checkable:', 'checkable: -lint', 'uncheckable: no', 'checkable — no'].entries()) {
+    const err = runFail(['ledger', 'add', REPO, '--id', String(i + 1), '--state', 'rejected', '--verdict', `${REVIEW} ${near}`]);
+    assert.match(err, /checkable: no/, near);
+  }
+  assert.deepEqual(JSON.parse(run(['ledger', 'show', REPO])).slices, []);
+});
+
+test('C1f: a gate-failed rejection needs no checkable tag', () => {
+  const REPO = repo('x1-gate');
+  rejectedRow(REPO);
+  const added = JSON.parse(run(['ledger', 'add', REPO, '--id', '2', '--state', 'rejected', '--verdict', 'gate notes-G4 failed: 3 tests red']));
+  assert.equal(added.state, 'rejected');
+  const set = JSON.parse(run(['ledger', 'set', REPO, '1', '--state', 'rejected', '--verdict', 'gate notes-G4 failed: 3 tests red']));
+  assert.equal(set.state, 'rejected');
+});
+
+test('C1g: a review-only verdict with the checkable tag but no provenance tag is still refused for provenance', () => {
+  const REPO = repo('x1-prov');
+  run(['ledger', 'init', REPO, 'g']);
+  const err = runFail(['ledger', 'add', REPO, '--id', '1', '--state', 'rejected', '--verdict', 'review = DO NOT LAND: leak checkable: lint']);
+  assert.match(err, /provenance tag/);
+});
+
+// A ledger as it was written before X1: the untagged review-only verdict lives in
+// the JSON, not behind the CLI that now refuses it.
+const taggedFixture = (REPO, session = 'arch') => fixtureLedger(REPO, session, [
+  { id: '1', title: 'a', state: 'rejected', verdict: 'review = DO NOT LAND: a (named C3) checkable: lint',
+    history: hist(['dispatched', '09:00'], ['rejected', '09:30']).map((h) => (h.state === 'rejected' ? { ...h, verdict: 'review = DO NOT LAND: a (named C3) checkable: LINT' } : h)) },
+  { id: '2', title: 'b', state: 'rejected', verdict: 'review = DO NOT LAND: b (unnamed) checkable: no',
+    history: hist(['dispatched', '09:00'], ['rejected', '09:40']).map((h) => (h.state === 'rejected' ? { ...h, verdict: 'review = DO NOT LAND: b (unnamed) checkable: no' } : h)) },
+  { id: '3', title: 'c', state: 'rejected', verdict: 'review = DO NOT LAND: c (unnamed)',
+    history: hist(['dispatched', '09:00'], ['rejected', '09:50']).map((h) => (h.state === 'rejected' ? { ...h, verdict: 'review = DO NOT LAND: c (unnamed)' } : h)) },
+  { id: '4', title: 'd', state: 'rejected', verdict: 'gate notes-G4 failed: 3 tests red',
+    history: hist(['dispatched', '09:00'], ['rejected', '10:00']).map((h) => (h.state === 'rejected' ? { ...h, verdict: 'gate notes-G4 failed: 3 tests red' } : h)) },
+]);
+
+test('C21c/C2a: ledger report --json gives each run rejection_entries with checkable, and keeps the numeric rejections', () => {
+  const REPO = repo('x1-json');
+  taggedFixture(REPO);
+  const r = JSON.parse(run(['ledger', 'report', REPO, '--json'])).runs[0];
+  assert.equal(r.rejections, 4, 'the existing run-level count keeps its name and value');
+  assert.equal(r.review_only_rejections, 3);
+  const by = Object.fromEntries(r.rejection_entries.map((e) => [e.slice, e]));
+  assert.equal(r.rejection_entries.length, 4);
+  assert.deepEqual(Object.keys(by['1']).sort(), ['at', 'checkable', 'provenance', 'review_only', 'slice', 'verdict']);
+  assert.equal(by['1'].checkable, 'lint', 'lowercased');
+  assert.equal(by['1'].provenance, 'named C3');
+  assert.equal(by['1'].review_only, true);
+  assert.equal(by['2'].checkable, 'no');
+  assert.equal(by['2'].provenance, 'unnamed');
+  assert.equal(by['3'].checkable, null, 'a pre-change untagged verdict');
+  assert.equal(by['3'].provenance, 'unnamed');
+  assert.equal(by['4'].checkable, null, 'a gate-failed rejection');
+  assert.equal(by['4'].review_only, false);
+  assert.equal(by['4'].provenance, null);
+  assert.equal(by['1'].at, '2026-10-20T09:30:00.000Z');
+});
+
+test('C2b: ledgers whose history holds untagged review-only verdicts still load everywhere', () => {
+  const REPO = repo('x1-old');
+  taggedFixture(REPO);
+  run(['ledger', 'add', REPO, '--id', '9', '--title', 'other', '--state', 'dispatched']);
+  for (const args of [['report', REPO], ['report', REPO, '--json'], ['report', REPO, '--verdicts'], ['report', '--all']]) {
+    run(['ledger', ...args]);
+  }
+  const set = JSON.parse(run(['ledger', 'set', REPO, '9', '--state', 'accepted']));
+  assert.equal(set.state, 'accepted');
+});
+
+test('C2c: the report prints the share of review-only rejections tagged with a tool, per run and in TOTALS', () => {
+  const A = repo('x1-share-a');
+  taggedFixture(A, 'arch-sa');
+  const one = run(['ledger', 'report', A], { session: 'arch-sa' });
+  assert.match(one, /^\s+checkable: 1 of 3 review-only tagged with a tool \(1 no, 1 untagged\)$/m);
+  assert.doesNotMatch(one, /TOTALS/);
+  const B = repo('x1-share-b');
+  fixtureLedger(B, 'arch-sb', [
+    { id: '1', title: 'x', state: 'rejected', verdict: 'review = DO NOT LAND: x (unnamed) checkable: test',
+      history: [{ state: 'dispatched', at: T('09:00') }, { state: 'rejected', at: T('09:30'), verdict: 'review = DO NOT LAND: x (unnamed) checkable: test' }] },
+  ]);
+  const two = run(['ledger', 'report', A, '--all'], { session: 'arch-sa' });
+  const totals = two.slice(two.indexOf('TOTALS'));
+  assert.match(two, /^\s+checkable: 1 of 3 review-only tagged with a tool \(1 no, 1 untagged\)$/m, 'a run line');
+  assert.match(totals, /^\s+checkable: \d+ of \d+ review-only tagged with a tool \(\d+ no, \d+ untagged\)$/m);
+});
+
+test('C2d: each --verdicts line for a tagged verdict prints its checkable tag', () => {
+  const REPO = repo('x1-verdicts');
+  taggedFixture(REPO);
+  const lines = run(['ledger', 'report', REPO, '--verdicts']).split('\n');
+  assert.ok(lines.find((l) => l.includes('@arch/1') && /checkable: lint/i.test(l)));
+  assert.ok(lines.find((l) => l.includes('@arch/2') && /checkable: no/.test(l)));
+});
+
+// K7: the provenance tag takes a sub-letter ID (`named C22b`), keeps it in the report, and still
+// refuses a tag with no ID digits or no space.
+test('K7: named C5d and named C22b satisfy the provenance tag; named C and namedC5 do not', () => {
+  const REPO = repo('k7');
+  run(['ledger', 'init', REPO, 'g']);
+  for (const [i, tag] of ['named C5d', 'named C22b', 'named C22'].entries()) {
+    const added = JSON.parse(run(['ledger', 'add', REPO, '--id', String(i + 1), '--state', 'rejected', '--verdict', `DO NOT LAND ${tag}, checkable: test`]));
+    assert.equal(added.state, 'rejected', tag);
+  }
+  for (const [i, tag] of ['named C', 'namedC5', 'named C5dx'].entries()) {
+    const err = runFail(['ledger', 'add', REPO, '--id', String(i + 10), '--state', 'rejected', '--verdict', `DO NOT LAND ${tag}, checkable: test`]);
+    assert.match(err, /provenance tag/, tag);
+  }
+  const r = JSON.parse(run(['ledger', 'report', REPO, '--json'])).runs[0];
+  assert.deepEqual(r.rejection_entries.map((e) => e.provenance), ['named C5d', 'named C22b', 'named C22']);
 });
