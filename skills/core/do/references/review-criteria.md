@@ -6,7 +6,7 @@ This file is the public seed. Runs read the user's private copy, `~/.borkweb-ski
 
 Class numbers are stable between the seed and the private copy, and a retired or merged number is not reused. Class 8 was retired and class 10 merged into 5 on 2026-11-13.
 
-Each class ends with an `Enforced by:` line. Its value is `prose only` (only the criterion and the reviewer catch the defect) or the repo path of a check, a test, lint rule or script that fails when the defect appears. A class with no `Enforced by:` line counts as `prose only`; that includes every class in a private copy written before the line existed. Dreaming sets the line when an approved check row lands the check on the repo's default branch ([dreaming.md](dreaming.md)).
+Each class ends with an `Enforced by:` line. Its value is `prose only` (only the criterion and the reviewer catch the defect) or the repo path of a check, a test, lint rule or script that fails when the defect appears. A class with no `Enforced by:` line counts as `prose only`; that includes every class in a private copy written before the line existed. Dreaming sets the line from an approved check row once the check is on the repo's default branch, on the pass after the check lands ([dreaming.md](dreaming.md), pending enforcement). In a private copy the value is `<repo key>:<path>`, because a private class is not tied to one repo.
 
 ## 1. Fails open
 

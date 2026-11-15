@@ -51,7 +51,7 @@ Source: <citation, for example repo@session/slice, or a PR or file:line>
 
 `applies_when` is a YAML list of conditions. A rule applies when any one of them fits the slice's files or behavior. Write them as the words a spec uses ("changes anything under `src/billing/`", "adds a REST endpoint"), not as globs a program must match. A file with bad frontmatter or a missing or non-list `applies_when` is malformed: skip it and report it as a gap. Never refuse the run over it.
 
-`enforced_by` names the check (a test, lint rule or script) that catches a violation without a reviewer. An absent key means `prose only`: only the rule and the reviewer catch it. It is never malformed. Dreaming sets it with an approved check row, only when the check exists on the repo's default branch.
+`enforced_by` names the check (a test, lint rule or script) that catches a violation without a reviewer. An absent key means `prose only`: only the rule and the reviewer catch it. It is never malformed. Dreaming sets it from an approved check row once the check exists on the repo's default branch, which is on the pass after the check lands ([dreaming.md](dreaming.md), pending enforcement).
 
 `retire_when` is checked by the spec reviewer when that is a cheap read-only check. When it holds, the rule is skipped and reported as a gap ("rule `<file>` may be retired"). Dreaming may propose deleting it. Nothing deletes a rule automatically.
 
