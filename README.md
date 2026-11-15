@@ -119,6 +119,9 @@ The plugin wires three events in [`hooks/hooks.json`](hooks/hooks.json): `Sessio
 - `council` is based on @Devattom's [workflow-debate](https://github.com/Devattom/.claude/tree/main/skills/workflow-debate) skill.
 - `handoff` and `prototype` are from @mattpocock.
 - `humanize` originated from @blader's humanizer skill, with substantial extensions for the hand-cover diagnostic, hollow rhythm punches, and rewrite constraints.
+- `caveman` is based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman).
+
+For the full list of repositories, articles and talks behind these skills, see [docs/inspirations.md](docs/inspirations.md).
 
 ## License
 
