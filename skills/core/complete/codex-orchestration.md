@@ -66,7 +66,11 @@ worker state: that helper observes external processes and bridges.
    concurrent branches are needed, and tell workers their exact working path.
    Spec and dispatch every slice whose files and dependencies permit concurrent
    work in the same turn, within the runtime's available slots (3–4 lanes);
-   serialize writers on a real file or dependency conflict. For test gates and
+   serialize writers on a real file or dependency conflict. Slices that
+   share a brief shape (the same kind of change in parallel files, such as
+   several abilities) dispatch one first; fan out the rest when it reaches
+   its first judgment, with its rejection reasons in their specs. Slices of
+   different shapes still fan out in the first turn. For test gates and
    worktree pre-warming, follow [test gate resources](../do/references/test-resources.md):
    parallel gates require verified resource isolation recorded with ownership
    in the existing brief/ledger notes; shared or unknown resources serialize

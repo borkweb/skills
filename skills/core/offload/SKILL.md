@@ -133,7 +133,11 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    `status: dispatched`, and skip gate judgment; the slice is still in flight.
 1. **First turn of a project:** if there is no prior work, write every slice the
    plan already separates (step 4), then dispatch every slice whose files are
-   disjoint in this same turn, up to 3–4 lanes. One slice is one handoff, one
+   disjoint in this same turn, up to 3–4 lanes. When two or more slices share a
+   brief shape (the same kind of change in parallel files, such as several
+   abilities), dispatch one first and fan out the rest when it reaches its first
+   judgment, with its rejection reasons in their specs. Slices of different
+   shapes all dispatch in the first turn. One slice is one handoff, one
    worktree and one `dispatch-slice.sh` call; several calls fit in one Bash
    invocation, and `complete` keeps the ledger across them.
 2. **Arbitrate** every entry under *Open disagreements*: accept / reject / modify,
@@ -145,8 +149,8 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    criteria evidence under *Gate results*: every frozen criterion needs a line, and a
    `NOT MET` line fails the slice without a review. A missing line is not a verdict:
    `ready` refuses a doc without one, and `handoff.mjs coverage "$HANDOFF"` prints the
-   frozen IDs that have none (exit 4). A missing criterion line and a missing
-   `Loosened tests:` line are bookkeeping, not a verdict against the work: `ledger set
+   frozen IDs that have none (exit 4). A missing criterion line, a missing
+   `Loosened tests:` line and a missing `Safety fact:` line are bookkeeping, not a verdict against the work: `ledger set
    … --state returned`, then send the builder a `--corrective` without `--verdict` that
    names the missing IDs or the missing line, so it costs no rejection and no round.
    Coverage is not freshness: a line from an earlier round satisfies it, so read the
@@ -164,27 +168,14 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    the same time **spot-check:** re-run any gate you doubt via its reproduce
    command (you have Bash). A failed spot-check fails the slice: stop or discard that
    review and send the failure back. A **DO NOT LAND** verdict fails the slice no
-   matter how the gates read; spec one corrective slice carrying every confirmed
-   blocker. **Two-miss stop:** when the same criterion or blocker fails a second
-   round, do not spec a third corrective; rework the criterion (it is usually
-   ambiguous or unbuildable as written) or ask the user, and record which under
-   *Decisions + why*. **Round cap:** `dispatch-slice.sh` refuses a corrective once
-   the slice has more than 3 rejected rounds (`OFFLOAD_ROUND_CAP`), even when each
-   round failed on a different blocker. Ask the user whether to continue, re-scope
-   or abandon, and pass a continue ruling as `--past-cap "<ruling>"`; the ledger
-   keeps it. Only the user grants that ruling; an unattended wake cannot pass
-   `--past-cap` and stops to ask instead. A send-back that carries no verdict against the work (a
-   ruling, a restamp, a scope change) is `ledger set … --state returned`, never
-   `rejected`; a slice the user's change of direction made moot is `abandoned`.
-   Scope a corrective's review to the change: give it the prior blockers and
-   the corrective's own range (previously reviewed commit..new HEAD), confirm each
-   blocker is resolved, and check for regressions against the slice's original range
-   where the corrective touched shared code. **LAND WITH CAUTION** → record the
-   caveats and rule (proceed or correct). Spend a corrective round only on a
-   confirmed defect: every round re-runs the full frozen gates. Accept a slice whose
-   review leaves only informational findings, and carry the fixes you want into the
-   next slice that owns those files or into one polish slice at the end of the run.
-   This is your own gate, separate from the
+   matter how the gates read, but only for a blocker that carries a red command or
+   quotes a shipped line the change made false (missing required evidence, a merge
+   conflict, security findings, data loss and uncapped spend need neither); spec one
+   corrective slice carrying every such blocker. Read [correctives.md](correctives.md) before you spec or
+   dispatch a corrective (`dispatch-slice.sh … --corrective`) or judge a rejection:
+   it holds the proof rule, the two-miss stop, the round cap, send-backs, the
+   scope of reruns and the delta review. **LAND WITH CAUTION** → record the
+   caveats and rule (proceed or correct). This is your own gate, separate from the
    builder's internal reviewer agent. Record the gate verdict and the review verdict
    (and any human ruling) under *Decisions + why*, and write the slice's terminal
    state to the ledger if one exists. Never let the builder's prose set the verdict:
@@ -192,24 +183,20 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    LAND after green gates, record whether a frozen criterion named it (the builder
    missed it; cite the number) or none did (the spec review in step 4 missed it).
    Put the same tag in the ledger `--verdict` text (`named C5`, `unnamed`), so
-   `ledger report --verdicts` keeps it after the handoff doc is gone. The ledger
-   refuses `rejected` without a verdict, and a review-only one without the tag.
+   `ledger report --verdicts` keeps it after the handoff doc is gone. For a
+   review-only rejection, also decide per blocker which kind of check could have
+   caught it (a grep ratchet, a lint rule, a registry test or a type) and add
+   `checkable: <tool>` (one lowercase token, such as `grep-ratchet` or `lint`) or
+   `checkable: no` beside the provenance tag: `named C5, checkable: lint`. A
+   gate-failed rejection needs no `checkable` tag. The ledger refuses `rejected`
+   without a verdict, and refuses a review-only one without both tags.
 4. **Write the next slice spec** under *Next slice*: one coherent feature (see Slice
    size), hard acceptance criteria, explicit out-of-scope, and a mandate that the
    builder verify APIs/formats against reality BEFORE coding. Frozen criteria
    outrank the spec prose, so the spec cites a criterion by its ID instead of
-   restating its condition. For a **corrective**,
-   the spec is the confirmed blockers with the mechanism behind each (see
-   [review-criteria.md](../do/references/review-criteria.md) §7) and, for each
-   blocker, one command that goes red on it. Run each command once in a throwaway
-   detached worktree at the rejected HEAD and record its red output in the spec. A
-   behavioral blocker you cannot turn red is restated until it can, or goes back to
-   the reviewer for a reproduction; a blocker no command can show (docs, wording, a
-   missing file) keeps its file:line condition instead. Skip the spec
-   reviewer and the plan reviews and go straight to dispatch. A corrective's builder
-   reports each blocker's command red before the fix and green after, and re-reports the full criteria evidence for the slice, not only the blockers, so
-   the delta review can see a fix that broke a criterion that used to pass. Otherwise run these
-   concurrently:
+   restating its condition. A **corrective** spec follows
+   [correctives.md](correctives.md): the confirmed blockers, each with a red command,
+   and no spec reviewer or plan reviews. Otherwise run these concurrently:
    - a read-only **spec reviewer** agent with the `review` checklist and
      [review-criteria.md](../do/references/review-criteria.md) over the slice
      spec, returning the acceptance criteria it would reject on (the brief is in
@@ -309,24 +296,9 @@ Launch within existing authorization. Ask only if the actual permission relaxati
    else, because a builder started by hand carries no builder marker, no activity sidecar
    and no turn-end hook, so nothing can ever wake the architect for it.
 
-**Correctives reuse the warm builder.** After a rejection, write the corrective
-block (the confirmed blockers, the same owned files and gates) and run
-`dispatch-slice.sh … "<fix>.md" --id <n> --corrective --verdict "<why>"`; a
-corrective never touches *Frozen gates*. The
-verdict lands on the ledger's rejected entry, so `ledger report` can count it as
-review-only or gate-failed. A one-slice run needs no `--id`: the corrective
-applies to the row for this handoff. From an unjudged state (`results-ready` or
-`dispatched`) it needs `--verdict`, which records the rejection. On a row you
-already set `rejected` (the sequence above, or a `--past-cap` retry) the same
-`--verdict` is a ledger note, not a second rejection. On `accepted` work a
-later review sends back, it records the rejection. In any other state
-(`merged`, `abandoned`, `returned`, `blocked`, `specced`) it exits 2, prints
-the state, sends nothing; drop it for a follow-up. Run one call without
-`--id` at a time. When the builder that just
-reported is still at its prompt, the brief goes into its pane and it continues
-with the code already in context: no boot, no re-reading the plan. When the
-builder is gone, the script says so and re-dispatches cold. Either way, run the
-printed `NEXT` line again.
+**Correctives reuse the warm builder.** The `--corrective` call, its `--verdict`
+rules and the warm-versus-cold re-dispatch are in [correctives.md](correctives.md).
+Either way, run the printed `NEXT` line again.
 
 **Leaving the run unattended.** The `NEXT` bridge is a background task of this
 session and dies with it. When the user is leaving (closing the laptop, clearing,
