@@ -207,6 +207,7 @@ test('C5f: the allowlist holds when the gate runs through the hook under a hosti
   const lf = launch(fx);
   const r = hookrun(fx, lf, { env: hostile(fx.out) });
   assert.equal(r.code, 0, r.err);
+  assert.ok(existsSync(join(fx.out, 'dump')), 'the gate ran and wrote its env dump');
   const names = read(join(fx.out, 'dump')).split('\n').filter(Boolean).map((l) => l.split('=')[0]);
   assert.ok(names.length > 0 && names.includes('PATH') && names.includes('HOME'));
   for (const v of FORBIDDEN_IN_GATE) assert.ok(!names.includes(v), `${v} reached the gate`);
