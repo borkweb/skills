@@ -1,7 +1,8 @@
 # Triage, anchor, show and post
 
-Read this file when Step 5a starts with at least one merged finding, before you
-drop, verify or anchor any. Each section names the step it belongs to.
+Read this file when Step 3d merges a peer pass, or Step 5a starts with at least
+one merged finding, before you drop, verify or anchor any. Each section names
+the step it belongs to.
 
 ## Step 5a: Drop on proof
 

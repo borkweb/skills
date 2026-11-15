@@ -124,10 +124,11 @@ Combine the host and peer findings into one list before triage:
    stays in the list at its own severity — read the code and decide for yourself
    rather than discounting it for being unseconded. If the two assigned different
    severities, take the higher one and note the split.
-5. **Drop on proof only.** A finding leaves the merged list on the two grounds
-   in [posting.md](posting.md)'s Step 5a drop section and no other; one you
-   cannot confirm becomes a `LEAD`. On a protected subject (that section's list)
-   it is demoted, never dropped.
+5. **Drop on proof only.** Read the Step 5a drop section of
+   [posting.md](posting.md) now, before you drop anything. A finding leaves the
+   merged list on the two grounds there and no other; one you cannot confirm
+   becomes a `LEAD`. On a protected subject (that section's list) it is
+   demoted, never dropped.
 
 Agreement raises confidence; it is not a vote, and a solo finding is not
 outvoted. The point of the second pass is coverage.

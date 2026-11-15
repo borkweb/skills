@@ -45,7 +45,7 @@ This file covers the common path. Some cases have their own file in
 | [setup.md](references/setup.md) | Step 0 starts (every run), or Step 2b finds the PR behind its base |
 | [worktree.md](references/worktree.md) | Step 2 sets up a worktree, or Step 7 removes one |
 | [host-contract.md](references/host-contract.md) | Step 3b dispatches the host pass, or a REQUIRED peer needs its brief |
-| [posting.md](references/posting.md) | Step 5a starts with a merged finding to drop, verify, anchor, show and post |
+| [posting.md](references/posting.md) | Step 3d merges a peer pass, or Step 5a starts with a merged finding |
 | [staleness.md](references/staleness.md) | Step 2b finds `<behind>` above `0` |
 
 ---
