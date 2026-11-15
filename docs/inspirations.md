@@ -1,6 +1,13 @@
 # Inspirations
 
-These are the outside repositories, articles, talks and references that shaped this skill library. None of them is the whole story. Each skill combines what I took from these sources with my own execution, knowledge and experience. Most rules here exist because something went wrong in a real run, and the external sources sharpened how I wrote the fix.
+These are the outside repositories, articles, talks and references that shaped this skill library. They are only part of the story. Most of this library comes from my own iteration, tweaking and research, built on years of engineering and leadership experience.
+
+## My own work
+
+- **Iteration on real runs.** Most rules here exist because something went wrong in one of my runs. I fixed the skill, ran it again, and kept tweaking until the failure stopped. The repo's history holds well over a hundred of these fixes and features.
+- **Reworking what I borrowed.** Every ported skill has been rewritten well past its starting point. Upstream infrastructure was removed, conflicting rules were dropped, and the skills were changed to fit how I work: report-only review, batched questions, frozen gates and plans that never get committed.
+- **Research before adoption.** Each source below was read end to end and compared with this repo, line by line, before anything was taken. Most of what I read was left out on purpose, and the reasons are recorded in the commits that shipped the rest.
+- **Measurement.** Run ledgers, eval cases and dreaming over past runs tell me whether a change helped, so the skills keep improving from evidence and not only from new sources.
 
 When a source was read at a specific version, the entry names that version and the release that shipped what I took from it. Later upstream changes have not been reviewed unless noted.
 
@@ -38,6 +45,13 @@ Each of these was read end to end and compared with this repo. Only the rules li
 - **[ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).** The writing rules in `skills/core/writing-plans/ste100.md`, also used for `review` findings and `pr-review` comments.
 - **[Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)**, maintained by [WikiProject AI Cleanup](https://en.wikipedia.org/wiki/Wikipedia:WikiProject_AI_Cleanup). The pattern catalog behind `humanize`.
 - **Public security audits and CVE research.** The 20 pattern files in `skills/core/review-security/patterns/` are built from published audits and fuzzing work, including [OSTIF](https://ostif.org/) audit reports, NCC Group and Trail of Bits audits, [OSS-Fuzz](https://github.com/google/oss-fuzz), [syzkaller](https://syzkaller.appspot.com/), [Rudra](https://github.com/sslab-gatech/Rudra) and Chromium's [IPC security tips](https://chromium.googlesource.com/chromium/src/+/main/docs/security/ipc-security-tips.md). Most pattern files cite the specific audits or CVEs they draw on.
+
+## Adoption in progress
+
+These are being compared with this repo now. Their entries will move to the sections above, with what was taken and the release that shipped it, once that work lands.
+
+- **Lauren Tan's (poteto) [pstack](https://github.com/cursor/plugins/tree/main/pstack)**, a Cursor and Claude Code plugin built around "fearless parallelism": the `/poteto-mode` playbooks, engineering principles and review subagents.
+- **Lauren Tan, [All Code Is Slop (Except Mine)](https://www.youtube.com/watch?v=O_zcc6Xl12g)**, AI Engineer.
 
 ## Studied, not adopted
 
