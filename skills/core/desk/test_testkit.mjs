@@ -15,7 +15,8 @@ test('K8 a box is removed at exit even while a detached process is still adding 
     const report = join(work, 'root.txt');
     const kit = join(HERE, 'testkit.mjs');
     // The child makes a box holding a few thousand files, starts a background writer that keeps creating files in it
-    // as fast as it can for several seconds, and exits at once, so the exit handler removes the box under the writer's feet.
+    // for two seconds of wall-clock time, and exits at once, so the exit handler removes the box under the writer's feet.
+    // A time bound, not a file count, so a slow runner writes fewer files instead of running past the retry budget.
     const child = [
       `import { newBox } from ${JSON.stringify(kit)};`,
       `import { spawn } from 'node:child_process';`,
@@ -24,7 +25,7 @@ test('K8 a box is removed at exit even while a detached process is still adding 
       `mkdirSync(b.root + '/late');`,
       `for (let i = 0; i < 3000; i++) writeFileSync(b.root + '/late/seed' + i, '');`,
       `writeFileSync(${JSON.stringify(report)}, b.root);`,
-      `spawn('/bin/sh', ['-c', 'i=0; while [ $i -lt 20000 ]; do : > "$0/late/f$i"; i=$((i+1)); done', b.root], { detached: true, stdio: 'ignore' }).unref();`,
+      `spawn('/bin/sh', ['-c', 'end=$(($(date +%s) + 2)); i=0; while [ $(date +%s) -lt $end ]; do : > "$0/late/f$i"; i=$((i+1)); done', b.root], { detached: true, stdio: 'ignore' }).unref();`,
     ].join('\n');
     const r = spawnSync(NODE, ['--input-type=module', '-e', child], { env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8', timeout: 60000 });
     assert.equal(r.status, 0, `the child must exit 0 (exit ${r.status}): ${r.stderr}`);
