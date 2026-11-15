@@ -319,7 +319,7 @@ test('C4e: no runner call outside the entry points', () => {
   const hits = (text) => (text.match(/runLocalGates\(/g) || []).length;
   assert.ok(hits(src['handoff.mjs']) >= 1, 'the runner exists in handoff.mjs');
   for (const f of callers.filter((f) => f !== 'handoff.mjs')) assert.equal(hits(src[f]), 0, `${f} calls the runner`);
-  const calls = src['handoff.mjs'].split('\n').filter((l) => /runLocalGates\(/.test(l) && !/^\s*(\/\/|\*|export async function|async function)/.test(l));
+  const calls = src['handoff.mjs'].split('\n').filter((l) => /runLocalGates\(/.test(l) && !/function runLocalGates\(/.test(l) && !/^\s*\/\//.test(l));
   assert.ok(calls.length <= 2, `runner called from ${calls.length} places: ${calls.join(' | ')}`);
 });
 
