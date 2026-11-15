@@ -25,7 +25,8 @@ def git(cwd, *args):
     env = dict(os.environ, GIT_NO_LAZY_FETCH='1', GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1',
                GIT_AUTHOR_NAME='fake', GIT_AUTHOR_EMAIL='fake@example.invalid',
                GIT_COMMITTER_NAME='fake', GIT_COMMITTER_EMAIL='fake@example.invalid')
-    return subprocess.run(['git', '-C', cwd, *args], capture_output=True, text=True, env=env, check=True).stdout.strip()
+    return subprocess.run(['git', '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', '-C', cwd, *args],
+                          capture_output=True, text=True, env=env, check=True).stdout.strip()
 
 
 def builder(request):
@@ -93,7 +94,8 @@ def builder(request):
         git(worktree, 'add', '.gitattributes', 'x.txt')
         git(worktree, 'commit', '-q', '-m', 'filter fixture')
         dot, evil = Path(worktree, '.git'), Path(worktree, '.git', 'evilcommon')
-        shutil.copytree(dot, evil, ignore=shutil.ignore_patterns('evilcommon'))
+        # A lock file is transient (a background git may remove it mid-copy) and is never repository state.
+        shutil.copytree(dot, evil, ignore=shutil.ignore_patterns('evilcommon', '*.lock'))
         with open(evil / 'config', 'a') as handle:
             handle.write(f'[filter "x"]\n\tclean = {os.environ["FAKE_FILTER_SCRIPT"]}\n')
         Path(worktree, 'x.txt').write_text('two changed\n')

@@ -54,7 +54,9 @@ def git_env():
 def git(repo, *args, check=True, timeout=120, env_extra=None):
     """Run git in `repo` with the user's config out of the way; return stripped stdout."""
     # The case repo's own hooks (post-checkout, husky, LFS) and fsmonitor are commands the case never listed.
-    run = procs.run_group(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-C', str(repo), *args],
+    # Auto maintenance would start a detached git that writes lock files while the runner copies or removes the tree.
+    run = procs.run_group(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
+                           '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', '-C', str(repo), *args],
                           env={**git_env(), **(env_extra or {})}, timeout=timeout)
     if check and run.returncode != 0:
         raise RuntimeError(f'git {" ".join(args)} failed: {run.stderr.strip()}')
