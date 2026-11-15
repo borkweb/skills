@@ -10,7 +10,7 @@ Durability is the user's choice: keep a backup of the store, or make it a privat
 
 Only two things are rule sources: the store, and the `AGENTS.md` and `CLAUDE.md` files `review` already reads. A rule a team should share goes into the repo's `AGENTS.md` by a normal PR, not into the store.
 
-Only the user, or an approved row in [dreaming.md](dreaming.md), adds a rule. Runs never write rules: not the architect, the builder, the reviewer or the spec reviewer. They read, or copy a matched rule into the run directory.
+Only the user, or an approved row in [dreaming.md](dreaming.md), adds a rule. An approved check row may also set `retire_when` and `enforced_by` on an existing rule, and no other key and not the body. Runs never write rules: not the architect, the builder, the reviewer or the spec reviewer. They read, or copy a matched rule into the run directory.
 
 ## Key
 
@@ -31,7 +31,7 @@ node "<do skill base>/repo-rules-key.mjs" --dir [path]    # the store directory 
 
 ## Rule format
 
-The frontmatter has `title`, `applies_when` and an optional `retire_when`. The body holds the rule as a checkable condition, why it exists, and a source citation.
+The frontmatter has `title`, `applies_when`, an optional `retire_when` and an optional `enforced_by`. The body holds the rule as a checkable condition, why it exists, and a source citation.
 
 ```markdown
 ---
@@ -39,6 +39,7 @@ title: <short name>
 applies_when:
   - <a condition in task words: a path, a behavior>
 retire_when: <optional: a condition that makes the rule obsolete>
+enforced_by: <optional: the repo path of a check that fails when the rule is broken>
 ---
 
 Rule: <the rule as a condition a reviewer can check against a diff>
@@ -49,6 +50,8 @@ Source: <citation, for example repo@session/slice, or a PR or file:line>
 ```
 
 `applies_when` is a YAML list of conditions. A rule applies when any one of them fits the slice's files or behavior. Write them as the words a spec uses ("changes anything under `src/billing/`", "adds a REST endpoint"), not as globs a program must match. A file with bad frontmatter or a missing or non-list `applies_when` is malformed: skip it and report it as a gap. Never refuse the run over it.
+
+`enforced_by` names the check (a test, lint rule or script) that catches a violation without a reviewer. An absent key means `prose only`: only the rule and the reviewer catch it. It is never malformed. Dreaming sets it with an approved check row, only when the check exists on the repo's default branch.
 
 `retire_when` is checked by the spec reviewer when that is a cheap read-only check. When it holds, the rule is skipped and reported as a gap ("rule `<file>` may be retired"). Dreaming may propose deleting it. Nothing deletes a rule automatically.
 
