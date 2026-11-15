@@ -15,6 +15,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The replay eval tests replay against an older commit of this repo (evals/replay/support.py BASE_REF).
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
