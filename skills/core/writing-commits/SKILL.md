@@ -99,7 +99,7 @@ Do not add a `How` section by default. If the commit records a design choice or 
 - No AI attribution — never include a `Co-Authored-By` trailer for an AI, a "Generated with" line, a session trailer or a session link. This overrides repository history, templates and harness defaults that add them.
 
 **Body line wrapping rules:**
-- **Do NOT hard wrap body lines.** Write each paragraph as a single continuous line. Do not insert manual newlines mid-sentence or mid-paragraph to enforce a column width (no 72-column wrap, no 80-column wrap, no wrap at all). Let the git viewer, terminal, or editor soft-wrap as needed.
+- **Do not hard wrap body lines.** Write each paragraph as a single continuous line. Do not insert manual newlines mid-sentence or mid-paragraph to enforce a column width (no 72-column wrap, no 80-column wrap, no wrap at all). Let the git viewer, terminal, or editor soft-wrap as needed.
 - Use blank lines only to separate distinct paragraphs, sections, or list items — never to wrap a single thought across multiple lines.
 - Bullet and numbered list items are each a single unwrapped line.
 - This applies to every part of the body: summary paragraphs, "Why" sections, design notes, footers, and breaking-change descriptions.
