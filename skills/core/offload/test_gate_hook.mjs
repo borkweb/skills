@@ -137,6 +137,14 @@ test('C6k/C14: stop_hook_active true never blocks, even on a red gate', () => {
   assert.ok(existsSync(`${fx.doc}.turn-ended`), 'the stop goes through, so the touch happens');
 });
 
+test('C14: the Stop command is the gate check, and it exits 0 on stop_hook_active even with a red gate', () => {
+  const { fx, lf } = withGates(['exit 3']);
+  assert.match(stopCommand(lf), /stop-gates/, 'the Stop entry runs the gate check');
+  assert.equal(hookrun(fx, lf).code, 2, 'without the flag the red gate blocks');
+  const r = hookrun(fx, lf, { input: JSON.stringify(STOP_INPUT({ stop_hook_active: true })) });
+  assert.equal(r.code, 0, r.err);
+});
+
 test('C15: gates run only in dispatched or results-ready; every other status exits 0 and runs nothing', () => {
   for (const status of ['dispatched', 'results-ready', 'blocked', 'accepted', 'rejected', 'returned', 'abandoned', 'merged']) {
     const fx = readyFx((out) => [`touch ${out}/ran; exit 3`], { status });
