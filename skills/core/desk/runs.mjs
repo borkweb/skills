@@ -530,6 +530,41 @@ function readMessage(o) {
   return text;
 }
 
+// ---- escape: post-merge escapes recorded on a run ---------------------------------------------------------
+
+const ESCAPE_KINDS = ['revert', 'fix-forward', 'review-defect', 'post-merge-ci'];
+const ESCAPE_REF_RE = /^(?:[0-9a-f]{7,64}|https?:\/\/\S+)$/i;
+const ESCAPE_USAGE = `usage: runs.mjs escape <run> --kind <${ESCAPE_KINDS.join('|')}> --ref <7-64 hex sha | http(s) url> [--note <text> | --note-file <file>]`;
+const escapeListOk = (rec) => Array.isArray(rec.escapes) && rec.escapes.every((e) => e && typeof e === 'object' && typeof e.kind === 'string' && typeof e.ref === 'string');
+
+// An escape is an annotation on a finished run, so it is allowed in every state and changes none of the
+// signal fields: an armed wait never fires for it. A duplicate (kind, ref) is a no-op.
+function cmdEscape(o, [arg]) {
+  if (!ESCAPE_KINDS.includes(o.kind)) throw usageFail(`--kind must be one of ${ESCAPE_KINDS.join(', ')}\n${ESCAPE_USAGE}`);
+  if (typeof o.ref !== 'string' || !ESCAPE_REF_RE.test(o.ref)) throw usageFail(`--ref must be 7-64 hex characters or an http(s) URL\n${ESCAPE_USAGE}`);
+  if (o.note !== undefined && o['note-file'] !== undefined) throw usageFail(`give --note or --note-file, not both\n${ESCAPE_USAGE}`);
+  let note = o.note ?? null;
+  if (o['note-file'] !== undefined) {
+    try {
+      if (statSync(o['note-file']).size > MESSAGE_MAX_BYTES) throw usageFail(`--note-file is over 64 KiB\n${ESCAPE_USAGE}`);
+      note = readFileSync(o['note-file'], 'utf8').trim();
+    } catch (e) {
+      if (e instanceof Fail) throw e;
+      throw usageFail(`cannot read --note-file (${e.code ?? e.message})\n${ESCAPE_USAGE}`);
+    }
+  }
+  const { dir } = resolveRun(arg);
+  let recorded = false;
+  mutate(dir, (rec, at) => {
+    if (rec.escapes !== undefined && !escapeListOk(rec)) throw new Fail(`escapes in ${recFile(dir)} is malformed; fix it by hand before recording another`);
+    rec.escapes ??= [];
+    if (rec.escapes.some((e) => e.kind === o.kind && e.ref === o.ref)) { recorded = true; return NOOP; }
+    rec.escapes.push({ kind: o.kind, ref: o.ref, at, note });
+    return undefined;
+  });
+  out(recorded ? `escape ${o.kind} ${o.ref} is already recorded` : `escape ${o.kind} ${o.ref} recorded`);
+}
+
 const refusal = (verb, token, why) => new Fail(`${verb} refused (${token}): ${why}`);
 
 // The record-only refusals, in token order. tell and reopen run them before the write and again on the record read under the lock.
@@ -762,6 +797,8 @@ function cmdShow(o, [arg]) {
   const agent = agentOf(rec, liveRun(rec) ? agentMap() : null);
   const flags = flagsOf(rec, agent);
   const moot = (q) => rec.state === 'failed' && q.status === 'open';
+  const escapesBad = rec.escapes !== undefined && !escapeListOk(rec);
+  if (escapesBad) process.stderr.write(`warning: escapes in ${recFile(dir)} is malformed; showing the rest of the record\n`);
   if (o.json) {
     out(JSON.stringify({ ...rec, flags, ...(agent !== undefined && { agent_status: agent }), questions: rec.questions.map((q) => (moot(q) ? { ...q, moot: true } : q)) }, null, 2));
     return;
@@ -777,6 +814,9 @@ function cmdShow(o, [arg]) {
   if (rec.messages?.length) {
     // Newlines stay (a message is an instruction with structure); every other control character goes.
     lines.push('', 'messages:', ...rec.messages.map((m) => `  ${m.id} (${m.at}): ${m.text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g, '').replace(/\n/g, '\n    ')}`));
+  }
+  if (!escapesBad && rec.escapes?.length) {
+    lines.push('', 'escapes:', ...rec.escapes.map((e) => `  ${clean(e.kind)} ${clean(e.ref)} (${clean(e.at ?? '')})${e.note ? ` ${clean(e.note)}` : ''}`));
   }
   for (const q of rec.questions.filter((x) => x.status === 'open')) {
     lines.push('', `${q.id}${moot(q) ? ' (moot: the run failed)' : ''}: ${q.question}`);
@@ -1032,8 +1072,9 @@ const SPEC = {
   reopen: { vals: ['note'], pos: 1, run: cmdReopen },
   resume: { vals: ['repo', 'goal', 'goal-file', 'slug', 'note'], multi: ['candidate'], bools: ['continue', 'new', 'json'], pos: 0, run: cmdResume },
   clean: { bools: ['all', 'dry-run', 'json'], pos: (o) => (o.all ? 0 : 1), run: cmdClean },
+  escape: { vals: ['kind', 'ref', 'note', 'note-file'], pos: 1, run: cmdEscape },
 };
-const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen', 'resume', 'clean']);
+const WRITERS = new Set(['init', 'set', 'ask', 'answer', 'withdraw', 'ack', 'claim', 'release', 'start', 'tell', 'reopen', 'resume', 'clean', 'escape']);
 const USAGE = `usage: runs.mjs <${Object.keys(SPEC).join('|')}> [args]  (spec: skills/core/desk/SKILL.md)`;
 
 // An option takes the next token as its value whatever it looks like: goals may start with "-".
