@@ -39,6 +39,11 @@ mkdir -p "$SENT" "$SUITE_TMP" "$OUT"
 
 make_sentinels() {
   local state="${TEST_ALL_SENTINEL_STATE:-running}"
+  # Only these three words are ever written into the run.json template, so a crafted value cannot add a key.
+  case "$state" in
+    running|done|failed) ;;
+    *) echo "test-all: TEST_ALL_SENTINEL_STATE must be running, done or failed (self-test only); refusing to run" >&2; return 1 ;;
+  esac
   mkdir -p "$SENT/runs-home" "$SENT/handoffs" "$SENT/agent-handoffs" "$SENT/orchestrator" "$SENT/repo-rules" "$SENT/sentinel-run"
   printf 'sentinel handoff\n' > "$SENT/handoffs/h.md"
   cat > "$SENT/sentinel-run/run.json" <<EOF
@@ -65,7 +70,8 @@ make_sentinels() {
 }
 EOF
   # A sentinel that is not live proves nothing: the liveness checks skip a done or failed run.
-  if ! grep -q '"schema": 1' "$SENT/sentinel-run/run.json" || ! grep -q '^  "state": "running",$' "$SENT/sentinel-run/run.json"; then
+  # Parsed, not grepped: the check reads the same value a child that parses run.json will see.
+  if ! node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.exit(r.schema === 1 && r.state === "running" ? 0 : 1)' "$SENT/sentinel-run/run.json" 2> /dev/null; then
     echo "test-all: the sentinel run.json state is '$state', not running; refusing to run, the guard would prove nothing" >&2
     return 1
   fi
@@ -142,9 +148,9 @@ show_failures() { # output file
   echo "  full output: $1"
   grep -E -B1 -A20 '^[[:space:]]*not ok|^(FAIL|ERROR):' "$1" | head -150
 }
-num() { # file, regex with one capture group -> first match or 0
+num() { # file, regex with one capture group -> the LAST match or 0: the runner's summary comes last, so a test's own output cannot set it
   local v
-  v=$(sed -n -E "s/$2/\\1/p" "$1" | head -1)
+  v=$(sed -n -E "s/$2/\\1/p" "$1" | tail -1)
   echo "${v:-0}"
 }
 
@@ -160,12 +166,19 @@ group_validate() {
 
 group_python() { # label dir
   "${CHILD_ENV[@]}" python3 -m unittest discover -v -s "$2" -p 'test_*.py' > "$OUT/$1.out" 2>&1
-  local rc=$? n f e s
+  local rc=$? n f=0 e=0 s=0 res
   n=$(num "$OUT/$1.out" '^Ran ([0-9]+) tests? in .*')
-  f=$(num "$OUT/$1.out" '^FAILED \(.*failures=([0-9]+).*')
-  e=$(num "$OUT/$1.out" '^FAILED \(.*errors=([0-9]+).*')
-  s=$(sed -n -E 's/^(OK|FAILED) \(.*skipped=([0-9]+).*/\2/p' "$OUT/$1.out" | head -1)
-  s=${s:-0}
+  # The runner's own result is the LAST OK or FAILED line; read every count from that one line only.
+  res=$(grep -E '^(OK|FAILED)( |$)' "$OUT/$1.out" | tail -1)
+  case "$res" in
+    *failures=*) f=$(echo "$res" | sed -n -E 's/.*failures=([0-9]+).*/\1/p') ;;
+  esac
+  case "$res" in
+    *errors=*) e=$(echo "$res" | sed -n -E 's/.*errors=([0-9]+).*/\1/p') ;;
+  esac
+  case "$res" in
+    *skipped=*) s=$(echo "$res" | sed -n -E 's/.*skipped=([0-9]+).*/\1/p') ;;
+  esac
   f=$((f + e))
   if [ "$rc" -ne 0 ] && [ "$f" -eq 0 ]; then f=1; fi
   report "$1" "$n" "$f" "$s"
@@ -203,7 +216,8 @@ group_shell() {
       echo "FAIL $script" >> "$OUT/shell.out"
     fi
   done < <(find skills -name 'test-*.sh' 2> /dev/null | LC_ALL=C sort)
-  report shell "$n" "$f" "$s"
+  s=$(grep -ciE '^SKIP' "$OUT/shell.out")
+  report shell "$n" "$f" "${s:-0}"
   grep -iE '^SKIP' "$OUT/shell.out" | head -50
   [ "$f" -gt 0 ] && show_failures "$OUT/shell.out"
   return 0
@@ -222,6 +236,8 @@ elif [ "$#" -gt 0 ]; then
 fi
 
 if ! make_sentinels; then rm -rf "$BASE"; exit 1; fi
+# An interrupt leaves the sentinel tree and the outputs in place, so say where, as a failure does.
+trap 'echo "test-all: interrupted; kept for inspection: $BASE" >&2; exit 130' INT TERM HUP
 snapshot "$BASE/before.snap"
 build_child_env
 
@@ -243,6 +259,7 @@ else
   STATUS=1
 fi
 
+trap - INT TERM HUP
 if [ "$STATUS" -eq 0 ]; then
   rm -rf "$BASE"
 else

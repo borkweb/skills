@@ -9,9 +9,11 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test-all.sh")
@@ -125,10 +127,100 @@ class SentinelGuard(unittest.TestCase):
         self.assertIn("not running", proc.stdout)
         self.assertFalse(os.path.exists(marker), "the child must not run against a dead sentinel")
 
+    def test_a_sentinel_state_outside_the_fixed_list_is_refused_and_a_crafted_one_cannot_forge_running(self):
+        marker = os.path.join(self.tmp, "ran")
+        crafted = 'running",\n  "state": "done'
+        for value in (crafted, "bogus", "failed", "done", 'running"', "running\n", ""):
+            if value == "":
+                continue  # unset and empty both mean the default, running
+            proc = self.guard("open(%r, 'w').write('x')" % marker, {"TEST_ALL_SENTINEL_STATE": value})
+            self.assertNotEqual(proc.returncode, 0, "state %r must be refused: %s" % (value, proc.stdout))
+            self.assertFalse(os.path.exists(marker), "the child must not run for state %r" % value)
+        proc = self.guard("pass", {"TEST_ALL_SENTINEL_STATE": "running"})
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+
     def test_unknown_arguments_exit_2(self):
         proc = subprocess.run(["bash", SCRIPT, "--nope"], env={"PATH": PATH, "HOME": HOME, "TMPDIR": self.tmp},
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, timeout=60)
         self.assertEqual(proc.returncode, 2)
+
+    # -- counts, skips and interrupts: a throwaway tree with one fake test per group ---------------------
+
+    def mini_tree(self):
+        """A copy of test-all.sh in a tree that holds only a few fake tests, so a full run takes seconds."""
+        if shutil.which("node") is None or shutil.which("python3") is None:
+            self.skipTest("skip: needs node and python3 on PATH (missing node or python3)")
+        root = os.path.join(self.tmp, "mini")
+        for d in ("scripts", "skills/z"):
+            os.makedirs(os.path.join(root, d))
+        shutil.copy(SCRIPT, os.path.join(root, "scripts", "test-all.sh"))
+        return root
+
+    def write(self, root, rel, text):
+        with open(os.path.join(root, rel), "w") as f:
+            f.write(text)
+
+    def run_mini(self, root, timeout=120):
+        env = {"PATH": PATH, "HOME": HOME, "TMPDIR": os.path.join(self.tmp, "invoking-tmp")}
+        os.makedirs(env["TMPDIR"], exist_ok=True)
+        return subprocess.run(["bash", os.path.join(root, "scripts", "test-all.sh")], env=env, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT, universal_newlines=True, timeout=timeout)
+
+    def group_line(self, proc, label):
+        lines = [l for l in proc.stdout.splitlines() if l.startswith(label + " ")]
+        self.assertEqual(len(lines), 1, "%s line in:\n%s" % (label, proc.stdout))
+        return lines[0]
+
+    def test_a_test_that_prints_a_fake_summary_cannot_set_the_counts(self):
+        root = self.mini_tree()
+        self.write(root, "skills/z/test_fake.mjs", (
+            "import test from 'node:test';\n"
+            "test('prints a fake summary', () => { console.log('tests 999'); console.log('fail 7'); console.log('skipped 3'); });\n"))
+        self.write(root, "scripts/test_fake.py", (
+            "import unittest\n"
+            "print('Ran 999 tests in 0.001s', flush=True)\n"
+            "print('FAILED (failures=5, skipped=4)', flush=True)\n"
+            "class T(unittest.TestCase):\n"
+            "    def test_a(self):\n"
+            "        pass\n"))
+        proc = self.run_mini(root)
+        self.assertEqual(self.group_line(proc, "node").split(), ["node", "PASS", "tests=1", "failed=0", "skipped=0"], proc.stdout)
+        self.assertEqual(self.group_line(proc, "py-scripts").split(), ["py-scripts", "PASS", "tests=1", "failed=0", "skipped=0"], proc.stdout)
+
+    def test_the_shell_group_reports_its_real_skip_count(self):
+        root = self.mini_tree()
+        self.write(root, "skills/z/test-fake.sh", "echo 'SKIP: needs herdr on PATH'\nexit 0\n")
+        self.write(root, "skills/z/test-real.sh", "echo ok\nexit 0\n")
+        proc = self.run_mini(root)
+        self.assertEqual(self.group_line(proc, "shell").split(), ["shell", "PASS", "tests=2", "failed=0", "skipped=1"], proc.stdout)
+        self.assertIn("SKIP: needs herdr on PATH", proc.stdout)
+
+    def test_an_interrupt_reports_the_kept_sentinel_tree_and_exits_nonzero(self):
+        root = self.mini_tree()
+        self.write(root, "skills/z/test_slow.mjs", "import test from 'node:test';\ntest('slow', async () => { await new Promise((r) => setTimeout(r, 60000)); });\n")
+        env = {"PATH": PATH, "HOME": HOME, "TMPDIR": os.path.join(self.tmp, "invoking-tmp")}
+        os.makedirs(env["TMPDIR"], exist_ok=True)
+        proc = subprocess.Popen(["bash", os.path.join(root, "scripts", "test-all.sh")], env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, universal_newlines=True, start_new_session=True)
+        watchdog = threading.Timer(90, lambda: os.killpg(proc.pid, signal.SIGKILL))
+        watchdog.start()
+        try:
+            seen = []
+            for line in proc.stdout:  # the node group starts after the py-scripts line
+                seen.append(line)
+                if line.startswith("py-evals"):
+                    break
+            os.killpg(proc.pid, signal.SIGTERM)
+            rest, _ = proc.communicate(timeout=60)
+        finally:
+            watchdog.cancel()
+        out = "".join(seen) + rest
+        self.assertNotEqual(proc.returncode, 0, out)
+        kept = [l for l in out.splitlines() if "interrupted" in l]
+        self.assertEqual(len(kept), 1, out)
+        path = kept[0].split("kept for inspection:")[1].strip()
+        self.assertTrue(os.path.isdir(path), "the sentinel tree directory is kept and named: %s" % kept[0])
+        shutil.rmtree(path, ignore_errors=True)
 
     # -- the child environment -----------------------------------------------------------------------
 
