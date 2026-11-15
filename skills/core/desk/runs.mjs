@@ -546,7 +546,9 @@ function cmdEscape(o, [arg]) {
   let note = o.note ?? null;
   if (o['note-file'] !== undefined) {
     try {
-      if (statSync(o['note-file']).size > MESSAGE_MAX_BYTES) throw usageFail(`--note-file is over 64 KiB\n${ESCAPE_USAGE}`);
+      const st = statSync(o['note-file']);
+      if (!st.isFile()) throw usageFail(`--note-file is not a regular file\n${ESCAPE_USAGE}`);
+      if (st.size > MESSAGE_MAX_BYTES) throw usageFail(`--note-file is over 64 KiB\n${ESCAPE_USAGE}`);
       note = readFileSync(o['note-file'], 'utf8').trim();
     } catch (e) {
       if (e instanceof Fail) throw e;
@@ -554,15 +556,19 @@ function cmdEscape(o, [arg]) {
     }
   }
   const { dir } = resolveRun(arg);
+  // A hex ref is one value in any case; a URL is compared as written (its path is case-sensitive).
+  const norm = (ref) => (/^[0-9a-f]+$/i.test(ref) ? ref.toLowerCase() : ref);
+  const ref = norm(o.ref);
   let recorded = false;
+  // touch: false, so recording an escape on an old finished run never moves its updated_at (the board and ack --before read it).
   mutate(dir, (rec, at) => {
     if (rec.escapes !== undefined && !escapeListOk(rec)) throw new Fail(`escapes in ${recFile(dir)} is malformed; fix it by hand before recording another`);
     rec.escapes ??= [];
-    if (rec.escapes.some((e) => e.kind === o.kind && e.ref === o.ref)) { recorded = true; return NOOP; }
-    rec.escapes.push({ kind: o.kind, ref: o.ref, at, note });
+    if (rec.escapes.some((e) => e.kind === o.kind && norm(e.ref) === ref)) { recorded = true; return NOOP; }
+    rec.escapes.push({ kind: o.kind, ref, at, note });
     return undefined;
-  });
-  out(recorded ? `escape ${o.kind} ${o.ref} is already recorded` : `escape ${o.kind} ${o.ref} recorded`);
+  }, { touch: false });
+  out(recorded ? `escape ${o.kind} ${ref} is already recorded` : `escape ${o.kind} ${ref} recorded`);
 }
 
 const refusal = (verb, token, why) => new Fail(`${verb} refused (${token}): ${why}`);

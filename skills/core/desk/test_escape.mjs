@@ -212,3 +212,38 @@ test('C5o usage lists escape and a wrong positional count exits 2', () => {
   assert.match(r.err, /escape/);
   assert.equal(run(b, ['escape', '--kind', 'revert', '--ref', 'abc1234']).code, 2);
 });
+
+test('K2 escape never changes updated_at, so an old finished run stays off the board', () => {
+  const { id, dir } = mkRun(b);
+  ok(run(b, ['set', id, '--state', 'done', '--summary', 's']));
+  writeRec(dir, { updated_at: '2026-01-01T00:00:00.000Z' });
+  ok(esc(id, 'revert', 'abc1234'));
+  const after = readRec(dir);
+  assert.equal(after.updated_at, '2026-01-01T00:00:00.000Z');
+  assert.equal(after.escapes.length, 1);
+  ok(esc(id, 'revert', 'abc1234')); // the no-op path leaves it alone too
+  assert.equal(readRec(dir).updated_at, '2026-01-01T00:00:00.000Z');
+});
+
+test('K10 the dedupe compares hex refs without regard to case; a URL ref stays case-sensitive', () => {
+  const { id, dir } = mkRun(b);
+  ok(esc(id, 'revert', 'ABCDEF1'));
+  const r = esc(id, 'revert', 'abcdef1');
+  ok(r);
+  assert.match(r.out, /already recorded/);
+  assert.deepEqual(readRec(dir).escapes.map((e) => e.ref), ['abcdef1'], 'a hex ref is stored in lower case');
+  ok(esc(id, 'review-defect', 'https://github.com/o/r/pull/1'));
+  ok(esc(id, 'review-defect', 'https://github.com/o/R/pull/1'));
+  assert.equal(readRec(dir).escapes.length, 3);
+});
+
+test('K10 --note-file refuses a directory and a device: only a regular file is read', () => {
+  const { id, dir } = mkRun(b);
+  const before = sha(recPath(dir));
+  for (const f of [b.root, '/dev/null']) {
+    const r = esc(id, 'revert', 'abc1234', ['--note-file', f]);
+    assert.equal(r.code, 2, f);
+    assert.match(r.err, /regular file/);
+  }
+  assert.equal(sha(recPath(dir)), before);
+});
