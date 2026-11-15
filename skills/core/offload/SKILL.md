@@ -94,7 +94,7 @@ it falls back to `BORK_RUN_DIR`, skipping one whose run is `done` or `failed`. T
 pass ([dreaming.md](../do/references/dreaming.md)) reads across runs.
 
 Nobody curates memory during a run: no "record what you learned" step, and no edits
-to `review-criteria.md`, briefs or skills. Builders, reviewers and the architect leave
+to `review-criteria.md`, briefs or skills. All of them leave
 structured evidence (verdicts with tags, the review files above, `decisions.md`); only
 the dreaming pass, run on its own with the user approving each change, turns it into criteria.
 
@@ -161,8 +161,8 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    command. A failed spot-check fails the slice: stop or discard that
    review and send the failure back. A **DO NOT LAND** verdict fails the slice no
    matter how the gates read, but only for a blocker that carries a red command or quotes
-   a shipped line the change made false (missing evidence, an unmet criterion, a merge
-   conflict, security, data loss and uncapped spend need neither); spec one corrective
+   a shipped line the change made false (missing required evidence, an unmet frozen criterion, a merge
+   conflict, security findings, data loss and uncapped spend need neither); spec one corrective
    slice carrying every such blocker.
    Read [correctives.md](correctives.md) before you spec, dispatch, judge or accept a corrective (`dispatch-slice.sh … --corrective`), or judge a rejection:
    it holds the proof rule, the two-miss stop, the round cap, send-backs, the

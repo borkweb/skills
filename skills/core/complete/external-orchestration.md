@@ -172,7 +172,7 @@ turn-taking between slices and you never hold the fleet in your head.
    | `NEEDS ARCHITECT` | Arbitrate (blocked) or judge the gates (results-ready). |
    | `MISMATCH` | The builder's doc moved past your ledger. The doc is the builder's word: act on it, then bring the ledger level. |
    | `CORRUPT DOC` | Rewrite the status; until then that slice's bridge is deaf. |
-   | `DOC MISSING` | Do not re-dispatch blindly; surface it. |
+   | `DOC MISSING` | Stop. Do not re-dispatch blindly; surface it. |
    | `UNMANAGED PANE` | The recorded pane did not come from dispatch.sh; no signal can reach you from it. Judge what it produced, mark the slice terminal, re-dispatch through `offload`. |
 
 2. Read the bridge's `WAITER:` line and branch per [wait-signals.md](wait-signals.md).
