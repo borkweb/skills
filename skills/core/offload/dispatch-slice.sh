@@ -72,7 +72,7 @@
 # Local gates: a block line `L<n>: local: <command>` is frozen the same way, verbatim, beside the
 # criterion lines (comments blanked, CRLF normalized), and `handoff.mjs ready` runs it. A block with local
 # lines and no criterion IDs still freezes them. A malformed local line (an empty command, a second
-# line with the same ID, `L<n>: local` with no colon after it) refuses the dispatch before anything is
+# line with the same ID, `L<n>: local` with no colon after it, a decorated or wrong-case form) refuses the dispatch, naming the line, before anything is
 # launched. The section also counts as "already holding" the local lines: the same block
 # leaves it as it is, the same criterion IDs with different local lines refuse the dispatch.
 #
@@ -399,13 +399,13 @@ FORCE_ENV=()
 # Copy of handoff.mjs's first-token ID rule, comment rule and local-gate rule (see the comments
 # above ID_FIRST and LOCAL_GATE there). Modes: `ids` prints the distinct criterion IDs, `lines` the
 # criterion lines and local lines in block order, `locals` the local lines, `bad` one reason per malformed
-# local line (an empty command, a repeated ID, `L<n>: local` with no colon after it). Comments are
+# local line (an empty command, a repeated ID, `L<n>: local` with no colon after it, `Local:` in another case, or decoration such as `**L1**: local:`, a backticked line or a table row). Comments are
 # blanked (not removed) so the lines keep their numbers and what is copied is what the parser reads.
 read -r -d '' CRITERIA_JS <<'JS' || true
 const ID = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!(?:\s*(?:[-–—/,;&+]|and\b|or\b|to\b|through\b)\s*|\s+)C\d)/;
 const COMMENT = /^[ \t]*<!--(?:[\s\S]*?-->|[^\n]*(?:\n(?![ \t]*(?:\n|$))[^\n]*)*)/gm;
 const LOCAL = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?(L\d+)[ \t]*:[ \t]*local[ \t]*:[ \t]*(.*?)[ \t]*$/;
-const NEAR = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?L\d+[ \t]*:[ \t]*local\b/;
+const NEAR = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?(?:\|[ \t]*)?(?:\*\*|`)?L\d+(?:\*\*|`)?[ \t]*:[ \t]*(?:\*\*|`)?[Ll][Oo][Cc][Aa][Ll]\b/;
 const text = require("fs").readFileSync(0, "utf8").replace(/\r\n?/g, "\n");
 const bare = text.replace(COMMENT, (m) => m.replace(/[^\n]/g, "")).split("\n");
 const crit = bare.map((l, i) => (ID.test(l) ? i : -1)).filter((i) => i >= 0);

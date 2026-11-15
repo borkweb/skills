@@ -216,7 +216,7 @@ test('C3q/C3r: the timeout kills the whole process tree and returns promptly', (
   const r = ready(fx, { env: { OFFLOAD_LOCAL_GATE_TIMEOUT_S: '1' } });
   refused(r);
   assert.ok(Date.now() - t0 < 6000, `returned in ${Date.now() - t0} ms`);
-  const ps = spawnSync('pgrep', ['-f', `sleep 3133[78]${tag}`], { encoding: 'utf8' }).stdout.trim();
+  const ps = spawnSync('pgrep', ['-f', `sleep 3133[78]${tag}`], { encoding: 'utf8', env: { PATH: process.env.PATH } }).stdout.trim();
   assert.equal(ps, '', `survivors: ${ps}`);
 });
 

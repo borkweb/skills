@@ -39,7 +39,7 @@
 //   `ready` runs every one in the doc's `cwd:` at HEAD, one at a time in Frozen order, and refuses with exit 7 and a
 //   `red:` message that names each red gate (nonzero exit, timeout, spawn failure) and the file that holds its saved
 //   stdout and stderr (`<doc>.gates/<run>/<ID>.log`, outside the worktree, new on every call). The doc is not
-//   written. It also refuses, with `red:`, when the line is malformed (empty command, a repeated ID), the doc has
+//   written. It also refuses, with `red:`, when a line is malformed (empty command, a repeated ID, a near-miss such as `**L1**: local:` or `Local:`), the doc has
 //   no `cwd:`, the cwd is not a directory in a git work tree, the tracked files have uncommitted changes (checked
 //   before any gate runs; untracked files are ignored) or HEAD moves while the gates run. `coverage` never
 //   runs a gate, and a local line is never a criterion. A local gate reruns at HEAD on every `ready`, whatever a
@@ -95,7 +95,7 @@
 // session, so the tripwire holds everywhere else.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DIR, fileFor, listFiles, tokenOf, field, age, prune } from './dir.mjs';
@@ -452,12 +452,14 @@ function coverage(p) {
 // A local gate is a Frozen-gates line `L<n>: local: <command>` (a list marker and spaces around the
 // colons are allowed; the ID must be `L` and digits and `local:` must follow it). It is not a
 // criterion: `coverage` never sees it, and a `C<n>` line that says `local:` is never a gate. A line
-// that starts `L<n>: local` but is not a whole gate (no colon after `local`) is malformed, like an
-// empty command or a second line with the same ID: `ready` refuses rather than skip it. Comments and
+// that starts like a local gate but is not a whole one is malformed, like an empty command or a second
+// line with the same ID: `ready` refuses rather than skip it, naming the line. That covers `local`
+// with no colon after it, `Local:` in any case, and the decoration the criterion rule allows
+// (`**L1**: local:`, a backticked line, a table row `| L1: local: x |`, `- **L1: local:** x`). Comments and
 // CRLF follow the criterion rules. dispatch-slice.sh freezes with a copy of these two patterns;
 // test_dispatch_slice.mjs runs one table through both.
 const LOCAL_GATE = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?(L\d+)[ \t]*:[ \t]*local[ \t]*:[ \t]*(.*?)[ \t]*$/;
-const LOCAL_NEAR = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?L\d+[ \t]*:[ \t]*local\b/;
+const LOCAL_NEAR = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?(?:\|[ \t]*)?(?:\*\*|`)?L\d+(?:\*\*|`)?[ \t]*:[ \t]*(?:\*\*|`)?[Ll][Oo][Cc][Aa][Ll]\b/;
 const RED_EXIT = 7;
 const LOCAL_GATE_TIMEOUT_S = 120;
 const LOCAL_GATES_DEADLINE_S = 840;
@@ -517,10 +519,16 @@ async function runLocalGates(doc, { path: docPath, requireClean }) {
   const perGate = Number.isFinite(knob) && knob > 0 ? knob : LOCAL_GATE_TIMEOUT_S;
   const runDir = join(`${docPath}.gates`, `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`);
   mkdirSync(runDir, { recursive: true });
-  try { // output older than a day is only clutter
-    for (const old of readdirSync(dirname(runDir))) {
-      const q = join(dirname(runDir), old);
-      if (Date.now() - statSync(q).mtimeMs > 24 * 60 * 60 * 1000) rmSync(q, { recursive: true, force: true });
+  // Output older than a day is only clutter. The sweep leaves a `.gates` that is a symlink (or anything but a
+  // real directory) alone and removes only real directories named like a run (`<ms>-<pid>-<6 hex>`).
+  try {
+    const gates = dirname(runDir);
+    if (lstatSync(gates).isDirectory()) {
+      for (const old of readdirSync(gates)) {
+        const q = join(gates, old);
+        const st = lstatSync(q);
+        if (st.isDirectory() && /^\d+-\d+-[0-9a-f]{6}$/.test(old) && Date.now() - st.mtimeMs > 24 * 60 * 60 * 1000) rmSync(q, { recursive: true, force: true });
+      }
     }
   } catch { /* best effort */ }
   const env = {};
