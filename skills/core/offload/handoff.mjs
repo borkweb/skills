@@ -10,7 +10,10 @@
 //   node handoff.mjs list     <cwd>                       -> JSONL {path,token,title,branch,status,age}
 //   node handoff.mjs reattach <path> <sessionId> [--steal] -> take over doc for sessionId, print path
 //   node handoff.mjs status   <path> <value> [--steal]     -> set status + bump updated (ownership-guarded)
-//   node handoff.mjs ready    <path> [--steal]             -> status=results-ready + bump updated (ownership-guarded)
+//   node handoff.mjs ready    <path> [--steal]             -> status=results-ready + bump updated (ownership-guarded). The order is
+//                                                             coverage, then stale, then gates: `incomplete:` (exit 4), `stale:` (exit 5),
+//                                                             then the frozen local gates (below), where a red one refuses with `red:` and
+//                                                             exit 7, the doc untouched. `status <path> results-ready` is the same call.
 //   node handoff.mjs blocked  <path> [--steal]             -> status=blocked + bump updated (ownership-guarded); the
 //                                                             builder calls this before stopping on a mid-slice blocker
 //                                                             so the wait bridge wakes the architect to arbitrate
@@ -31,10 +34,27 @@
 //                                                             against the ref's current tip. Anything unknown refuses
 //                                                             `stale:` naming the condition. A `Carried:` line is not a
 //                                                             `Head:` line. Gate evidence only; see judging.md
+//   Local gates. A Frozen-gates line `L<n>: local: <command>` (architect-written, frozen by dispatch-slice.sh) names a
+//   gate that is fast and free of shared resources, network and paid calls. After coverage and the stale check pass,
+//   `ready` runs every one in the doc's `cwd:` at HEAD, one at a time in Frozen order, and refuses with exit 7 and a
+//   `red:` message that names each red gate (nonzero exit, timeout, spawn failure) and the file that holds its saved
+//   stdout and stderr (`<doc>.gates/<run>/<ID>.log`, outside the worktree, new on every call). The doc is not
+//   written. It also refuses, with `red:`, when the line is malformed (empty command, a repeated ID), the doc has
+//   no `cwd:`, the cwd is not a directory in a git work tree, the tracked files have uncommitted changes (checked
+//   before any gate runs; untracked files are ignored) or HEAD moves while the gates run. `coverage` never
+//   runs a gate, and a local line is never a criterion. A local gate reruns at HEAD on every `ready`, whatever a
+//   `Carried:` line says. Each gate times out after 120 s (OFFLOAD_LOCAL_GATE_TIMEOUT_S overrides it for the call; a
+//   line cannot), the whole run after 840 s, and a timeout kills the gate's process tree.
+//   Gate env allowlist: PATH, HOME, TMPDIR, USER, LOGNAME, LANG, LC_ALL, LC_CTYPE, TZ, XDG_CONFIG_HOME.
+//   The gate child gets those variables from this process and nothing else: no session id, token, run pointer,
+//   GIT_* or shell startup variable. The Claude Stop hook (stop-gates.mjs, wired by dispatch.sh) runs the same
+//   check for $OFFLOAD_HANDOFF while the doc is `dispatched` or `results-ready`, and exits 2 with that `red:` message.
+//
 //   node handoff.mjs rulings  <decisions.md> <block.md> --slice <id>
 //                                                         -> check that every `Changes the bar (slice <id>): <IDs>` marker in
 //                                                             decisions.md names only IDs that lead an `Acceptance:` line of the
-//                                                             block. Exit 0 when all are backed (or there are no markers), 6 with
+//                                                             block (the `Acceptance:` span ends at a column-0 `Gates:` or `Result file:`,
+//                                                             a ``` fence or the end of the file). Exit 0 when all are backed (or there are no markers), 6 with
 //                                                             one `unbacked: <marker line>` per offender on stderr, 2 on usage, 1
 //                                                             when a file cannot be read. dispatch-slice.sh runs it on a fresh dispatch.
 //   node handoff.mjs base     <path> <sha> [<ref>]        -> record the slice's base commit (`base:`) and the full ref it came
@@ -73,8 +93,9 @@
 // $OFFLOAD_SESSION_ID. Status and section writes honor that id only for the one
 // doc named in $OFFLOAD_HANDOFF; every other doc still keys on the caller's own
 // session, so the tripwire holds everywhere else.
-import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DIR, fileFor, listFiles, tokenOf, field, age, prune } from './dir.mjs';
@@ -289,7 +310,7 @@ export function updateDoc(p, transform, tries = 5) {
 // It used to accept anything, including `undefined` from a call that forgot its
 // value — which wrote `status: undefined`, exited 0, and permanently broke the
 // bridge's `results-ready`/`blocked` matching on that doc. Validate or refuse.
-function setStatus(p, value, steal) {
+async function setStatus(p, value, steal) {
   requireDoc(p);
   if (value === undefined || value === null || String(value).trim() === '') {
     die(
@@ -312,12 +333,28 @@ function setStatus(p, value, steal) {
   assertOwner(p, expected, steal, `set status=${v} on`);
   // Coverage runs on the same text the write replaces, so the check and the
   // write cannot see different docs. --steal reaches only assertOwner above.
+  const gateCheck = (b) => {
+    const missing = missingCriteria(b);
+    if (missing.length) die(incompleteMessage(missing), 4);
+    const stale = staleHead(b);
+    if (stale) die(`stale: ${stale}`, 5);
+  };
+  // results-ready: coverage, then stale, then the local gates, once and outside updateDoc (its
+  // retry would run them again). The write re-checks coverage and the head on the fresh text and
+  // refuses if the local gate lines changed while they ran.
+  let ran = '';
+  if (v === 'results-ready') {
+    const text = readFileSync(p, 'utf8');
+    gateCheck(text);
+    const run = await runLocalGates(text, { path: p, requireClean: true });
+    if (!run.ok) die(run.message, RED_EXIT);
+    ran = run.sig;
+  }
   updateDoc(p, (b) => {
     if (v === 'results-ready') {
-      const missing = missingCriteria(b);
-      if (missing.length) die(incompleteMessage(missing), 4);
-      const stale = staleHead(b);
-      if (stale) die(`stale: ${stale}`, 5);
+      gateCheck(b);
+      const now = localGates(b);
+      if ((now.gates.length || now.bad.length ? JSON.stringify(now) : '') !== ran) die('red: the Frozen gates changed while the local gates ran, so their result does not describe the doc. Run ready again.', RED_EXIT);
     }
     return setField(setField(b, 'status', v), 'updated', nowIso());
   });
@@ -411,13 +448,133 @@ function coverage(p) {
   if (stale) die(`stale: ${stale}`, 5);
 }
 
+// --- local gates ----------------------------------------------------------
+// A local gate is a Frozen-gates line `L<n>: local: <command>` (a list marker and spaces around the
+// colons are allowed; the ID must be `L` and digits and `local:` must follow it). It is not a
+// criterion: `coverage` never sees it, and a `C<n>` line that says `local:` is never a gate. A line
+// that starts `L<n>: local` but is not a whole gate (no colon after `local`) is malformed, like an
+// empty command or a second line with the same ID: `ready` refuses rather than skip it. Comments and
+// CRLF follow the criterion rules. dispatch-slice.sh freezes with a copy of these two patterns;
+// test_dispatch_slice.mjs runs one table through both.
+const LOCAL_GATE = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?(L\d+)[ \t]*:[ \t]*local[ \t]*:[ \t]*(.*?)[ \t]*$/;
+const LOCAL_NEAR = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?L\d+[ \t]*:[ \t]*local\b/;
+const RED_EXIT = 7;
+const LOCAL_GATE_TIMEOUT_S = 120;
+const LOCAL_GATES_DEADLINE_S = 840;
+
+// {gates: [{id, command}], bad: [reason]} for the Frozen gates of `doc`.
+function localGates(doc) {
+  const text = doc.replace(/\r\n?/g, '\n');
+  const plain = sectionText(text, 'Frozen gates').replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
+  const gates = [];
+  const bad = [];
+  const seen = new Set();
+  for (const line of plain.split('\n')) {
+    const m = LOCAL_GATE.exec(line);
+    if (!m) { if (LOCAL_NEAR.test(line)) bad.push(`not a whole local gate line: ${line.trim()}`); continue; }
+    if (!m[2]) bad.push(`${m[1]} has an empty command`);
+    else if (seen.has(m[1])) bad.push(`${m[1]} appears on more than one local line`);
+    else gates.push({ id: m[1], command: m[2] });
+    seen.add(m[1]);
+  }
+  return { gates, bad };
+}
+
+const secs = (s) => `${Math.round(s * 10) / 10} s`;
+
+// Run every local gate of `doc` in its cwd at HEAD, one at a time, and report the verdict:
+// {ok: true} or {ok: false, message} with a `red:` message that names every red gate and the saved
+// output of each. This is the ONE runner: `ready`, `status results-ready` and the Claude Stop hook
+// all call it. It reads and writes nothing in the doc. Each gate is `/bin/sh -c <command>` in its own
+// process group (a timeout kills the whole tree), with stdout and stderr on one file under
+// `<doc>.gates/<run>/<ID>.log`, outside the worktree and unique to this call. The child env is
+// GIT_ENV_PASS and nothing else. Each gate gets OFFLOAD_LOCAL_GATE_TIMEOUT_S (default
+// LOCAL_GATE_TIMEOUT_S) and the whole run LOCAL_GATES_DEADLINE_S; a gate the deadline never reaches is
+// red. A malformed line, no cwd, a cwd that is not a directory or not in a git work tree, a HEAD that
+// moves during the run and (with requireClean) uncommitted changes to tracked files all refuse
+// before or after the gates, never as a pass.
+async function runLocalGates(doc, { path: docPath, requireClean }) {
+  const { gates, bad } = localGates(doc);
+  if (!gates.length && !bad.length) return { ok: true, sig: '' };
+  const sig = JSON.stringify({ gates, bad });
+  const red = (message) => ({ ok: false, sig, message: `red: ${message}` });
+  const ids = gates.map((g) => g.id).join(', ');
+  if (bad.length) return red(`the Frozen gates hold a malformed local gate line, so no gate ran: ${bad.join('; ')}. Only the architect fixes Frozen gates.`);
+  const cwd = frontmatterField(doc.replace(/\r\n?/g, '\n'), 'cwd');
+  if (!cwd) return red(`${ids} not run: the handoff has no cwd: line, so there is no worktree to run the gates in.`);
+  let isDir = false;
+  try { isDir = statSync(cwd).isDirectory(); } catch { /* reported below */ }
+  if (!isDir) return red(`${ids} not run: the worktree ${cwd} does not exist or is not a directory.`);
+  if (gitIn(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') return red(`${ids} not run: ${cwd} is not inside a git work tree, so HEAD cannot be verified.`);
+  const head0 = gitIn(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (head0.status !== 0 || !head0.out) return red(`${ids} not run: cannot read HEAD in ${cwd}.`);
+  if (requireClean) {
+    const dirty = gitIn(cwd, ['-c', 'core.quotePath=false', 'status', '--porcelain', '--untracked-files=no']).raw.split('\n').filter(Boolean).map((l) => l.slice(3));
+    if (dirty.length) return red(`${ids} not run: the worktree ${cwd} has uncommitted changes to tracked files (${dirty.join(', ')}). Gates run at HEAD: commit them, then run ready again.`);
+  }
+
+  const knob = Number(process.env.OFFLOAD_LOCAL_GATE_TIMEOUT_S);
+  const perGate = Number.isFinite(knob) && knob > 0 ? knob : LOCAL_GATE_TIMEOUT_S;
+  const runDir = join(`${docPath}.gates`, `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`);
+  mkdirSync(runDir, { recursive: true });
+  try { // output older than a day is only clutter
+    for (const old of readdirSync(dirname(runDir))) {
+      const q = join(dirname(runDir), old);
+      if (Date.now() - statSync(q).mtimeMs > 24 * 60 * 60 * 1000) rmSync(q, { recursive: true, force: true });
+    }
+  } catch { /* best effort */ }
+  const env = {};
+  for (const k of GIT_ENV_PASS) if (process.env[k] !== undefined) env[k] = process.env[k];
+
+  const deadline = Date.now() + LOCAL_GATES_DEADLINE_S * 1000;
+  const reds = [];
+  for (const { id, command } of gates) {
+    const log = join(runDir, `${id}.log`);
+    const left = deadline - Date.now();
+    if (left <= 0) { reds.push(`gate ${id} not run: the ${LOCAL_GATES_DEADLINE_S} s deadline for all local gates had passed. Output: none`); continue; }
+    const limit = Math.min(perGate * 1000, left);
+    const fd = openSync(log, 'w');
+    const result = await new Promise((done) => {
+      let child;
+      try { child = spawn('/bin/sh', ['-c', command], { cwd, env, detached: true, stdio: ['ignore', fd, fd] }); } catch (e) { done({ failed: e.code || e.message }); return; }
+      let timedOut = false;
+      const kill = () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group already gone */ } };
+      const timer = setTimeout(() => { timedOut = true; kill(); }, limit);
+      child.on('error', (e) => { clearTimeout(timer); done({ failed: e.code || e.message }); });
+      child.on('exit', (code, signal) => { clearTimeout(timer); kill(); done({ code, signal, timedOut }); });
+    });
+    closeSync(fd);
+    if (result.failed) reds.push(`gate ${id} could not start (${result.failed}). Output: ${log}`);
+    else if (result.timedOut) reds.push(`gate ${id} timed out after ${secs(limit / 1000)}. Output: ${log}`);
+    else if (result.code !== 0) reds.push(`gate ${id} ${result.signal ? `was killed by ${result.signal}` : `exited ${result.code}`}. Output: ${log}`);
+  }
+  const head1 = gitIn(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (head1.out !== head0.out) reds.push(`HEAD moved from ${head0.out.slice(0, 12)} to ${head1.out.slice(0, 12) || 'unknown'} while the gates ran; a gate must not commit or switch branches. Rerun every gate at the new HEAD and update the Head line`);
+  if (!reds.length) return { ok: true, sig };
+  return red(`${reds.join('\n')}\nRead each saved output, fix the cause within your owned files, then run ready again.`);
+}
+
+// The Stop hook's question: should this builder be sent back? null to let the stop through, else
+// the `red:` message. A doc that is missing, or not at `dispatched` or `results-ready`, or has no
+// local gate, never blocks. It never runs coverage or the stale check (a builder mid-slice has no
+// Gate results yet) and never writes the doc.
+export async function stopGateCheck(docPath) {
+  if (!docPath || !existsSync(docPath)) return null;
+  const text = readFileSync(docPath, 'utf8');
+  const status = frontmatterField(text.replace(/\r\n?/g, '\n'), 'status');
+  if (status !== 'dispatched' && status !== 'results-ready') return null;
+  const r = await runLocalGates(text, { path: docPath, requireClean: false });
+  return r.ok ? null : r.message;
+}
+
 // --- bar-changing rulings -------------------------------------------------
 // A ruling in a run's decisions.md that changes what the work must say or do
 // carries one marker line, `Changes the bar (slice <id>): <IDs>` (a list marker
 // and `**` decoration are allowed). `rulings` checks that every marker for the
 // slice names only criterion IDs that lead a line of the block's Acceptance
-// lines: from a column-0 `Acceptance:` line to the next column-0 `<Label>:` that
-// is not a criterion ID, or a ``` fence, or the end. A parent ID (`C2`) is backed
+// lines: from a column-0 `Acceptance:` line to the template's next label at column
+// 0 (`Gates:` or `Result file:`), a ``` fence or the end of the file. Any other
+// line, a prose label such as `Fixture:` included, stays inside the span. A parent ID (`C2`) is backed
 // by any of its sub-IDs (`C2a`). A marker with no IDs, a token that is not an ID,
 // or a line that contains `Changes the bar` but does not parse, is unbacked.
 const MARKER = /^\s*(?:[-*]\s+)?Changes the bar \(slice ([A-Za-z0-9._-]+)\):\s*(.*?)\s*$/;
@@ -430,8 +587,7 @@ function acceptanceIds(block) {
   for (const line of plain.split('\n')) {
     if (/^Acceptance:/.test(line)) { inside = true; continue; }
     if (!inside) continue;
-    const label = /^([A-Za-z][A-Za-z0-9 _/-]*):/.exec(line)?.[1];
-    if (/^\s*```/.test(line) || (label && !ID_ONLY.test(label))) { inside = false; continue; }
+    if (/^\s*```/.test(line) || /^(?:Gates|Result file):/.test(line)) { inside = false; continue; }
     kept.push(line);
   }
   return new Set(leadingIds(kept.join('\n')));
@@ -598,7 +754,7 @@ function staleHead(doc) {
 // --- sections -------------------------------------------------------------
 // A section is `## <heading>` through the line before the next `## ` (or EOF).
 
-const SIDECAR_SUFFIXES = ['.builder', '.activity', '.turn-ended'];
+const SIDECAR_SUFFIXES = ['.builder', '.activity', '.turn-ended', '.gates'];
 
 const reEscape = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
 
@@ -673,7 +829,7 @@ function pruneSidecars() {
     const suffix = SIDECAR_SUFFIXES.find((s) => f.endsWith(s));
     if (!suffix) continue;
     const base = join(DIR, f.slice(0, -suffix.length));
-    if (!existsSync(base)) { rmSync(join(DIR, f), { force: true }); gone.push(f); }
+    if (!existsSync(base)) { rmSync(join(DIR, f), { recursive: true, force: true }); gone.push(f); }
   }
   return gone;
 }
@@ -783,9 +939,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     case 'path':     path(pos[0], pos[1]); break;
     case 'list':     list(pos[0] ?? process.cwd()); break;
     case 'reattach': reattach(pos[0], pos[1], steal); break;
-    case 'status':   setStatus(pos[0], pos[1], steal); break;
-    case 'ready':    setStatus(pos[0], 'results-ready', steal); break;
-    case 'blocked':  setStatus(pos[0], 'blocked', steal); break;
+    case 'status':   await setStatus(pos[0], pos[1], steal); break;
+    case 'ready':    await setStatus(pos[0], 'results-ready', steal); break;
+    case 'blocked':  await setStatus(pos[0], 'blocked', steal); break;
     case 'coverage': coverage(pos[0]); break;
     case 'rulings':  rulingsCmd(rest); break;
     case 'base':     setBase(pos[0], pos[1], pos[2], steal); break;

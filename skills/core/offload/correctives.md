@@ -24,6 +24,12 @@ A corrective whose diff changes only comments, docs or display strings skips the
 
 When any corrective round of a slice carried a gate (a `Carried:` line), you run the full frozen gate set once on the head it accepts, before you mark it accepted. In a fleet, the final integration gate counts as that run only when it runs every gate the slice carried.
 
+## Local gates
+
+At the freeze, mark a gate local with one line in the builder block, `L1: local: <command>`: the ID is `L` and digits, `local:` follows it and the whole command stays on that line (`L1: local: node --test skills/core/offload/test_ledger.mjs`). The freeze copies it into *Frozen gates* beside the criteria, and `handoff.mjs ready` runs it in the builder's worktree at HEAD (a red one refuses the builder with `red:`), and a Claude builder's Stop hook runs it before the builder may stop. A local line is not a criterion and needs no Gate results line.
+
+Mark a gate local only when it is fast (it must finish within the 120 s timeout; `OFFLOAD_LOCAL_GATE_TIMEOUT_S` changes it for one call, a line cannot) and uses no shared resource ([test-resources.md](../do/references/test-resources.md)), no network, no paid call and no CI. The run's full suites are not local, even where notes.md calls G1 to G5 local: G4 took about 620 s, past the hook's 600 s default and far past the 120 s bound. Leave those to the builder's report and your own run. A slow or shared gate marked local turns every `ready` and every stop into a wait.
+
 ## Dispatch a corrective
 
 After a rejection, write the corrective block and run

@@ -23,7 +23,7 @@ test('C9a: builder-template says ready runs the frozen local gates at HEAD and r
 });
 
 test('C9b: the builder reads the saved output, fixes within the owned files, reruns ready, and never edits gates, steals or runs status', () => {
-  const para = template.split('\n\n').find((p) => p.includes('red:') && /saved output/i.test(p)) ?? '';
+  const para = template.split('\n').find((p) => p.includes('red:') && /saved output/i.test(p)) ?? '';
   assert.ok(para, 'a paragraph on handling a red: refusal');
   assert.match(para, /read/i);
   assert.match(para, /owned files/i);
@@ -34,7 +34,7 @@ test('C9b: the builder reads the saved output, fixes within the owned files, rer
 });
 
 test('C9c: a red gate the builder cannot fix goes to Open disagreements, then blocked', () => {
-  const para = template.split('\n\n').find((p) => p.includes('red:') && /Open disagreements/.test(p)) ?? '';
+  const para = template.split('\n').find((p) => /red gate/.test(p) && /Open disagreements/.test(p)) ?? '';
   assert.ok(para, 'the escape for a red gate that cannot be fixed within the owned files');
   assert.match(para, /`blocked`/);
 });
@@ -46,7 +46,7 @@ test('C9d: ready is no longer described as only a coverage check without saying 
 });
 
 test('C9e: the corrective reach rule says local gates rerun at HEAD on every ready, whatever Carried: says', () => {
-  const para = template.split('\n\n').find((p) => p.includes('Carried:') && /local gates?/i.test(p)) ?? '';
+  const para = template.split('\n').find((p) => p.includes('Carried:') && /local gates?/i.test(p) && /every `?ready`?/.test(p)) ?? '';
   assert.ok(para, 'a Carried: paragraph naming local gates');
   assert.match(para, /every `?ready`?|each `?ready`?/i);
 });
@@ -75,7 +75,7 @@ test('C9f: the doc’s syntax example is a gate the parser runs', () => {
 });
 
 test('C9g: a red: refusal is the builder’s to fix: no verdict, no rejection, no round; the full gate run still happens', () => {
-  const para = judging.split('\n\n').find((p) => p.includes('red:')) ?? '';
+  const para = judging.split('\n\n').find((p) => p.includes('red:') && !p.startsWith('#')) ?? '';
   assert.ok(para, 'judging.md covers a red: refusal');
   assert.match(para, /not a verdict/i);
   assert.match(para, /rejection/i);

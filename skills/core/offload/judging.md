@@ -21,6 +21,12 @@ A review verdict never carries over a rebase. A rebase gives new shas and possib
 
 **A corrective may carry gates the diff cannot reach.** Gate results may list them on one `Carried: <sha> — <gate names>` line, naming the earlier head they ran at. Every gate you ask the builder to rerun and every criterion check still names HEAD on a `Head:` line. `ready` and `coverage` treat a `Carried:` line as not a `Head:` line, so it never trips `stale:`; whether the diff really cannot reach those gates is your call.
 
+## A `red:` refusal is not a verdict
+
+After coverage and the head check, `ready` runs the frozen local gates (the `L<n>: local: <command>` lines of *Frozen gates*) and refuses with `red:` and exit 7 when one is red; the doc stays as it was. That refusal is the builder's to fix. It is not a verdict: it records no rejection and costs no round, so send no corrective for it. A slice that reaches `results-ready` still gets your full gate run before acceptance; a local gate that passed at `ready` does not replace it.
+
+The builder can edit *Frozen gates*, so the doc's local lines prove nothing about the bar. When you judge, rerun the local gates from the block you dispatched (the file you passed to `dispatch-slice.sh`), not from the doc, and treat a local line in the doc that differs from the block as a send-back: `ledger set … --state returned`, then a corrective without `--verdict` that asks for the line to be restored.
+
 ## The head still merges onto its base
 
 Before any review, and again before each corrective's review, check that the slice still merges onto its base as the base is now:

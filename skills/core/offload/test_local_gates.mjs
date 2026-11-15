@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import assert from 'node:assert';
 import test from 'node:test';
 import {
-  BOX, HANDOFF, NODE, N, baseEnv, cli, docStatus, git, gitRepo, hostile, L, mkGateDoc, read, readyFx, scratch, FORBIDDEN_IN_GATE, uniq,
+  BOX, HANDOFF, HERE, NODE, N, baseEnv, cli, docStatus, git, gitRepo, hostile, L, mkGateDoc, read, readyFx, scratch, FORBIDDEN_IN_GATE, uniq,
 } from './gate-fixture.mjs';
 
 const ready = (fx, o = {}) => cli(['ready', fx.doc], { session: 's', ...o });
@@ -304,6 +304,12 @@ test('C4e: list, board, section get, rulings and wait-for-ready never run a gate
   cli(['board', repo.dir, '--json', '--no-git', '--no-pane'], { session: 's' });
   cli(['section', 'get', doc, 'Frozen gates']);
   cli(['rulings', dec, blk, '--slice', 'A']);
+  // The architect's own Stop hook (stop-hook.mjs) and one poll of the wait bridge on a results-ready doc.
+  spawnSync(NODE, [join(HERE, 'stop-hook.mjs')], { input: JSON.stringify({ session_id: 'arch', cwd: repo.dir }), env: { ...baseEnv(), CLAUDE_CODE_SESSION_ID: 'arch' }, encoding: 'utf8', timeout: 30000 });
+  const waiting = mkGateDoc({ frozen: [L('L1', `touch ${out}/ran`)], head: repo.head, cwd: repo.dir, status: 'results-ready' });
+  writeFileSync(`${waiting}.builder`, `${process.pid}\n`);
+  const wait = spawnSync('bash', [join(HERE, '..', 'complete', 'wait-for-ready.sh'), waiting, 'builder', '20'], { env: { ...baseEnv(), WFR_NO_UPGRADE: '1', WFR_POLL: '1' }, encoding: 'utf8', timeout: 40000 });
+  assert.equal(wait.status, 0, `wait bridge: ${wait.stdout}${wait.stderr}`);
   assert.ok(!existsSync(join(out, 'ran')));
 });
 

@@ -1128,9 +1128,11 @@ test('C1b: the freeze copy and handoff.mjs read the same local lines (table, wit
     const R2 = repo();
     const other = hoff(['init', R2, 'arch', 'lt']);
     hoff(['section', 'set', other, 'Frozen gates', '--text', text.replace(/\n/g, crlf ? '\r\n' : '\n')]);
-    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok`]);
+    // C20 and C21 are criterion lines that merely say `local:`, so they need Gate results lines like any criterion.
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok\nC20: ok\nC21: ok`]);
     const r = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
     assert.equal(r.status, 0, r.stderr);
+    assert.ok(existsSync(join(out, 'ran')), 'ready ran no local gate');
     const ran = readFileSync(join(out, 'ran'), 'utf8').trim().split('\n');
     assert.deepEqual(frozenRows, ran, `freeze and ready disagree (crlf=${crlf})`);
     assert.deepEqual(ran, ['row0', 'row1', 'row2', 'row3', 'row4', 'row5', 'row6', 'row-after']);

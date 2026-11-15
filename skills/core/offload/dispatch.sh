@@ -180,12 +180,28 @@ codex_notify_toml() {
   printf 'notify=[%s]' "$arr"
 }
 
-# Claude settings JSON: Stop (turn over) and Notification (permission prompt)
-# both mean "builder stopped and needs input" — touch the same marker.
+# Claude settings JSON for the builder. Notification (a permission prompt) means "builder stopped and
+# needs input": it touches "$HANDOFF.turn-ended" and nothing else. Stop (turn over) is ONE hook entry
+# that first runs the local-gate check (stop-gates.mjs: the frozen `L<n>: local:` gates of $OFFLOAD_HANDOFF,
+# the check `ready` runs) and then, only when the stop is allowed, touches the same marker. Exit 2
+# stays 2 (a red gate sends the builder back), so a blocked stop never wakes the architect, and the
+# touch cannot run before the gates finish: sibling Stop entries would run in parallel. Any other exit of
+# the check (a crash, a missing script) still touches and lets the stop through. The timeout is
+# in seconds and has to outlast the check's own deadline (LOCAL_GATES_DEADLINE_S in handoff.mjs, 840).
+# The JSON is built by node so a handoff path with a quote or a space stays valid, and each path is
+# single-quoted for /bin/sh. Interactive and headless claude builders both pass it as --settings.
+read -r -d '' SETTINGS_JS <<'JS' || true
+const [nodeBin, hook, doc] = process.argv.slice(1);
+const q = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+const touch = `touch ${q(`${doc}.turn-ended`)}`;
+const stop = `${q(nodeBin)} ${q(hook)}; rc=$?; [ "$rc" -eq 2 ] && exit 2; ${touch}`;
+process.stdout.write(JSON.stringify({ hooks: {
+  Stop: [{ hooks: [{ type: 'command', command: stop, timeout: 900 }] }],
+  Notification: [{ hooks: [{ type: 'command', command: touch }] }],
+} }));
+JS
 claude_hook_settings() {
-  local hook
-  hook=$(printf '[{"hooks":[{"type":"command","command":"touch %s.turn-ended"}]}]' "$HANDOFF")
-  printf '{"hooks":{"Stop":%s,"Notification":%s}}' "$hook" "$hook"
+  node -e "$SETTINGS_JS" "$(command -v node || echo node)" "$SCRIPT_DIR/stop-gates.mjs" "$HANDOFF"
 }
 
 # Fresh session id for a claude builder, so its transcript path is known before
@@ -348,7 +364,7 @@ run_headless() {
       # it must never sit directly before the prompt. A flag always follows here.
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           claude -p --dangerously-skip-permissions ${CLAUDE_MCP_ARGV[@]+"${CLAUDE_MCP_ARGV[@]}"} \
-            --output-format text ${m:+--model "$m"} \
+            --settings "$(claude_hook_settings)" --output-format text ${m:+--model "$m"} \
             ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
       ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \

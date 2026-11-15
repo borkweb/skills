@@ -69,6 +69,12 @@
 # prints one warning line and the dispatch continues. When the freeze or the
 # launch fails the section is put back as it was. The ID and comment rules are a
 # copy of handoff.mjs's; test_dispatch_slice.mjs asserts the two agree.
+# Local gates: a block line `L<n>: local: <command>` is frozen the same way, verbatim, beside the
+# criterion lines (comments blanked, CRLF normalized), and `handoff.mjs ready` runs it. A block with local
+# lines and no criterion IDs still freezes them. A malformed local line (an empty command, a second
+# line with the same ID, `L<n>: local` with no colon after it) refuses the dispatch before anything is
+# launched. The section also counts as "already holding" the local lines: the same block
+# leaves it as it is, the same criterion IDs with different local lines refuse the dispatch.
 #
 # Rulings: a fresh dispatch also runs `handoff.mjs rulings <run dir>/decisions.md <block> --slice
 # <id>` when the run directory (the ledger's link, else --run-dir, else a live BORK_RUN_DIR) holds
@@ -390,17 +396,36 @@ launch() {
 FORCE_ENV=()
 
 # --- frozen gates -------------------------------------------------------------
-# Copy of handoff.mjs's first-token ID rule and comment rule (see the comment
-# above ID_FIRST there). Mode `ids` prints the distinct IDs, `lines` the lines
-# that lead with one, with comments blanked (not removed) so the lines keep their
-# numbers and what is copied is what the parser reads.
+# Copy of handoff.mjs's first-token ID rule, comment rule and local-gate rule (see the comments
+# above ID_FIRST and LOCAL_GATE there). Modes: `ids` prints the distinct criterion IDs, `lines` the
+# criterion lines and local lines in block order, `locals` the local lines, `bad` one reason per malformed
+# local line (an empty command, a repeated ID, `L<n>: local` with no colon after it). Comments are
+# blanked (not removed) so the lines keep their numbers and what is copied is what the parser reads.
 read -r -d '' CRITERIA_JS <<'JS' || true
 const ID = /^\s*(?:(?:[-*]|\d+[.)])\s+)?(?:\|\s*)?(?:\*\*|`)?(C\d+[a-z]?)(?![A-Za-z0-9_])(?!(?:\s*(?:[-–—/,;&+]|and\b|or\b|to\b|through\b)\s*|\s+)C\d)/;
 const COMMENT = /^[ \t]*<!--(?:[\s\S]*?-->|[^\n]*(?:\n(?![ \t]*(?:\n|$))[^\n]*)*)/gm;
+const LOCAL = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?(L\d+)[ \t]*:[ \t]*local[ \t]*:[ \t]*(.*?)[ \t]*$/;
+const NEAR = /^[ \t]*(?:(?:[-*]|\d+[.)])[ \t]+)?L\d+[ \t]*:[ \t]*local\b/;
 const text = require("fs").readFileSync(0, "utf8").replace(/\r\n?/g, "\n");
 const bare = text.replace(COMMENT, (m) => m.replace(/[^\n]/g, "")).split("\n");
-const hit = bare.map((l, i) => (ID.test(l) ? i : -1)).filter((i) => i >= 0);
-const out = process.argv[1] === "lines" ? hit.map((i) => bare[i]) : [...new Set(hit.map((i) => ID.exec(bare[i])[1]))].sort();
+const crit = bare.map((l, i) => (ID.test(l) ? i : -1)).filter((i) => i >= 0);
+const loc = bare.map((l, i) => (LOCAL.test(l) && LOCAL.exec(l)[2] ? i : -1)).filter((i) => i >= 0);
+const mode = process.argv[1];
+let out;
+if (mode === "ids") out = [...new Set(crit.map((i) => ID.exec(bare[i])[1]))].sort();
+else if (mode === "lines") out = [...crit, ...loc].sort((a, b) => a - b).map((i) => bare[i]);
+else if (mode === "locals") out = loc.map((i) => bare[i].replace(/[ \t]+$/, ""));
+else {
+  out = [];
+  const seen = new Set();
+  for (const l of bare) {
+    const m = LOCAL.exec(l);
+    if (!m) { if (NEAR.test(l)) out.push(`not a whole local gate line: ${l.trim()}`); continue; }
+    if (!m[2]) out.push(`${m[1]} has an empty command`);
+    else if (seen.has(m[1])) out.push(`${m[1]} appears on more than one local line`);
+    seen.add(m[1]);
+  }
+}
 if (out.length) process.stdout.write(out.join("\n") + "\n");
 JS
 criteria() { node -e "$CRITERIA_JS" "$1"; }
@@ -422,16 +447,20 @@ restore_frozen() {
 trap restore_frozen EXIT
 
 freeze_gates() {
-  local cur have want tmp
+  local cur have want have_l want_l bad tmp
   cur=$(hoff section get "$DOC" "Frozen gates") || die "could not read Frozen gates from $DOC; nothing was launched"
+  bad=$(criteria bad < "$BLOCK") || die "could not read the local gates in $BLOCK; nothing was launched"
+  [ -z "$bad" ] || die "the block has a malformed local gate line (the syntax is L1: local: <command>): $(printf '%s' "$bad" | tr '\n' ';'). Nothing was launched."
   have=$(printf '%s\n' "$cur" | criteria ids) || die "could not read the criteria in Frozen gates; nothing was launched"
   want=$(criteria ids < "$BLOCK") || die "could not read the criteria in $BLOCK; nothing was launched"
-  if [ -n "$have" ]; then
-    [ "$have" = "$want" ] && return 0
-    die "Frozen gates in $DOC already hold criteria that this block does not match. Frozen gates are never rewritten: use a new worktree for this slice or end the old handoff (node $HANDOFF_MJS end \"$DOC\"). Nothing was launched."
+  have_l=$(printf '%s\n' "$cur" | criteria locals) || die "could not read the local gates in Frozen gates; nothing was launched"
+  want_l=$(criteria locals < "$BLOCK") || die "could not read the local gates in $BLOCK; nothing was launched"
+  if [ -n "$have$have_l" ]; then
+    [ "$have" = "$want" ] && [ "$have_l" = "$want_l" ] && return 0
+    die "Frozen gates in $DOC already hold criteria or local gates that this block does not match. Frozen gates are never rewritten: use a new worktree for this slice or end the old handoff (node $HANDOFF_MJS end \"$DOC\"). Nothing was launched."
   fi
-  if [ -z "$want" ]; then
-    echo "dispatch-slice: warning: the block has no criterion IDs (lines that start with C1:, - C2:, **C3 ...), so nothing was frozen and ready will not check coverage"
+  if [ -z "$want$want_l" ]; then
+    echo "dispatch-slice: warning: the block has no criterion IDs (lines that start with C1:, - C2:, **C3 ...) and no local gates, so nothing was frozen and ready will not check coverage"
     return 0
   fi
   tmp=$(mktemp) || die "could not create a temp file for the freeze"

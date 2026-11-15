@@ -232,9 +232,10 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    `dispatch-slice.sh` copies every ID-first line of the block into *Frozen gates*
    before the builder launches. It never writes on a `--corrective`, never rewrites
    a section that already holds IDs (a block with different IDs is refused; use a new
-   worktree or end the old handoff), and warns when the block has no IDs. Freezing
-   by hand first is allowed when the IDs match. The builder brief carries the same
-   criteria, so the builder and the acceptance reviewer hold one bar.
+   worktree or end the old handoff), and warns when the block has no IDs. It also
+   freezes `L<n>: local: <command>` lines, the fast gates `ready` runs itself (which
+   to mark: correctives.md *Local gates*). Freezing by hand first is allowed when the
+   IDs match. The builder brief carries the same criteria.
 5. **Flag scope creep / goalpost-moving** bluntly. Disagree with the user when warranted.
 6. **Emit the builder block** (below) to a file and run `dispatch-slice.sh`
    (Dispatch, below). It writes *Next slice*, freezes the block's criterion lines
@@ -265,9 +266,8 @@ Launch within existing authorization. Ask only if the actual permission relaxati
    pass `--run-dir <run dir>` on the first call of a run.
    It resolves your session key, creates the worktree from `--base` (default
    HEAD) or reuses one you pre-warmed, inits the slice handoff, freezes the
-   block's ID-first criterion lines into *Frozen gates* (a fresh dispatch only; an
-   unchanged section is left alone, a block with different IDs is refused, a block
-   with no IDs prints one warning), writes *Next
+   block's ID-first criterion lines into *Frozen gates* (a fresh dispatch only; step 4
+   has the refusals), writes *Next
    slice*, opens the ledger when the session has none (goal: `--title`, else the
    block's heading; linked to `--run-dir`, else `BORK_RUN_DIR` when that
    directory exists), adds or updates the ledger row (without `--id` it reuses
