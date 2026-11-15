@@ -43,7 +43,8 @@
 #               results-ready or dispatched is recorded as rejected with it
 #               first, so the run report can count and classify the rejection;
 #               a follow-up after acceptance is not a rejection. Required in
-#               that case; a review-only verdict needs "named C<n>" or "unnamed".
+#               that case; a review-only verdict needs "named C<n>" or "unnamed" and
+#               "checkable: <tool>" or "checkable: no" (the ledger refuses it otherwise).
 #               On an accepted row it records a rejection: a later review sent
 #               the accepted work back. On a row already rejected the verdict is
 #               kept as a ledger note (no second rejection). In any other state

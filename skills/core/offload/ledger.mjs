@@ -24,6 +24,11 @@
 //                                       [--note n] [--pane w:p1] [--handoff p] [--branch b]
 //   node handoff.mjs ledger goal  <cwd> "<goal text>"
 //   node handoff.mjs ledger report [<cwd>] [--all [--since YYYY-MM-DD]] [--json|--verdicts]   -> build/judge minutes per slice, rejections, concurrency
+//                                       (--json adds rejection_entries: slice, at, verdict, review_only, provenance, checkable)
+//
+// A rejection needs a verdict. A review-only one (the review sent back work whose gates passed) also needs
+// a provenance tag ("named C<n>" or "unnamed") and a checkable tag ("checkable: <tool>" or "checkable: no");
+// a failed gate needs neither. The check runs on write only: old ledgers whose history lacks the tags still load.
 //   node handoff.mjs board        <cwd> [--json] [--no-git] [--no-pane]
 //
 // Ownership: the ledger filename is keyed on $CLAUDE_CODE_SESSION_ID, and every
