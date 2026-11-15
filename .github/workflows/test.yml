@@ -25,4 +25,14 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run every check
-        run: bash scripts/test-all.sh
+        # test-all.sh keeps its temp tree (each group's full output) when a check fails.
+        run: |
+          mkdir -p "$RUNNER_TEMP/test-all"
+          TMPDIR="$RUNNER_TEMP/test-all" bash scripts/test-all.sh
+      - name: Upload the kept test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-all-output
+          path: ${{ runner.temp }}/test-all/
+          retention-days: 7
