@@ -28,7 +28,7 @@ Enforced by: prose only
 
 Seen as: a tautological assertion; a pin test that three scratch mutations pass; a byte-identity test over a file the code never writes; guards that survive mutation; a required stress case dropped so the fixture grades well; a fixture whose declared dimensions the stylesheet overrides; exact float equality that any overlap silences; a fixture that also meets a second condition, so it cannot isolate the first; a test of a double that short-circuits the rule it claims to test.
 
-Criterion: for each gate, state the mutation or omission it must catch. Check: the RED chronology (the test fails before the change) and, for a pin, one deliberate mutation that fails it. A gate the slice adds is not accepted on green alone.
+Criterion: for each gate, state the mutation or omission it must catch. Check: the RED chronology (the test fails before the change) and, for a pin, one deliberate mutation that fails it. A gate the slice adds is not accepted on green alone. One deliberate mutation per gate or pin is enough, not one per sub-condition, unless a sub-condition has its own code path.
 
 Enforced by: prose only
 

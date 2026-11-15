@@ -148,12 +148,10 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    Coverage is not freshness: a line from an earlier round satisfies it, so read the
    evidence itself. Apply [judging.md](judging.md) (stale head, merge onto the current
    base) before any review and each corrective's review. Before any review,
-   run every gate marked `NOT RUN`, each mutation a criterion names (in a throwaway
-   detached worktree at the slice HEAD, removed afterward, never the builder's
-   worktree) and each real-runtime run a criterion names; a failure there sends the
+   run every gate marked `NOT RUN`, each mutation or real-runtime run a criterion names; a failure sends the
    slice back as a corrective without spending a review round. A gate you cannot run
    either stays `NOT RUN` as a recorded caveat (LAND WITH CAUTION, or ask the user);
-   it never sends the slice back. Once the raw
+   it never sends the slice back. Run mutations with `mutate.mjs --head`, never the builder's worktree; [mutations.md](mutations.md) has `--serial`, routing, exit codes. Once the raw
    gates and these checks pass, start `review` on the work this slice added (its commit range) as an
    **independent acceptance check**, giving the reviewer the frozen gates and the
    spec reviewer's criteria so it grades the same bar the builder was given, and at

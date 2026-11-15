@@ -22,6 +22,17 @@ Scope the delta review to the change: give the reviewer the prior blockers and t
 
 A corrective whose diff changes only comments, docs or display strings skips the delta review, when no agent follows them as instructions and no tool parses them. Skill text (SKILL.md, references, templates, briefs) never qualifies, and neither does a string literal that code parses or matches (a regex, SQL, a shell command, a config key, a prompt). The corrective still reruns the gates that read those strings; the frozen-phrase validator is one. You confirm each blocker's file:line condition yourself before you accept. A corrective whose blockers include class 12 or class 13 never skips the delta review.
 
+On a corrective, run the slice's mutations again with `mutate.mjs` and `--since <previous round's results.json>`, and give it a fresh log directory, so unchanged kills are not rerun.
+A mutation is `carried` with its recorded head (the sha where it was killed, not the new head) only when all of these hold:
+its previous status is `killed` or `carried`;
+its `id`, `file`, edit and `cmd` are unchanged;
+the recorded head is an ancestor of the new head;
+`file` and every file in its dependency set (its test files and the files they import by a static relative import) still exist and appear in no `git diff --no-renames --name-only <recorded head>..<new head>`, which lists a deleted or renamed path;
+and `<recorded head>..<new head>` holds no merge commit.
+Every other mutation reruns.
+A mutation with no derivable test file never carries (its `cmd` names no tracked file and it has no `tests` array), so give such a mutation a `tests` array.
+Carrying covers mutations only; the full frozen gate run below still happens at the delivery head.
+
 When any corrective round of a slice carried a gate (a `Carried:` line), you run the full frozen gate set once on the head it accepts, before you mark it accepted. In a fleet, the final integration gate counts as that run only when it runs every gate the slice carried.
 
 ## Local gates

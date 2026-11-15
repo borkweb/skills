@@ -107,8 +107,9 @@ report the precise blocker and seek a user choice instead of selecting a fallbac
 When results arrive, compare raw gate evidence with the frozen acceptance
 criteria and inspect the actual diff. Every criterion needs a criteria-evidence
 line; a missing line or `NOT MET` sends the slice back without a review. Before
-any review, run every gate marked `NOT RUN`, each mutation a criterion names (in
-a throwaway detached worktree at the slice head, removed afterward) and each
+any review, run every gate marked `NOT RUN`, each mutation a criterion names (with
+`mutate.mjs`, never the builder's worktree; offload SKILL.md step 3 and its
+mutations.md hold the command, the result routing and the exit codes) and each
 real-runtime run a criterion names; a failure sends the slice back as a
 corrective. A gate you cannot run either stays `NOT RUN` as a recorded caveat
 (LAND WITH CAUTION, or ask the user); it never sends the slice back. Then run a
