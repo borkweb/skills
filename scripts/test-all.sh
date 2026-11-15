@@ -95,6 +95,9 @@ build_child_env() {
         CHILD_ENV+=("$name=${!name}") ;;
     esac
   done
+  # With no LANG (a stripped or CI environment) python 3.9 coerces the C locale and adds LC_CTYPE to the
+  # environment its tests inspect, and ruby reads Markdown as US-ASCII. Default to UTF-8 when none is set.
+  [ -z "${LANG:-}" ] && CHILD_ENV+=("LANG=en_US.UTF-8")
   CHILD_ENV+=(
     "BORK_RUN_DIR=$SENT/sentinel-run" "BORK_RUN_ID=sentinel-run" "BORK_RUNS_HOME=$SENT/runs-home"
     "OFFLOAD_HANDOFF=$SENT/handoffs/h.md" "OFFLOAD_SESSION_ID=sentinel-session"

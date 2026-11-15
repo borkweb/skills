@@ -113,7 +113,8 @@ class SentinelGuard(unittest.TestCase):
         proc = self.guard("import os\nos.remove(os.environ['OFFLOAD_HANDOFF'])\n")
         kept = [d for d in os.listdir(self.tmp)]
         self.assertEqual(len(kept), 1)
-        self.assertIn(os.path.join(self.tmp, kept[0]), proc.stdout.replace("/private", ""))
+        # macOS prints /private/var/... for the same directory as /var/...; compare without the prefix
+        self.assertIn(os.path.join(self.tmp, kept[0]).replace("/private", ""), proc.stdout.replace("/private", ""))
 
     # -- setup -----------------------------------------------------------------------------------------
 
@@ -145,7 +146,7 @@ class SentinelGuard(unittest.TestCase):
         canary = "K1_CANARY_%s" % os.urandom(4).hex()
         code = (
             "import json, os\n"
-            "keys = ['BORK_RUN_DIR', 'BORK_RUN_ID', 'BORK_RUNS_HOME', 'OFFLOAD_HANDOFF', 'OFFLOAD_SESSION_ID', 'AGENT_HANDOFFS_DIR', 'ORCHESTRATOR_HOME', 'BORK_REPO_RULES_DIR', 'TMPDIR', 'HOME']\n"
+            "keys = ['BORK_RUN_DIR', 'BORK_RUN_ID', 'BORK_RUNS_HOME', 'OFFLOAD_HANDOFF', 'OFFLOAD_SESSION_ID', 'AGENT_HANDOFFS_DIR', 'ORCHESTRATOR_HOME', 'BORK_REPO_RULES_DIR', 'TMPDIR', 'HOME', 'LANG']\n"
             "run = json.load(open(os.path.join(os.environ['BORK_RUN_DIR'], 'run.json')))\n"
             "json.dump({'names': sorted(os.environ), 'values': {k: os.environ.get(k) for k in keys}, 'run': {'schema': run['schema'], 'state': run['state']}}, open(%r, 'w'))\n"
         ) % probe
@@ -173,6 +174,7 @@ class SentinelGuard(unittest.TestCase):
         self.assertNotEqual(v["OFFLOAD_SESSION_ID"], "hostile-session")
         self.assertNotEqual(os.path.realpath(v["TMPDIR"]), os.path.realpath(self.tmp), "the child gets a fresh TMPDIR")
         self.assertEqual(v["HOME"], HOME, "HOME stays real")
+        self.assertTrue(v["LANG"].endswith("UTF-8"), "a UTF-8 LANG is set when the invoking environment has none")
         # the invoking pointers' trees were not touched
         after = [(p, h) for p, h in tree_hash(self.tmp) if not p.endswith(".probe.json")]
         self.assertEqual(before, after)
