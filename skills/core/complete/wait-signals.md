@@ -15,7 +15,7 @@ when `WFR_BOARD_CWD` is set) is the fleet's state. Act on both.
 | `builder-exited-without-ready …` | Builder process gone, no report. | Run `handoff.mjs coverage` first (below). Exit 4 is bookkeeping. Otherwise BLOCKER: pause, ask the human. |
 | `timeout …` | Deadline passed. | BLOCKER: pause, ask the human. |
 | `never-started …` | No builder marker ever appeared. | Read the dispatch output for a launch failure, fix the cause, re-dispatch through `offload`. BLOCKER if it repeats. |
-| `handoff-deleted …` | The handoff vanished mid-wait. | STOP. Resolve the handoff path first, then ask the human. Do not re-dispatch blindly. |
+| `handoff-deleted …` | The handoff vanished mid-wait. | Resolve the handoff path first, then ask the human. Do not re-dispatch blindly. |
 
 A `WAITER:` line means resume the loop at that slice, not start the run over.
 

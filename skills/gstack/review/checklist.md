@@ -31,11 +31,11 @@ Before judging scale, find the expected load in the repository (README, deploy c
 
 #### Enum & Value Completeness
 When the diff introduces a new enum value, status string, tier name, or type constant, or loosens what an input accepts (a new MIME type, extension or flag, or a widened validator, parser or guard):
-- **Trace it through every consumer.** Read (don't just grep — READ) each file that switches on, filters by, or displays that value. If any consumer doesn't handle the new value, flag it.
+- **Trace it through every consumer.** Read (don't just grep) each file that switches on, filters by, or displays that value. If any consumer doesn't handle the new value, flag it.
 - **Check allowlists/filter arrays.** Search for arrays containing sibling values and verify the new value is included where needed.
 - **Check `case`/`if-elsif` chains.** If existing code branches on the enum, does the new value fall through to a wrong default?
 - **Loosened acceptance breaks unchanged consumers.** Grep every consumer of the same field and confirm each handles the newly accepted shape; the broken code is usually outside the diff.
-To do this: use Grep to find all references to the sibling values. Read each match. This step requires reading code OUTSIDE the diff.
+To do this: use Grep to find all references to the sibling values. Read each match. This step requires reading code outside the diff.
 
 #### Migration & Schema Safety
 - New DB migration adding a column with a NOT NULL constraint and no default — will fail on existing rows
@@ -137,7 +137,7 @@ A gate is anything that would have made this change fail: a test, an assertion, 
 - `useEffect` with fetch that depends on another fetch result (request waterfall)
 - Named → default import switches on tree-shakeable libraries (breaks tree-shaking)
 
-**DO NOT flag:**
+**Do not flag:**
 - devDependencies additions (don't affect production bundle)
 - Dynamic `import()` calls (code splitting — these are good)
 - Small utility additions (<5KB gzipped)
@@ -157,7 +157,7 @@ A finding is a defect class, not a line. Before rating any finding:
 
 ---
 
-## Suppressions — DO NOT flag these
+## Suppressions — do not flag these
 
 Zero findings is a valid outcome. Flag only what a senior engineer on this team would change in review; if the diff is clean, say so.
 
@@ -169,7 +169,7 @@ Zero findings is a valid outcome. Flag only what a senior engineer on this team 
 - "Test exercises multiple guards simultaneously" — that's fine
 - Eval threshold changes as a code-quality comment ("explain this value", "extract a constant") — these are tuned empirically and change constantly. This does not suppress Gate Integrity: a threshold, budget, timeout, retry or tolerance relaxed in a test, eval or CI file is read under Gate Integrity, and a cited measurement is marked verified or unverified but never removes the finding
 - Harmless no-ops
-- ANYTHING already addressed in the diff you're reviewing — read the FULL diff before commenting
+- Anything already addressed in the diff you're reviewing — read the full diff before commenting
 - "Consider adding error handling" on a call whose errors the caller or framework already owns (error middleware, an error boundary, a top-level try/catch, an upstream `.catch`)
 - "Function too long" for an exhaustive `switch`, a config object, a test table or generated code — length is not complexity
 - "Possible null dereference" when a type guard or `if` check in scope already narrows the value — trace the type flow

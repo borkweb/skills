@@ -23,8 +23,8 @@ about what is running, done or stuck comes from the board of that same turn.
 
 ## 1. Resolve goal + endpoint
 
-**The default endpoint is merge-ready, NOT merged.** Build every slice, pass each
-per-slice `review`, land a clean final integration `review`, then STOP at the edge
+**The default endpoint is merge-ready, not merged.** Build every slice, pass each
+per-slice `review`, land a clean final integration `review`, then stop at the edge
 of merge and hand to the human with the branch and the exact merge command.
 
 Only set the endpoint to **merged** when the user's instructions explicitly
@@ -172,7 +172,7 @@ turn-taking between slices and you never hold the fleet in your head.
    | `NEEDS ARCHITECT` | Arbitrate (blocked) or judge the gates (results-ready). |
    | `MISMATCH` | The builder's doc moved past your ledger. The doc is the builder's word: act on it, then bring the ledger level. |
    | `CORRUPT DOC` | Rewrite the status; until then that slice's bridge is deaf. |
-   | `DOC MISSING` | STOP. Do not re-dispatch blindly; surface it. |
+   | `DOC MISSING` | Do not re-dispatch blindly; surface it. |
    | `UNMANAGED PANE` | The recorded pane did not come from dispatch.sh; no signal can reach you from it. Judge what it produced, mark the slice terminal, re-dispatch through `offload`. |
 
 2. Read the bridge's `WAITER:` line and branch per [wait-signals.md](wait-signals.md).
@@ -267,12 +267,12 @@ dependent coding.
 ## 7. Finish: merge-ready by default, merge only if authorized
 
 Reached when **every ledger row is terminal**, every accepted slice's gates passed
-and its per-slice `review` was clean, AND the goal text is fully delivered with
+and its per-slice `review` was clean, and the goal text is fully delivered with
 the authorized commit/push steps completed (or an explicit no-push record). Run
 `board` and confirm that first: a non-terminal row means you are not finished,
 however complete it feels.
 
-1. **Final integration review, the readiness gate.** Run `review` on the FULL
+1. **Final integration review, the readiness gate.** Run `review` on the full
    branch diff against the base; per-slice reviews can't see cross-slice
    integration issues. Treat the verdict as the gate:
    - **SAFE TO LAND** → ready.
@@ -284,7 +284,7 @@ however complete it feels.
    slice, check what the repo's own CI runs that your frozen gates did not; a
    green local suite next to a red pipeline is a failed slice.
 
-2. **Default: STOP at merge-ready. Do NOT merge.** Report and hand to the human:
+2. **Default: stop at merge-ready. Do not merge.** Report and hand to the human:
    goal, slices shipped, commit SHAs, final gate and review verdicts (and any LAND
    WITH CAUTION caveats), all from `board`; the branch name and the exact merge
    command. Add `handoff.mjs ledger report "$PWD"` so the human sees where the time

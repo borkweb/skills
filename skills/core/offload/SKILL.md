@@ -55,7 +55,7 @@ The external bridge supports native Claude and Codex architect identities. `hand
   slice; ask the user to lift it only if they told you to make that edit.
 - When the user says stop, run `handoff.mjs halt "<repo root>" "<their words>"` before anything else. While halted, `dispatch-slice.sh` refuses, unattended wakes do not resume you, and the board leads with HALTED. Only the user's go-ahead clears it (`handoff.mjs unhalt`).
 - Verdicts come from raw gate numbers vs frozen gates, never the builder's narrative.
-- A slice is acceptable only when raw gates pass AND `review` returns no DO NOT LAND.
+- A slice is acceptable only when raw gates pass and `review` returns no DO NOT LAND.
 - Never edit frozen gates after results exist.
 - The handoff and the ledger are session-scoped and never committed. Don't `git add` them.
 - Resolve `$HANDOFF` each turn and edit only your own doc, through `section`. A
@@ -64,7 +64,7 @@ The external bridge supports native Claude and Codex architect identities. `hand
 
 ## The ledger
 
-A handoff is ONE builder's mailbox. It cannot say what the other slices are
+A handoff is one builder's mailbox. It cannot say what the other slices are
 doing, and it has no terminal state, so a slice whose builder finished and
 exited keeps reading as in-flight. Every run has a
 `ledger` (`handoff.mjs ledger …`) that records every slice and its state: when
@@ -144,7 +144,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    each with a one-line reason, recorded under *Decisions + why*. Clear the
    resolved disagreements. Use `council` for substantive judgment calls when multiple perspectives add value; routine rulings use the scope and evidence already available.
    A ruling that changes what the work must say or do follows [judging.md](judging.md).
-3. **Judge `Gate results` RAW** against `Frozen gates`. Read pass/fail and the
+3. **Judge `Gate results` raw** against `Frozen gates`. Read pass/fail and the
    numbers only; ignore *Work summary* and any narrative when grading. Then read the
    criteria evidence under *Gate results*: every frozen criterion needs a line, and a
    `NOT MET` line fails the slice without a review. A missing line is not a verdict:
@@ -193,7 +193,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    without a verdict, and refuses a review-only one without both tags.
 4. **Write the next slice spec** under *Next slice*: one coherent feature (see Slice
    size), hard acceptance criteria, explicit out-of-scope, and a mandate that the
-   builder verify APIs/formats against reality BEFORE coding. Frozen criteria
+   builder verify APIs/formats against reality before coding. Frozen criteria
    outrank the spec prose, so the spec cites a criterion by its ID instead of
    restating its condition. A **corrective** spec follows
    [correctives.md](correctives.md): the confirmed blockers, each with a red command or a quoted false line,
