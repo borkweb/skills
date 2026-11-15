@@ -162,6 +162,9 @@ test('C30 C31 every line carries integer checksPending and checksFailing counts,
     [{ checks: [run('IN_PROGRESS'), run('WAITING')], isDraft: true }, 2, 0, 'draft-or-changes-requested'],
     [{ checks: [ctx('ERROR'), ctx('FAILURE'), run('COMPLETED', 'TIMED_OUT')], merge: 'DIRTY' }, 0, 3, 'conflict'],
     [{ checks: [run('COMPLETED', 'NEUTRAL'), run('COMPLETED', 'SKIPPED')], threads: [{ isResolved: false }] }, 0, 0, 'threads'],
+    [{ review: 'REVIEW_REQUIRED', checks: [run('IN_PROGRESS')] }, 1, 0, 'draft-or-changes-requested'], // C30: tier is not the count
+    [{ review: 'REVIEW_REQUIRED', checks: [run('COMPLETED', 'FAILURE')] }, 0, 1, 'ci-failing'], // the same PR once the check finished
+    [{ contexts: page([]) }, 1, 0, 'ci-pending'], // C31: a rollup whose contexts.nodes is []
     [{ checks: [], rollup: null }, 1, 0, 'ci-pending'], // no checks reported yet (null rollup): one pending, so a watcher waits
     [{ checks: [], rollupState: 'SUCCESS' }, 1, 0, 'ci-pending'], // a rollup with zero contexts: same
     [{ contexts: page([run('QUEUED')], 'c1') }, 'paged', 'paged', 'ci-failing'], // page 2 adds one failing and one in progress
