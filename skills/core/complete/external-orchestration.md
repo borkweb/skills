@@ -191,6 +191,9 @@ turn-taking between slices and you never hold the fleet in your head.
      change) → `ledger set … --state returned`; made moot by a change of
      direction → `abandoned`. Neither is a rejection.
    - gates pass and review clean → `ledger set … --state accepted --verdict "<raw numbers>"`.
+     After a corrective with a `Carried:` line, run the full frozen gate set on that
+     head first; in a fleet, the integration gate counts only when it runs every gate
+     the slice carried.
    - scope left → dispatch the next ready slice(s).
    - goal met across all slices → step 7.
 4. `dispatch-slice.sh` has already set the row to `dispatched` with the verified

@@ -169,12 +169,13 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    command (you have Bash). A failed spot-check fails the slice: stop or discard that
    review and send the failure back. A **DO NOT LAND** verdict fails the slice no
    matter how the gates read, but only for a blocker that carries a red command or
-   quotes a shipped line the change made false (missing required evidence, a merge
-   conflict, security findings, data loss and uncapped spend need neither); spec one
-   corrective slice carrying every such blocker. Read [correctives.md](correctives.md) before you spec or
-   dispatch a corrective (`dispatch-slice.sh … --corrective`) or judge a rejection:
+   quotes a shipped line the change made false (missing required evidence, an unmet
+   frozen criterion, a merge conflict, security findings, data loss and uncapped
+   spend need neither); spec one corrective slice carrying every such blocker.
+   Read [correctives.md](correctives.md) before you spec, dispatch, judge or accept a corrective (`dispatch-slice.sh … --corrective`), or judge a rejection:
    it holds the proof rule, the two-miss stop, the round cap, send-backs, the
-   scope of reruns and the delta review. **LAND WITH CAUTION** → record the
+   scope of reruns and the delta review. Before you accept a slice that had a
+   corrective with a `Carried:` line, run the full frozen gate set on the head you accept. **LAND WITH CAUTION** → record the
    caveats and rule (proceed or correct). This is your own gate, separate from the
    builder's internal reviewer agent. Record the gate verdict and the review verdict
    (and any human ruling) under *Decisions + why*, and write the slice's terminal
@@ -195,7 +196,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    builder verify APIs/formats against reality BEFORE coding. Frozen criteria
    outrank the spec prose, so the spec cites a criterion by its ID instead of
    restating its condition. A **corrective** spec follows
-   [correctives.md](correctives.md): the confirmed blockers, each with a red command,
+   [correctives.md](correctives.md): the confirmed blockers, each with a red command or a quoted false line,
    and no spec reviewer or plan reviews. Otherwise run these concurrently:
    - a read-only **spec reviewer** agent with the `review` checklist and
      [review-criteria.md](../do/references/review-criteria.md) over the slice
