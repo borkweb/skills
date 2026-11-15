@@ -875,3 +875,195 @@ test('--corrective writes nothing when Frozen gates holds no IDs yet', () => {
     assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*C2: another/);
   }
 });
+
+// --- PS-04: a fresh dispatch refuses a run whose decisions.md has an unbacked ruling ---
+
+const BLOCK_C = join(BOX, 'block-criteria.md');
+writeFileSync(BLOCK_C, 'Slice 7\nAcceptance:\nC1: first\nC2: second\nGates: G1\n');
+const UNBACKED = 'Changes the bar (slice 7): C99';
+let rdN = 0;
+// A run dir with the files a case needs; `state` writes run.json.
+const runDir = ({ decisions, state } = {}) => {
+  const d = join(BOX, `rd-${++rdN}`);
+  mkdirSync(d, { recursive: true });
+  if (decisions !== undefined) writeFileSync(join(d, 'decisions.md'), `# Decisions\n\n${decisions}\n`);
+  if (state) writeFileSync(join(d, 'run.json'), JSON.stringify({ schema: 1, state }));
+  return d;
+};
+const noRowDispatched = (R) => assert.ok(!ledger(R).slices.some((s) => s.state === 'dispatched'), 'no row is left dispatched');
+
+// Run a fresh dispatch of slice 7 that must refuse, and check what a refusal leaves behind.
+function refused(R, WT, extraArgs = [], extraEnv = {}) {
+  const r = runFail([R, WT, 'feat/rl', BLOCK_C, '--id', '7', ...extraArgs], extraEnv);
+  assert.equal(r.status, 6);
+  assert.match(r.stderr, new RegExp(`^unbacked: ${UNBACKED.replace(/[().]/g, '\\$&')}$`, 'm'));
+  assert.equal(r.log, '', 'no launch, no pane send, no stub call');
+  assert.doesNotMatch(hoff(['section', 'get', hoff(['path', WT, 'arch']), 'Frozen gates']), /C1:/, 'Frozen gates unchanged');
+  noRowDispatched(R);
+  return r;
+}
+
+test('C8a: --run-dir whose decisions.md holds an unbacked marker for the --id refuses with exit 6', () => {
+  const R = repo();
+  refused(R, join(BOX, 'wt-rl-a'), ['--run-dir', runDir({ decisions: UNBACKED })]);
+});
+
+test('C8b: the run dir may come only from the ledger run_dir link', () => {
+  const R = repo();
+  hoff(['ledger', 'init', R, 'g', '--run-dir', runDir({ decisions: UNBACKED })]);
+  refused(R, join(BOX, 'wt-rl-b'));
+});
+
+test('C8c: a live BORK_RUN_DIR is consulted; a done one is not', () => {
+  const R = repo();
+  refused(R, join(BOX, 'wt-rl-c1'), [], { BORK_RUN_DIR: runDir({ decisions: UNBACKED, state: 'running' }) });
+  const R2 = repo();
+  const { log } = run([R2, join(BOX, 'wt-rl-c2'), 'feat/rl2', BLOCK_C, '--id', '7'], { BORK_RUN_DIR: runDir({ decisions: UNBACKED, state: 'done' }) });
+  assert.match(log, /tab create/, 'a dead run dir’s decisions.md is not consulted');
+});
+
+test('C8d/C8e: backed markers, no markers and no decisions.md all dispatch', () => {
+  for (const [i, d] of [
+    runDir({ decisions: 'Changes the bar (slice 7): C1, C2\nChanges the bar (slice 8): C99' }),
+    runDir({ decisions: 'A ruling with no marker line.' }),
+    runDir({}),
+  ].entries()) {
+    const R = repo();
+    const { log } = run([R, join(BOX, `wt-rl-d${i}`), `feat/rl-d${i}`, BLOCK_C, '--id', '7', '--run-dir', d]);
+    assert.match(log, /tab create/, `case ${i}`);
+    assert.equal(row(R, '7').state, 'dispatched');
+  }
+});
+
+test('C8f: --corrective never runs rulings', () => {
+  const R = repo();
+  const d = runDir({ decisions: UNBACKED });
+  const WT = join(BOX, 'wt-rl-f');
+  hoff(['ledger', 'init', R, 'g', '--run-dir', runDir({})]);
+  run([R, WT, 'feat/rl-f', BLOCK, '--id', '7']);
+  const doc = hoff(['path', WT, 'arch']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  finish(doc);
+  hoff(['ledger', 'set', R, '7', '--state', 'rejected', '--verdict', 'g1 failed 1/2']);
+  const l = JSON.parse(hoff(['ledger', 'show', R]));
+  writeFileSync(hoff(['ledger', 'path', R]), JSON.stringify({ ...l, run_dir: d }));
+  const { log } = run([R, WT, 'feat/rl-f', FIX, '--id', '7', '--corrective']);
+  assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*blocker B1 token leak/);
+  assert.match(log, /pane run w9:p7/);
+});
+
+test('C8g/C23: the rulings child gets an allowlisted env and its exit code passes through', () => {
+  const canary = join(BOX, 'canary.cjs');
+  const trace = join(BOX, 'canary.log');
+  rmSync(trace, { force: true });
+  writeFileSync(canary, `require('fs').appendFileSync(${JSON.stringify(trace)}, JSON.stringify(process.argv) + '\\n');\n`);
+  const R = repo();
+  const r = refused(R, join(BOX, 'wt-rl-g'), ['--run-dir', runDir({ decisions: UNBACKED })], { NODE_OPTIONS: `--require ${canary}` });
+  assert.equal(r.status, 6);
+  const seen = existsSync(trace) ? readFileSync(trace, 'utf8') : '';
+  assert.ok(seen.includes('handoff.mjs'), 'the canary fires in the children that inherit NODE_OPTIONS');
+  assert.doesNotMatch(seen, /rulings/, 'but not in the rulings child');
+});
+
+// --- PS-03: a fresh dispatch records the slice's base commit and ref in the handoff ---
+
+const fm = (doc, key) => new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(readFileSync(doc, 'utf8').split('\n## ')[0])?.[1];
+const baseRepo = () => {
+  const R = repo();
+  git(R, ['branch', 'trunk']);
+  return R;
+};
+const tip = (dir, ref = 'HEAD') => git(dir, ['rev-parse', ref]);
+
+test('C3a/C19a: --base <branch> on a created worktree records the resolved sha and the full ref; advancing the branch changes nothing', () => {
+  const R = baseRepo();
+  const want = tip(R, 'trunk');
+  const WT = join(BOX, 'wt-b-a');
+  run([R, WT, 'feat/b-a', BLOCK, '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), want);
+  assert.match(want, /^[0-9a-f]{40}$/);
+  assert.equal(fm(doc, 'base_ref'), 'refs/heads/trunk');
+  git(R, ['commit', '-q', '--allow-empty', '-m', 'trunk moves']);
+  git(R, ['branch', '-f', 'trunk', 'HEAD']);
+  assert.equal(fm(doc, 'base'), want, 'the recorded sha does not follow the branch');
+});
+
+test('C3b: a created worktree without --base records the repo HEAD sha and its branch ref', () => {
+  const R = baseRepo();
+  const want = tip(R);
+  const WT = join(BOX, 'wt-b-b');
+  run([R, WT, 'feat/b-b', BLOCK]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), want);
+  assert.equal(fm(doc, 'base_ref'), 'refs/heads/main');
+});
+
+test('C3c: a reused worktree with --base records the resolved sha', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-b-c');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/b-c', WT]);
+  run([R, WT, 'feat/b-c', BLOCK, '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), tip(R, 'trunk'));
+  assert.equal(fm(doc, 'base_ref'), 'refs/heads/trunk');
+});
+
+test('C3d: a reused worktree without --base writes no base and no base_ref, never a guess', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-b-d');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/b-d', WT]);
+  git(WT, ['commit', '-q', '--allow-empty', '-m', 'work']);
+  run([R, WT, 'feat/b-d', BLOCK]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(fm(doc, 'base'), undefined);
+  assert.equal(fm(doc, 'base_ref'), undefined);
+});
+
+test('C19a: a --base that is a sha or a tag records base but no base_ref', () => {
+  const R = baseRepo();
+  git(R, ['tag', 'v1']);
+  for (const [i, ref] of [tip(R), 'v1'].entries()) {
+    const WT = join(BOX, `wt-b-ref${i}`);
+    run([R, WT, `feat/b-ref${i}`, BLOCK, '--base', ref]);
+    const doc = hoff(['path', WT, 'arch']);
+    assert.equal(fm(doc, 'base'), tip(R), ref);
+    assert.equal(fm(doc, 'base_ref'), undefined, ref);
+  }
+});
+
+test('C3e: --corrective, warm or cold, leaves base and base_ref byte-identical', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-b-e');
+  run([R, WT, 'feat/b-e', BLOCK, '--id', '1', '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  const before = [fm(doc, 'base'), fm(doc, 'base_ref')];
+  git(R, ['branch', '-f', 'trunk', 'HEAD']);
+  git(R, ['commit', '-q', '--allow-empty', '-m', 'main moves']);
+  writeFileSync(`${doc}.builder`, `${process.pid}\n`);
+  finish(doc);
+  hoff(['ledger', 'set', R, '1', '--state', 'rejected', '--verdict', 'g1 failed 1/2']);
+  run([R, WT, 'feat/b-e', FIX, '--id', '1', '--corrective']);
+  assert.deepEqual([fm(doc, 'base'), fm(doc, 'base_ref')], before, 'warm');
+  rmSync(`${doc}.builder`, { force: true });
+  hoff(['ledger', 'set', R, '1', '--state', 'rejected', '--verdict', 'g1 failed 1/2']);
+  run([R, WT, 'feat/b-e', FIX, '--id', '1', '--corrective']);
+  assert.deepEqual([fm(doc, 'base'), fm(doc, 'base_ref')], before, 'cold');
+});
+
+test('C3f: a --base that does not resolve to a commit is never written', () => {
+  const R = baseRepo();
+  for (const [i, bad] of ['no-such-branch', '--output=/nope'].entries()) {
+    const WT = join(BOX, `wt-b-f${i}`);
+    const r = runFail([R, WT, `feat/b-f${i}`, BLOCK, '--base', bad]);
+    assert.notEqual(r.status, 0, bad);
+    assert.equal(r.log, '', 'nothing was launched');
+    const doc = hoff(['path', WT, 'arch']);
+    assert.ok(!existsSync(doc) || fm(doc, 'base') === undefined, bad);
+  }
+  const WT = join(BOX, 'wt-b-f-reused');
+  git(R, ['worktree', 'add', '-q', '-b', 'feat/b-f-reused', WT]);
+  const r = runFail([R, WT, 'feat/b-f-reused', BLOCK, '--base', 'no-such-branch']);
+  assert.notEqual(r.status, 0);
+  assert.equal(r.log, '');
+});

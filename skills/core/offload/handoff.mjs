@@ -22,7 +22,24 @@
 //                                                             and even with --steal; it checks coverage, not freshness.
 //                                                             When the doc names a worktree (`cwd:`), all three also
 //                                                             need a `Head: <sha>` line under Gate results that matches
-//                                                             the worktree's HEAD, and refuse with `stale:` (exit 5)
+//                                                             the worktree's HEAD, and refuse with `stale:` (exit 5). A
+//                                                             `Head:` that differs is accepted only after a pure rebase:
+//                                                             the frontmatter's `base:` sha and `base_ref:` full ref
+//                                                             (written by dispatch-slice.sh), the same `git patch-id
+//                                                             --verbatim` for `base..<head>` and `<merge-base>..HEAD`, a
+//                                                             non-empty patch and a clean `git merge-tree --write-tree`
+//                                                             against the ref's current tip. Anything unknown refuses
+//                                                             `stale:` naming the condition. A `Carried:` line is not a
+//                                                             `Head:` line. Gate evidence only; see judging.md
+//   node handoff.mjs rulings  <decisions.md> <block.md> --slice <id>
+//                                                         -> check that every `Changes the bar (slice <id>): <IDs>` marker in
+//                                                             decisions.md names only IDs that lead an `Acceptance:` line of the
+//                                                             block. Exit 0 when all are backed (or there are no markers), 6 with
+//                                                             one `unbacked: <marker line>` per offender on stderr, 2 on usage, 1
+//                                                             when a file cannot be read. dispatch-slice.sh runs it on a fresh dispatch.
+//   node handoff.mjs base     <path> <sha> [<ref>]        -> record the slice's base commit (`base:`) and the full ref it came
+//                                                             from (`base_ref:`, dropped when none) in the frontmatter, ownership-guarded.
+//                                                             dispatch-slice.sh calls it on a fresh dispatch.
 //   node handoff.mjs end      <path>                      -> delete doc
 //   node handoff.mjs prune                                -> TTL reap + orphaned-sidecar sweep
 //
@@ -56,7 +73,7 @@
 // $OFFLOAD_SESSION_ID. Status and section writes honor that id only for the one
 // doc named in $OFFLOAD_HANDOFF; every other doc still keys on the caller's own
 // session, so the tripwire holds everywhere else.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -306,6 +323,34 @@ function setStatus(p, value, steal) {
   });
 }
 
+// --- slice base -----------------------------------------------------------
+// dispatch-slice.sh records the commit a slice was cut from (`base: <sha>`) and,
+// when it came from a branch, the full ref (`base_ref: refs/heads/...`) in the
+// frontmatter. `staleHead` uses both to accept gate evidence across a pure rebase.
+// Frontmatter only: setField would also rewrite a body line that starts `base:`.
+function setFrontmatter(body, key, value) {
+  const m = /^---\n([\s\S]*?)\n---(?=\n|$)/.exec(body);
+  if (!m) die('refusing: the handoff has no frontmatter to record the base in');
+  const lines = m[1].split('\n').filter((l) => !l.startsWith(`${key}:`));
+  if (value !== null) lines.push(`${key}: ${value}`);
+  return `---\n${lines.join('\n')}\n---${body.slice(m[0].length)}`;
+}
+
+const BASE_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const BASE_REF = /^refs\/(?:heads|remotes)\/[^\s]+$/;
+
+function setBase(p, sha, ref, steal) {
+  requireDoc(p);
+  if (!BASE_SHA.test(String(sha ?? ''))) die('usage: handoff.mjs base <path> <full-commit-sha> [<refs/heads/...|refs/remotes/...>]', 2);
+  if (ref !== undefined && !BASE_REF.test(ref)) die('refusing: base_ref must be a full refs/heads/... or refs/remotes/... name', 2);
+  const expected = requireSession(
+    writerSession(p),
+    'A base write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
+  );
+  assertOwner(p, expected, steal, 'record the base on');
+  updateDoc(p, (b) => setField(setFrontmatter(setFrontmatter(b, 'base', sha), 'base_ref', ref ?? null), 'updated', nowIso()));
+}
+
 // --- criterion coverage ---------------------------------------------------
 // An ID is `C<digits><optional lowercase letter>` and counts only as the first
 // token of a line: after leading space and an optional list marker (`-`, `*`,
@@ -364,15 +409,93 @@ function coverage(p) {
   if (stale) die(`stale: ${stale}`, 5);
 }
 
+// --- bar-changing rulings -------------------------------------------------
+// A ruling in a run's decisions.md that changes what the work must say or do
+// carries one marker line, `Changes the bar (slice <id>): <IDs>` (a list marker
+// and `**` decoration are allowed). `rulings` checks that every marker for the
+// slice names only criterion IDs that lead a line of the block's Acceptance
+// lines: from a column-0 `Acceptance:` line to the next column-0 `<Label>:` that
+// is not a criterion ID, or a ``` fence, or the end. A parent ID (`C2`) is backed
+// by any of its sub-IDs (`C2a`). A marker with no IDs, a token that is not an ID,
+// or a line that contains `Changes the bar` but does not parse, is unbacked.
+const MARKER = /^\s*(?:[-*]\s+)?Changes the bar \(slice ([A-Za-z0-9._-]+)\):\s*(.*?)\s*$/;
+const ID_ONLY = /^C\d+[a-z]?$/;
+
+function acceptanceIds(block) {
+  const plain = block.replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
+  const kept = [];
+  let inside = false;
+  for (const line of plain.split('\n')) {
+    if (/^Acceptance:/.test(line)) { inside = true; continue; }
+    if (!inside) continue;
+    const label = /^([A-Za-z][A-Za-z0-9 _/-]*):/.exec(line)?.[1];
+    if (/^\s*```/.test(line) || (label && !ID_ONLY.test(label))) { inside = false; continue; }
+    kept.push(line);
+  }
+  return new Set(leadingIds(kept.join('\n')));
+}
+
+function unbackedMarkers(decisions, block, slice) {
+  const acceptance = acceptanceIds(block.replace(/\r\n?/g, '\n'));
+  const backed = (id) => acceptance.has(id) || (!/[a-z]$/.test(id) && [...acceptance].some((a) => a.length === id.length + 1 && a.startsWith(id)));
+  const bad = [];
+  for (const line of decisions.replace(/\r\n?/g, '\n').split('\n')) {
+    const flat = line.replace(/\*\*/g, '');
+    if (!flat.includes('Changes the bar')) continue;
+    const m = MARKER.exec(flat);
+    if (!m) { bad.push(line); continue; }
+    if (m[1] !== slice) continue;
+    const ids = m[2].split(',').map((t) => t.trim());
+    if (!m[2] || !ids.every((t) => ID_ONLY.test(t) && backed(t))) bad.push(line);
+  }
+  return bad;
+}
+
+const RULINGS_USAGE = 'usage: handoff.mjs rulings <decisions.md> <block.md> --slice <id>';
+
+function rulingsCmd(rest) {
+  const i = rest.indexOf('--slice');
+  const slice = i === -1 ? '' : String(rest[i + 1] ?? '');
+  const [decisions, block] = positional(i === -1 ? rest : rest.filter((_, j) => j !== i && j !== i + 1));
+  if (!decisions || !block || !slice || slice.startsWith('--')) die(RULINGS_USAGE, 2);
+  const read = (p, what) => {
+    try { return readFileSync(p, 'utf8'); } catch (e) { return die(`rulings: cannot read the ${what} file ${p} (${e.code || e.message})`, 1); }
+  };
+  const bad = unbackedMarkers(read(decisions, 'decisions'), read(block, 'block'), slice);
+  if (bad.length) die(bad.map((l) => `unbacked: ${l}`).join('\n'), 6);
+}
+
 // --- gate head ------------------------------------------------------------
 // Gate results name the commit the final full gate run used, as a `Head: <sha>`
 // line. A doc whose frontmatter names a worktree (`cwd:`, set by every dispatch)
 // must carry at least one, and every one must be a prefix of that worktree's
 // HEAD: evidence from before a late edit then cannot pass as evidence for the
-// head. A doc with no `cwd:`, or whose `cwd:` is not inside a git work tree (a
-// hand-made doc, a test fixture), has no head to compare and is not checked. A
-// work tree whose HEAD git cannot read (no commit yet) refuses, never passes.
+// head. A `Carried: <sha> — <gates>` line (gates a corrective's diff cannot reach)
+// is not a `Head:` line and is never compared. A doc with no `cwd:`, or whose
+// `cwd:` is not inside a git work tree (a hand-made doc, a test fixture), has no
+// head to compare and is not checked. A work tree whose HEAD git cannot read (no
+// commit yet) refuses, never passes.
+//
+// One exception: a pure rebase. A recorded head that is not HEAD is accepted when
+// the slice was cut from a recorded base (`base:` sha and `base_ref:` full ref,
+// written by dispatch-slice.sh) and all four hold:
+//   1. both frontmatter lines are present and well formed, and the recorded head
+//      is a commit in this repository on top of `base:`;
+//   2. the patch `base..<recorded head>` and the patch `<merge-base of HEAD and
+//      the current tip of base_ref>..HEAD` have the same `git patch-id --verbatim`
+//      (verbatim: --stable also ignores whitespace, which changes meaning in a
+//      string or a Python indent). Each diff is whole-range, binary and mode aware;
+//   3. that patch is not empty (two empty patches would compare equal);
+//   4. `git merge-tree --write-tree <tip> HEAD` is clean, so the rebased work
+//      still lands on the base as it is now.
+// Any unknown fails closed with a `stale:` message that names the condition: a
+// missing line, an unknown head, an empty patch, a patch-id mismatch, a merge
+// conflict or a git error (including a git too old for --verbatim/--write-tree).
+// This covers gate evidence only; a review verdict never carries over a rebase.
+// Every git child runs with a scrubbed environment, so an ambient GIT_DIR,
+// GIT_WORK_TREE or GIT_INDEX_FILE cannot point it at another repository.
 const HEAD_LINE = /^\s*(?:[-*]\s+)?(?:\*\*)?Head:(?:\*\*)?\s+`?([0-9a-fA-F]{7,40})`?\s*$/;
+const GIT_ENV_PASS = ['PATH', 'HOME', 'TMPDIR', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ', 'XDG_CONFIG_HOME'];
 
 function frontmatterField(text, key) {
   const m = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(text);
@@ -381,22 +504,73 @@ function frontmatterField(text, key) {
   return line ? line[1].trim() : '';
 }
 
+function gitIn(cwd, args, input) {
+  const env = {};
+  for (const k of GIT_ENV_PASS) if (process.env[k] !== undefined) env[k] = process.env[k];
+  const r = spawnSync('git', args, { cwd, env, input, encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['pipe', 'pipe', 'ignore'] });
+  return { status: r.status ?? -1, out: (r.stdout ?? '').trim(), raw: r.stdout ?? '' };
+}
+
+const SHA_ONLY = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
+
+// null when the recorded head `h` is a pure rebase of what HEAD holds, else the reason it is not.
+function rebaseCarryOver(cwd, text, h, head) {
+  const git = (...args) => gitIn(cwd, args);
+  const failed = (what, r) => `git error: \`git ${what}\` exited ${r.status}.`;
+  const base = frontmatterField(text, 'base');
+  if (!base) return 'the handoff has no `base:` line, so the slice\'s base is unknown (dispatch-slice.sh records it on a fresh dispatch; pass --base <ref> on the first dispatch).';
+  if (!SHA_ONLY.test(base)) return `\`base: ${base}\` is not a full commit sha.`;
+  const baseRef = frontmatterField(text, 'base_ref');
+  if (!baseRef) return 'the handoff has no `base_ref:` line, so the base\'s current tip is unknown (dispatch-slice.sh records it when --base names a branch).';
+  if (!/^refs\/(?:heads|remotes)\/[^\s-][^\s]*$/.test(baseRef)) return `\`base_ref: ${baseRef}\` is not a full refs/heads/... or refs/remotes/... name.`;
+
+  const baseCommit = git('rev-parse', '--verify', '--quiet', `${base}^{commit}`);
+  if (baseCommit.status !== 0 || !baseCommit.out) return `git error: \`base: ${base}\` no longer resolves to a commit in this repository (unknown or unreachable).`;
+  const recorded = git('rev-parse', '--verify', '--quiet', `${h}^{commit}`);
+  if (recorded.status !== 0 || !SHA_ONLY.test(recorded.out)) return `the recorded head ${h} is unknown or unreachable in this repository.`;
+  const tip = git('rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`);
+  if (tip.status !== 0 || !SHA_ONLY.test(tip.out)) return `git error: \`base_ref: ${baseRef}\` no longer resolves to a commit in this repository.`;
+  const onTop = git('merge-base', '--is-ancestor', baseCommit.out, recorded.out);
+  if (onTop.status === 1) return `the recorded head ${h} is not on top of \`base: ${base.slice(0, 12)}\`.`;
+  if (onTop.status !== 0) return failed('merge-base --is-ancestor', onTop);
+  const mb = git('merge-base', head, tip.out);
+  if (mb.status === 1) return `HEAD and ${baseRef} share no merge base.`;
+  if (mb.status !== 0 || !SHA_ONLY.test(mb.out)) return failed('merge-base', mb);
+
+  // `-U0`: the patch is its changed lines, so a neighbouring edit in the base does
+  // not change it; merge-tree below is what judges the neighbourhood.
+  const patchId = (from, to) => {
+    const diff = git('diff', '-U0', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', from, to);
+    if (diff.status !== 0) return { err: failed('diff', diff) };
+    if (!diff.raw.trim()) return { empty: true };
+    const id = gitIn(cwd, ['patch-id', '--verbatim'], diff.raw);
+    if (id.status !== 0) return { err: failed('patch-id --verbatim', id) };
+    const first = id.out.split('\n')[0].split(/\s+/)[0];
+    return first ? { id: first } : { empty: true };
+  };
+  const was = patchId(baseCommit.out, recorded.out);
+  if (was.err) return was.err;
+  const now = patchId(mb.out, head);
+  if (now.err) return now.err;
+  if (was.empty || now.empty) return `the patch is empty (an empty patch proves nothing about the rebase): ${was.empty ? `base..${h}` : `${mb.out.slice(0, 12)}..HEAD`} changes nothing.`;
+  if (was.id !== now.id) return `patch-id mismatch: the patch of base..${h} is not the patch of ${mb.out.slice(0, 12)}..HEAD, so the work changed after the recorded head.`;
+
+  const merged = git('merge-tree', '--write-tree', tip.out, head);
+  if (merged.status === 0) return null;
+  if (merged.status === 1 && SHA_ONLY.test(merged.out.split('\n')[0])) {
+    return `merge conflict: HEAD does not merge cleanly onto ${baseRef} (${tip.out.slice(0, 12)}); rebase onto the current base.`;
+  }
+  return failed('merge-tree --write-tree', merged);
+}
+
 function staleHead(doc) {
   const text = doc.replace(/\r\n?/g, '\n');
   const cwd = frontmatterField(text, 'cwd');
   if (!cwd) return null;
-  const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  try {
-    if (git('rev-parse', '--is-inside-work-tree') !== 'true') return null;
-  } catch {
-    return null;
-  }
-  let head;
-  try {
-    head = git('rev-parse', '--verify', 'HEAD^{commit}').toLowerCase();
-  } catch {
-    return `cannot read HEAD in ${cwd}, so the gate head cannot be verified.`;
-  }
+  if (gitIn(cwd, ['rev-parse', '--is-inside-work-tree']).out !== 'true') return null;
+  const headRead = gitIn(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (headRead.status !== 0 || !headRead.out) return `cannot read HEAD in ${cwd}, so the gate head cannot be verified.`;
+  const head = headRead.out.toLowerCase();
   const plain = sectionText(text, 'Gate results').replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
   const heads = plain.split('\n').map((l) => HEAD_LINE.exec(l)?.[1]?.toLowerCase()).filter(Boolean);
   const short = head.slice(0, 12);
@@ -404,11 +578,12 @@ function staleHead(doc) {
     return `Gate results has no \`Head: <sha>\` line. Add the commit the final full gate run used; the worktree HEAD is ${short}.`;
   }
   const off = [...new Set(heads.filter((h) => !head.startsWith(h)))];
-  if (off.length) {
-    return `Gate results names ${off.join(', ')}, but the worktree HEAD is ${short}. ` +
-      'Rerun every gate and mutation at HEAD, then update the Head line.';
-  }
-  return null;
+  if (!off.length) return null;
+  const reasons = off.map((h) => ({ h, why: rebaseCarryOver(cwd, text, h, head) })).filter((r) => r.why);
+  if (!reasons.length) return null;
+  return `Gate results names ${off.join(', ')}, but the worktree HEAD is ${short}. ` +
+    `A rebase carries gate evidence over only when the patch is unchanged, and it does not here: ${reasons.map((r) => `${r.h}: ${r.why}`).join(' ')} ` +
+    'Rerun every gate and mutation at HEAD, then update the Head line.';
 }
 
 // --- sections -------------------------------------------------------------
@@ -603,6 +778,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     case 'ready':    setStatus(pos[0], 'results-ready', steal); break;
     case 'blocked':  setStatus(pos[0], 'blocked', steal); break;
     case 'coverage': coverage(pos[0]); break;
+    case 'rulings':  rulingsCmd(rest); break;
+    case 'base':     setBase(pos[0], pos[1], pos[2], steal); break;
     case 'end':      end(pos[0]); break;
     case 'prune':    pruneAll(); break;
     case 'section': {
@@ -653,7 +830,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     default:
       process.stderr.write(
-        'usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|coverage|end|prune|section|ledger|board|halt|unhalt|halted} ...\n',
+        'usage: handoff.mjs {resolve|init|path|list|reattach|status|ready|blocked|coverage|rulings|base|end|prune|section|ledger|board|halt|unhalt|halted} ...\n',
       );
       process.exit(2);
   }

@@ -29,6 +29,13 @@
 #   --run-dir   absolute run directory to link to a ledger this call creates;
 #               BORK_RUN_DIR is the fallback when that directory exists. Never
 #               relinks a ledger that already exists. A relative path exits 2.
+#   --base      the ref the new worktree is cut from (default: the repo's HEAD). A fresh
+#               dispatch resolves it to a commit and records `base: <sha>` in the handoff's
+#               frontmatter, plus `base_ref: <full ref>` when it names a branch
+#               (refs/heads/... or refs/remotes/...). gate evidence then survives a pure
+#               rebase (handoff.mjs coverage). A worktree that already exists records nothing
+#               unless --base is given; --corrective never changes either line; a --base
+#               that is not a commit exits 1 with nothing created
 #   --corrective  the slice already has a handoff and a verdict; put the new
 #               block under Next slice and send it into the warm builder's pane
 #               when that builder is still alive, else re-dispatch cold
@@ -62,6 +69,13 @@
 # launch fails the section is put back as it was. The ID and comment rules are a
 # copy of handoff.mjs's; test_dispatch_slice.mjs asserts the two agree.
 #
+# Rulings: a fresh dispatch also runs `handoff.mjs rulings <run dir>/decisions.md <block> --slice
+# <id>` when the run directory (the ledger's link, else --run-dir, else a live BORK_RUN_DIR) holds
+# a decisions.md, and refuses with exit 6 and one `unbacked: <marker line>` per offender when a
+# `Changes the bar (slice <id>): <IDs>` marker names an ID that no Acceptance line of the block
+# backs. Nothing is launched and the Frozen gates are left as they were. The child gets an
+# allowlisted environment. It never runs on --corrective.
+#
 # Known limitations: two calls without --id at the same time can pick the same
 # id (complete always passes --id), and a second run in the same session shares
 # the first run's ledger.
@@ -70,7 +84,8 @@
 #   NEXT (background): WFR_BOARD_CWD="<repo>" bash "<core>/complete/wait-for-ready.sh" "<doc>" builder
 #   or, with --unattended:
 #   UNATTENDED: bridge and architect wake armed (pid <n>); log <doc>.wake.log
-# Exit: 0 dispatched · 2 usage · dispatch.sh's code when the launch failed.
+# Exit: 0 dispatched · 2 usage · 6 an unbacked ruling in the run's decisions.md (fresh dispatch only) ·
+#   dispatch.sh's code when the launch failed.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,12 +126,10 @@ done
 [ "${#POS[@]}" -eq 4 ] || { usage; exit 2; }
 REPO="${POS[0]}"; WT="${POS[1]}"; BRANCH="${POS[2]}"; BLOCK="${POS[3]}"
 case "$RUN_DIR" in ''|/*) ;; *) echo "dispatch-slice: --run-dir needs an absolute path, got: $RUN_DIR" >&2; usage; exit 2 ;; esac
-# BORK_RUN_DIR is the fallback only while it names a live run: an existing dir
-# whose run.json (when there is one) is not done or failed. --run-dir is trusted.
-env_run_dir_live() {
-  [ -n "${BORK_RUN_DIR:-}" ] && [ -d "$BORK_RUN_DIR" ] || return 1
-  node -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1]+"/run.json","utf8")).state;process.exit(s==="done"||s==="failed"?1:0)}catch{}' "$BORK_RUN_DIR"
-}
+# BORK_RUN_DIR is the fallback only while it names a live run (run-env.sh, shared with
+# dispatch.sh). --run-dir is trusted.
+# shellcheck source=run-env.sh
+. "$SCRIPT_DIR/run-env.sh"
 [ -n "$RUN_DIR" ] || { env_run_dir_live && RUN_DIR="$BORK_RUN_DIR"; }
 
 [ -d "$REPO" ] || die "repo root not found: $REPO"
@@ -326,6 +339,35 @@ print_next() {
   fi
 }
 
+# A fresh dispatch refuses when the run's decisions.md holds a bar-changing ruling
+# that no Acceptance line backs (handoff.mjs rulings). The run dir is the ledger's
+# link, else --run-dir, else a live BORK_RUN_DIR. The child gets an allowlisted
+# env: nothing ambient (NODE_OPTIONS, run pointers, tokens) reaches it. Its exit
+# code (6 unbacked) passes through with nothing launched.
+check_rulings() {
+  local linked dir node_bin rc
+  linked=$(hoff ledger show "$REPO" 2>/dev/null |
+    node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{process.stdout.write(JSON.parse(s).run_dir||"")}catch{}})' 2>/dev/null || true)
+  dir="${linked:-$RUN_DIR}"
+  [ -n "$dir" ] && [ -f "$dir/decisions.md" ] || return 0
+  node_bin=$(command -v node) || die "node not found"
+  env -i PATH="$PATH" HOME="${HOME:-}" TMPDIR="${TMPDIR:-/tmp}" "$node_bin" "$HANDOFF_MJS" rulings "$dir/decisions.md" "$BLOCK" --slice "$ID"
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  echo "dispatch-slice: $dir/decisions.md holds a ruling that no Acceptance line backs (or could not be read); nothing was launched" >&2
+  exit "$rc"
+}
+
+# Record the base commit and, when it came from a branch, its full ref.
+record_base() {
+  [ -n "$BASE_SHA" ] || return 0
+  # `rev-parse --symbolic-full-name --end-of-options` echoes the option, so a
+  # leading dash is refused here instead (it already resolved as a commit above).
+  case "${BASE:-HEAD}" in -*) BASE_REF="" ;; *) BASE_REF=$(git -C "$REPO" rev-parse --symbolic-full-name "${BASE:-HEAD}" 2>/dev/null || true) ;; esac
+  case "$BASE_REF" in refs/heads/*|refs/remotes/*) ;; *) BASE_REF="" ;; esac
+  hoff base "$DOC" "$BASE_SHA" ${BASE_REF:+"$BASE_REF"} >/dev/null || die "could not record the base in $DOC; nothing was launched"
+}
+
 # Launch a fresh builder through dispatch.sh. Leaves status/ledger at specced
 # on failure so the slice reads as not running.
 launch() {
@@ -447,6 +489,16 @@ fi
 
 # --- fresh slice --------------------------------------------------------------
 
+# The slice's base: --base resolved to a commit now (never the ref name, so a
+# branch that moves later does not move the recorded base), else the repo's HEAD
+# when this call creates the worktree. A reused worktree without --base records
+# nothing: its base cannot be known here, and a guess would loosen the freshness
+# check. A --base that is not a commit refuses before anything is created.
+BASE_SHA=""; BASE_REF=""
+if [ -n "$BASE" ]; then
+  BASE_SHA=$(git -C "$REPO" rev-parse --verify --quiet --end-of-options "${BASE}^{commit}" 2>/dev/null) ||
+    die "--base $BASE does not resolve to a commit in $REPO; nothing was dispatched"
+fi
 if [ -e "$WT" ]; then
   top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null || true)
   [ -n "$top" ] && [ "$(cd -P -- "$top" && pwd)" = "$(cd -P -- "$WT" && pwd)" ] ||
@@ -459,16 +511,19 @@ else
     git -C "$REPO" worktree add -q -b "$BRANCH" "$WT" "${BASE:-HEAD}" || die "git worktree add -b failed"
   fi
   echo "dispatch-slice: worktree $WT on $BRANCH (created)"
+  [ -n "$BASE_SHA" ] || BASE_SHA=$(git -C "$REPO" rev-parse --verify --quiet "HEAD^{commit}" 2>/dev/null || true)
 fi
 
 DOC=$(hoff init "$WT" "$SID" "${TITLE:-$BRANCH}") || die "could not create the handoff for $WT"
-freeze_gates
-hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
 ensure_ledger
 if [ -z "$ID" ]; then
   ID=$(pick_row open)
   [ -n "$ID" ] || ID=$(pick_row next)
 fi
+check_rulings
+record_base
+freeze_gates
+hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
 ledger_spec
 launch
 print_next
