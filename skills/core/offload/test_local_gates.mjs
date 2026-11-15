@@ -446,9 +446,12 @@ test('K2: a symlinked <doc>.gates is not swept: an old file and an old non-match
   writeFileSync(join(target, 'old-file.txt'), 'x');
   mkdirSync(join(target, 'old-dir'));
   writeFileSync(join(target, 'old-dir', 'inner.txt'), 'x');
-  daysAgo(join(target, 'old-file.txt'), 3); daysAgo(join(target, 'old-dir'), 3);
+  mkdirSync(join(target, '1700000000000-1-abcdef')); // named like a run: only the lstat guard keeps it
+  writeFileSync(join(target, '1700000000000-1-abcdef', 'log'), 'x');
+  daysAgo(join(target, 'old-file.txt'), 3); daysAgo(join(target, 'old-dir'), 3); daysAgo(join(target, '1700000000000-1-abcdef'), 3);
   symlinkSync(target, `${fx.doc}.gates`);
   assert.equal(ready(fx).code, 0);
+  assert.ok(existsSync(join(target, '1700000000000-1-abcdef', 'log')), 'a run-named directory in the symlink target was deleted');
   assert.ok(existsSync(join(target, 'old-file.txt')), 'the old file in the symlink target was deleted');
   assert.ok(existsSync(join(target, 'old-dir', 'inner.txt')), 'the old directory in the symlink target was deleted');
 });
