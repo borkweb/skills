@@ -524,3 +524,58 @@ test('OFFLOAD_BUILDER_MCP=<path> loads exactly that MCP config', () => {
   assert.match(script, new RegExp(`--strict-mcp-config --mcp-config ${mcp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   writeConfig([{ harness: 'codex' }]);
 });
+
+// A headless claude builder (claude -p) gets the same Stop gate hook as an interactive one:
+// --settings carries one Stop entry that runs the local-gate check and then the touch.
+test('C16: a headless claude builder gets the Stop gate hook through --settings', () => {
+  unameReports('Linux');
+  writeConfig([{ harness: 'claude' }]);
+  const argvOut = join(BOX, 'headless-argv');
+  const rec = join(BIN, 'claude');
+  writeFileSync(rec, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvOut}"\n`);
+  chmodSync(rec, 0o755);
+  try {
+    run({ TMUX: '' });
+    const argv = readFileSync(argvOut, 'utf8').split('\n');
+    const i = argv.indexOf('--settings');
+    assert.ok(i >= 0, `headless claude has no --settings: ${argv.join(' ')}`);
+    const settings = JSON.parse(argv[i + 1]);
+    assert.equal(settings.hooks.Stop.length, 1);
+    const stop = settings.hooks.Stop[0].hooks[0];
+    assert.match(stop.command, /stop-gates/);
+    assert.ok(stop.command.includes(`${HANDOFF}.turn-ended`));
+    assert.equal(stop.timeout, 900);
+    assert.match(settings.hooks.Notification[0].hooks[0].command, /^touch .*\.turn-ended/);
+    assert.ok(argv.indexOf('-p') >= 0 && argv.indexOf('--dangerously-skip-permissions') >= 0, 'still headless with full bypass');
+  } finally {
+    stub('claude');
+    writeConfig([{ harness: 'codex' }]);
+  }
+});
+
+// The settings JSON is built, not printf'd: a handoff path with a quote or a space stays valid JSON.
+test('C6a: --settings is valid JSON for a handoff path with a space and a quote', () => {
+  unameReports('Linux');
+  writeConfig([{ harness: 'claude' }]);
+  const dir = join(BOX, 'odd dir"x');
+  mkdirSync(dir, { recursive: true });
+  const odd = join(dir, 'handoff.md');
+  writeFileSync(odd, '---\nstatus: dispatched\n---\n');
+  const argvOut = join(BOX, 'odd-argv');
+  const rec = join(BIN, 'claude');
+  writeFileSync(rec, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvOut}"\n`);
+  chmodSync(rec, 0o755);
+  try {
+    rmSync(LOG, { force: true });
+    execFileSync('bash', [DISPATCH, BOX, BLOCK, odd, 'sess-Z'], {
+      encoding: 'utf8',
+      env: { HOME: BOX, TMPDIR: tmpdir(), HERDR_ENV: '', HERDR_WORKSPACE_ID: '', BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME, PATH: TEST_PATH, TMUX: '' },
+    });
+    const argv = readFileSync(argvOut, 'utf8').split('\n');
+    const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
+    assert.ok(settings.hooks.Stop[0].hooks[0].command.includes(`${odd}.turn-ended`));
+  } finally {
+    stub('claude');
+    writeConfig([{ harness: 'codex' }]);
+  }
+});

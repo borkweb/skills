@@ -1084,3 +1084,160 @@ test('K4: a refused freeze leaves base and base_ref exactly as they were', () =>
   assert.equal(r.log, '', 'nothing was launched');
   assert.equal(readFileSync(doc, 'utf8').split('\n## ')[0], before, 'the frontmatter is byte-identical');
 });
+
+// --- AT-02: local gate lines are frozen beside the criteria ---------------------------
+// A local gate is `L<n>: local: <command>`. The freeze copies a block's local lines verbatim into
+// Frozen gates, refuses a malformed one before anything launches, and handoff.mjs's `ready` runs them.
+// The freeze keeps its own copy of the parser; the table below runs one set of lines through both.
+
+const spawnEnv = (extra = {}) => ({ ...env(), ...extra });
+const localsOf = (doc) => frozenOf(doc).split('\n').filter((l) => /local\s*:/.test(l) && !/^\s*(?:[-*]\s+)?C\d/.test(l));
+
+// [name, line, runs?]. Every command appends the row's label to a file, so what ran is visible.
+const LOCAL_TABLE = [
+  ['plain', 'L1: local: CMD', true],
+  ['dash list marker', '- L2: local: CMD', true],
+  ['star list marker', '* L3: local: CMD', true],
+  ['numbered', '1. L4: local: CMD', true],
+  ['indented', '   L5: local: CMD', true],
+  ['spaces around the colons', 'L6 : local : CMD', true],
+  ['trailing spaces are not part of the command', 'L7: local: CMD   ', true],
+  ['a criterion line that says local:', 'C20: local: CMD', false],
+  ['a criterion line with a dash list', '- C21 local: CMD', false],
+  ['an ID with no local marker', 'L8: CMD', false],
+  ['a mid-line mention', 'see L9: local: CMD', false],
+  ['a one-line comment', '<!-- L10: local: CMD -->', false],
+  ['a lowercase id', 'l11: local: CMD', false],
+];
+const labeled = (out) => LOCAL_TABLE.map(([, line], i) => line.replace('CMD', `echo row${i} >> ${out}/ran`));
+
+function blockWith(lines) { return `Execute the slice.\nAcceptance:\nC1: x\n${lines.join('\n')}\nGates: none\n`; }
+
+test('C1b: the freeze copy and handoff.mjs read the same local lines (table, with a comment, an unclosed opener and CRLF)', () => {
+  for (const crlf of [false, true]) {
+    const out = join(BOX, `lt-${crlf ? 'crlf' : 'lf'}`);
+    mkdirSync(out, { recursive: true });
+    const lines = [...labeled(out), '<!-- unclosed', `L12: local: echo row-hidden >> ${out}/ran`, '', `L13: local: echo row-after >> ${out}/ran`];
+    const text = blockWith(lines);
+    const R = repo();
+    const WT = join(BOX, `wt-lt-${crlf ? 'crlf' : 'lf'}`);
+    run([R, WT, `feat/lt-${crlf ? 'crlf' : 'lf'}`, blockFile(`lt-block-${crlf}.md`, crlf ? text.replace(/\n/g, '\r\n') : text)]);
+    const doc = hoff(['path', WT, 'arch']);
+    const frozenRows = localsOf(doc).map((l) => /echo (row[\w-]+)/.exec(l)?.[1]);
+    // handoff.mjs side: the same lines as Frozen gates in a doc over a real repo; every gate it runs appends its label.
+    const R2 = repo();
+    const other = hoff(['init', R2, 'arch', 'lt']);
+    hoff(['section', 'set', other, 'Frozen gates', '--text', text.replace(/\n/g, crlf ? '\r\n' : '\n')]);
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok`]);
+    const r = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
+    assert.equal(r.status, 0, r.stderr);
+    const ran = readFileSync(join(out, 'ran'), 'utf8').trim().split('\n');
+    assert.deepEqual(frozenRows, ran, `freeze and ready disagree (crlf=${crlf})`);
+    assert.deepEqual(ran, ['row0', 'row1', 'row2', 'row3', 'row4', 'row5', 'row6', 'row-after']);
+    rmSync(join(out, 'ran'), { force: true });
+  }
+});
+
+test('C1b: the freeze and handoff.mjs both refuse the same malformed lines', () => {
+  for (const [what, lines] of [['empty command', ['L1: local:']], ['spaces only', ['L1: local:    ']], ['duplicate id', ['L1: local: true', 'L1: local: true']], ['no colon after local', ['L1: local true']]]) {
+    const R = repo();
+    const WT = join(BOX, `wt-bad-${what.replace(/\W/g, '')}`);
+    const r = runFail([R, WT, `feat/bad-${what.replace(/\W/g, '')}`, blockFile(`bad-${what.replace(/\W/g, '')}.md`, blockWith(lines))]);
+    assert.notEqual(r.status, 0, `${what}: the freeze must refuse`);
+    const R2 = repo();
+    const other = hoff(['init', R2, 'arch', 'bad']);
+    hoff(['section', 'set', other, 'Frozen gates', '--text', blockWith(lines)]);
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok`]);
+    const q = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
+    assert.notEqual(q.status, 0, `${what}: ready must refuse`);
+  }
+});
+
+test('C1g/C1h: a malformed local line in the block refuses the dispatch: nothing launched, Frozen gates untouched', () => {
+  for (const [what, lines] of [['empty', ['L1: local:']], ['duplicate', ['L1: local: true', 'L1: local: echo again']]]) {
+    const R = repo();
+    const WT = join(BOX, `wt-refuse-${what}`);
+    git(R, ['worktree', 'add', '-q', '-b', `feat/refuse-${what}`, WT]);
+    const doc = hoff(['init', WT, 'arch', what]);
+    const before = readFileSync(doc, 'utf8').match(/^## Frozen gates\n[\s\S]*?(?=^## )/m)[0];
+    const r = runFail([R, WT, `feat/refuse-${what}`, blockFile(`refuse-${what}.md`, blockWith(lines))]);
+    assert.notEqual(r.status, 0, what);
+    assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
+    assert.equal(readFileSync(doc, 'utf8').match(/^## Frozen gates\n[\s\S]*?(?=^## )/m)[0], before);
+  }
+});
+
+test('C2a: a fresh dispatch copies every local line verbatim beside the criterion lines', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lcopy');
+  const lines = ['L1: local: node --test a.mjs', '- L2: local: ruby scripts/validate-skills.rb --strict'];
+  run([R, WT, 'feat/lcopy', blockFile('lcopy.md', blockWith(lines))]);
+  const doc = hoff(['path', WT, 'arch']);
+  const frozen = frozenOf(doc).split('\n');
+  for (const l of ['C1: x', ...lines]) assert.ok(frozen.includes(l), `frozen verbatim: ${l}`);
+  assert.deepEqual(coverage(doc).ids, ['C1'], 'a local line is not a criterion');
+});
+
+test('C2b: a block with local lines and no criterion IDs still freezes the local lines', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lonly');
+  const { stdout } = run([R, WT, 'feat/lonly', blockFile('lonly.md', 'Execute it.\nL1: local: true\n')]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.ok(frozenOf(doc).split('\n').includes('L1: local: true'));
+  assert.doesNotMatch(stdout, /warning/i, 'a block with a local gate is not a block with nothing frozen');
+});
+
+test('C2c: --corrective never changes Frozen gates, local lines included', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lcorr');
+  run([R, WT, 'feat/lcorr', blockFile('lcorr.md', blockWith(['L1: local: true']))]);
+  const doc = hoff(['path', WT, 'arch']);
+  rmSync(`${doc}.builder`, { force: true });
+  hoff(['status', doc, 'returned']);
+  hoff(['ledger', 'set', R, '1', '--state', 'returned']);
+  const before = frozenOf(doc);
+  run([R, WT, 'feat/lcorr', blockFile('lcorr-fix.md', 'Corrective.\nC1: x\nL1: local: exit 9\nL2: local: true\n'), '--corrective']);
+  assert.equal(frozenOf(doc), before);
+});
+
+test('C2d: a second fresh dispatch with the same block leaves Frozen gates byte-identical', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lagain');
+  const block = blockFile('lagain.md', blockWith(['L1: local: true']));
+  run([R, WT, 'feat/lagain', block]);
+  const doc = hoff(['path', WT, 'arch']);
+  const before = frozenOf(doc);
+  rmSync(`${doc}.builder`, { force: true });
+  run([R, WT, 'feat/lagain', block]);
+  assert.equal(frozenOf(doc), before);
+  assert.equal(frozenOf(doc).split('\n').filter((l) => l.startsWith('L1:')).length, 1, 'no duplicated local line');
+});
+
+test('C2e: the same criterion IDs with different local lines refuse the dispatch', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-ldiff');
+  run([R, WT, 'feat/ldiff', blockFile('ldiff.md', blockWith(['L1: local: true']))]);
+  const doc = hoff(['path', WT, 'arch']);
+  rmSync(`${doc}.builder`, { force: true });
+  const before = frozenOf(doc);
+  const r = runFail([R, WT, 'feat/ldiff', blockFile('ldiff2.md', blockWith(['L1: local: exit 9']))]);
+  assert.notEqual(r.status, 0);
+  assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
+  assert.equal(frozenOf(doc), before);
+});
+
+test('C2f: a failed launch restores Frozen gates, local lines included', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-lfail');
+  const r = runFail([R, WT, 'feat/lfail', blockFile('lfail.md', blockWith(['L1: local: true']))], { HERDR_STUB_MODE: 'fail-create' });
+  assert.notEqual(r.status, 0);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.ok(!/L1: local/.test(frozenOf(doc)), 'the failed dispatch left a local line behind');
+  assert.ok(!/C1: x/.test(frozenOf(doc)));
+});
+
+test('C9h: the dispatch-slice.sh header documents freezing local lines', () => {
+  const head = readFileSync(SLICE, 'utf8').split('\nset -uo pipefail')[0];
+  assert.match(head, /local: <command>/);
+  assert.match(head, /malformed|empty command/);
+});

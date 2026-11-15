@@ -758,8 +758,8 @@ test('C7e: an ID that leads a line only outside Acceptance, or in a multi-ID lin
   assert.equal(rulings('Changes the bar (slice B): C1', { block }).code, 0);
 });
 
-test('C22a/b: Acceptance runs to the next non-ID label; a parent ID is backed by its sub-IDs', () => {
-  const block = ['Acceptance:', 'C1a: x', 'Frozen: nothing', 'C2: not Acceptance', ''].join('\n');
+test('C22a/b: Acceptance runs to the template’s next known label; a parent ID is backed by its sub-IDs', () => {
+  const block = ['Acceptance:', 'C1a: x', 'Gates: nothing', 'C2: not Acceptance', ''].join('\n');
   assert.equal(rulings('Changes the bar (slice B): C1', { block }).code, 0, 'C1 backed by C1a');
   assert.equal(rulings('Changes the bar (slice B): C1a', { block }).code, 0);
   assert.equal(rulings('Changes the bar (slice B): C2', { block }).code, 6, 'C2 follows a non-ID label');
@@ -1122,4 +1122,36 @@ test('K3: a builder holding OFFLOAD_HANDOFF and OFFLOAD_SESSION_ID cannot rewrit
   run(['status', doc, 'dispatched'], builder); // the carried id still works for status, as the builder needs
   run(['base', doc, 'c'.repeat(40)], { session: 'arch-k3' });
   assert.match(readFileSync(doc, 'utf8'), /^base: c{40}$/m, 'the architect can still record a base');
+});
+
+// --- D11: the Acceptance span ends only at the template's own labels ---------------------------
+// `Gates:` and `Result file:` at column 0, a ``` fence, or the end of the file. A prose label such as
+// `Fixture:` inside a criterion block no longer hides the IDs after it.
+
+const spanRulings = (lines, ids = 'C9') => rulings(`Changes the bar (slice D): ${ids}`, { slice: 'D', block: lines.join('\n') });
+
+test('C8a: a column-0 prose label does not end the Acceptance span', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'Fixture: two gates', 'C9: b', 'Gates: G1', '']).code, 0);
+});
+test('C8b: a column-0 Gates: ends the span, so a later ID backs nothing', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'Gates: G1', 'C9: b', '']).code, 6);
+});
+test('C8c: a column-0 Result file: ends the span', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'Result file: /x/result.md', 'C9: b', '']).code, 6);
+});
+test('C8d: a ``` fence ends the span', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', '```', 'C9: b', '```', '']).code, 6);
+});
+test('C8e: the span runs to the end of the file: an ID on the last line, with no terminator, backs its marker', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', 'C9: b']).code, 0);
+});
+test('C8f: only the exact labels end it: an indented Gates: or a Gate notes: label does not', () => {
+  assert.equal(spanRulings(['Acceptance:', 'C1: a', '  Gates: none', 'Gate notes: x', 'C9: b', '']).code, 0);
+});
+test('C8h: the acceptanceIds comment and the rulings header line name the new terminators', () => {
+  const src = readFileSync(HANDOFF, 'utf8');
+  const region = src.slice(src.indexOf('// --- bar-changing rulings'), src.indexOf('function acceptanceIds'));
+  assert.ok(region.includes('Result file:') && region.includes('Gates:'), 'the comment above acceptanceIds');
+  const header = src.slice(0, src.indexOf('node handoff.mjs base '));
+  assert.ok(header.includes('Result file:'), 'the rulings header line');
 });
