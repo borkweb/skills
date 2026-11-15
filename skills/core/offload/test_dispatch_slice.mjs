@@ -1067,3 +1067,20 @@ test('C3f: a --base that does not resolve to a commit is never written', () => {
   assert.notEqual(r.status, 0);
   assert.equal(r.log, '');
 });
+
+test('K4: a refused freeze leaves base and base_ref exactly as they were', () => {
+  const R = baseRepo();
+  const WT = join(BOX, 'wt-k4');
+  run([R, WT, 'feat/k4', BLOCK_C, '--id', '1', '--base', 'trunk']);
+  const doc = hoff(['path', WT, 'arch']);
+  const before = readFileSync(doc, 'utf8').split('\n## ')[0];
+  assert.match(before, /^base: [0-9a-f]{40}$/m);
+  git(R, ['commit', '-q', '--allow-empty', '-m', 'main moves']);
+  const other = join(BOX, 'block-other-ids.md');
+  writeFileSync(other, 'Other slice\nAcceptance:\nC7: different criterion\n');
+  const r = runFail([R, WT, 'feat/k4', other, '--id', '1', '--base', 'main']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /Frozen gates .* already hold criteria/);
+  assert.equal(r.log, '', 'nothing was launched');
+  assert.equal(readFileSync(doc, 'utf8').split('\n## ')[0], before, 'the frontmatter is byte-identical');
+});

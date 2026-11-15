@@ -522,8 +522,9 @@ if [ -z "$ID" ]; then
   [ -n "$ID" ] || ID=$(pick_row next)
 fi
 check_rulings
-record_base
 freeze_gates
+# After the freeze: a refused freeze leaves base and base_ref as they were.
+record_base
 hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
 ledger_spec
 launch

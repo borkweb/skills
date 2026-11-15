@@ -920,3 +920,20 @@ test('C2d: each --verdicts line for a tagged verdict prints its checkable tag', 
   assert.ok(lines.find((l) => l.includes('@arch/1') && /checkable: lint/i.test(l)));
   assert.ok(lines.find((l) => l.includes('@arch/2') && /checkable: no/.test(l)));
 });
+
+// K7: the provenance tag takes a sub-letter ID (`named C22b`), keeps it in the report, and still
+// refuses a tag with no ID digits or no space.
+test('K7: named C5d and named C22b satisfy the provenance tag; named C and namedC5 do not', () => {
+  const REPO = repo('k7');
+  run(['ledger', 'init', REPO, 'g']);
+  for (const [i, tag] of ['named C5d', 'named C22b', 'named C22'].entries()) {
+    const added = JSON.parse(run(['ledger', 'add', REPO, '--id', String(i + 1), '--state', 'rejected', '--verdict', `DO NOT LAND ${tag}, checkable: test`]));
+    assert.equal(added.state, 'rejected', tag);
+  }
+  for (const [i, tag] of ['named C', 'namedC5', 'named C5dx'].entries()) {
+    const err = runFail(['ledger', 'add', REPO, '--id', String(i + 10), '--state', 'rejected', '--verdict', `DO NOT LAND ${tag}, checkable: test`]);
+    assert.match(err, /provenance tag/, tag);
+  }
+  const r = JSON.parse(run(['ledger', 'report', REPO, '--json'])).runs[0];
+  assert.deepEqual(r.rejection_entries.map((e) => e.provenance), ['named C5d', 'named C22b', 'named C22']);
+});

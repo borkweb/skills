@@ -343,8 +343,10 @@ function setBase(p, sha, ref, steal) {
   requireDoc(p);
   if (!BASE_SHA.test(String(sha ?? ''))) die('usage: handoff.mjs base <path> <full-commit-sha> [<refs/heads/...|refs/remotes/...>]', 2);
   if (ref !== undefined && !BASE_REF.test(ref)) die('refusing: base_ref must be a full refs/heads/... or refs/remotes/... name', 2);
+  // The caller's own session, never the architect id a builder carries in $OFFLOAD_SESSION_ID: the
+  // base is the architect's record, and dispatch-slice.sh writes it as the architect.
   const expected = requireSession(
-    writerSession(p),
+    envSession(),
     'A base write must verify ownership against $CLAUDE_CODE_SESSION_ID or $CODEX_SESSION_ID, both empty here.',
   );
   assertOwner(p, expected, steal, 'record the base on');
@@ -437,7 +439,7 @@ function acceptanceIds(block) {
 
 function unbackedMarkers(decisions, block, slice) {
   const acceptance = acceptanceIds(block.replace(/\r\n?/g, '\n'));
-  const backed = (id) => acceptance.has(id) || (!/[a-z]$/.test(id) && [...acceptance].some((a) => a.length === id.length + 1 && a.startsWith(id)));
+  const backed = (id) => acceptance.has(id) || (!/[a-z]$/.test(id) && [...acceptance].some((a) => a.length === id.length + 1 && a.startsWith(id) && /[a-z]$/.test(a)));
   const bad = [];
   for (const line of decisions.replace(/\r\n?/g, '\n').split('\n')) {
     const flat = line.replace(/\*\*/g, '');
@@ -504,9 +506,13 @@ function frontmatterField(text, key) {
   return line ? line[1].trim() : '';
 }
 
-function gitIn(cwd, args, input) {
+// `scrub` also drops the user and system git config, so nothing outside the repository can change
+// what the carry-over children print (diff.context, color, prefixes, submodule handling). The
+// repository's own config stays in force; the diff flags below pin what it could still change.
+function gitIn(cwd, args, input, { scrub = false } = {}) {
   const env = {};
   for (const k of GIT_ENV_PASS) if (process.env[k] !== undefined) env[k] = process.env[k];
+  if (scrub) { env.GIT_CONFIG_NOSYSTEM = '1'; env.GIT_CONFIG_GLOBAL = '/dev/null'; }
   const r = spawnSync('git', args, { cwd, env, input, encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['pipe', 'pipe', 'ignore'] });
   return { status: r.status ?? -1, out: (r.stdout ?? '').trim(), raw: r.stdout ?? '' };
 }
@@ -515,7 +521,7 @@ const SHA_ONLY = /^[0-9a-f]{40}$|^[0-9a-f]{64}$/;
 
 // null when the recorded head `h` is a pure rebase of what HEAD holds, else the reason it is not.
 function rebaseCarryOver(cwd, text, h, head) {
-  const git = (...args) => gitIn(cwd, args);
+  const git = (...args) => gitIn(cwd, args, undefined, { scrub: true });
   const failed = (what, r) => `git error: \`git ${what}\` exited ${r.status}.`;
   const base = frontmatterField(text, 'base');
   if (!base) return 'the handoff has no `base:` line, so the slice\'s base is unknown (dispatch-slice.sh records it on a fresh dispatch; pass --base <ref> on the first dispatch).';
@@ -537,15 +543,16 @@ function rebaseCarryOver(cwd, text, h, head) {
   if (mb.status === 1) return `HEAD and ${baseRef} share no merge base.`;
   if (mb.status !== 0 || !SHA_ONLY.test(mb.out)) return failed('merge-base', mb);
 
-  // Git's default three lines of context stay in the patch. Without them a patch is only its
+  // Three lines of context stay in the patch, pinned with -U3 (a diff.context config would otherwise
+  // set it; the user's config is scrubbed above, the repository's is overridden by the flag). Without them a patch is only its
   // changed lines, and the same line moved to another place in the file would keep its id. The
   // price is a false refusal when the base changed lines right beside the patch while it was
   // rebased; the residual case is a line moved between two places with identical surroundings.
   const patchId = (from, to) => {
-    const diff = git('diff', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', from, to);
+    const diff = git('diff', '-U3', '--no-color', '--ignore-submodules=none', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', from, to);
     if (diff.status !== 0) return { err: failed('diff', diff) };
     if (!diff.raw.trim()) return { empty: true };
-    const id = gitIn(cwd, ['patch-id', '--verbatim'], diff.raw);
+    const id = gitIn(cwd, ['patch-id', '--verbatim'], diff.raw, { scrub: true });
     if (id.status !== 0) return { err: failed('patch-id --verbatim', id) };
     const first = id.out.split('\n')[0].split(/\s+/)[0];
     return first ? { id: first } : { empty: true };

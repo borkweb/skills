@@ -202,3 +202,12 @@ test('a BORK_RUN_DIR that does not exist is ignored and the ledger run_dir (need
   const REPO = owedRepo('env-missing-ledger-needs-me', ledgerRun);
   assert.equal(fireRun({ session_id: 'arch', cwd: REPO }, join(BOX, 'no-such-run-dir')), '');
 });
+
+// K6: `[ -d ]` in env_run_dir_live is false for a regular file; the hook must agree.
+test('a BORK_RUN_DIR that names a regular file is ignored and the ledger run_dir (needs-me) allows the stop', () => {
+  const ledgerRun = runDirWith('ledger-needs-me-file', runJson('needs-me'));
+  const REPO = owedRepo('env-file-ledger-needs-me', ledgerRun);
+  const file = join(BOX, 'run-is-a-file');
+  writeFileSync(file, 'not a directory\n');
+  assert.equal(fireRun({ session_id: 'arch', cwd: REPO }, file), '');
+});

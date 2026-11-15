@@ -7,5 +7,5 @@
 # counts as live; a missing directory does not.
 env_run_dir_live() {
   [ -n "${BORK_RUN_DIR:-}" ] && [ -d "$BORK_RUN_DIR" ] || return 1
-  node -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1]+"/run.json","utf8")).state;process.exit(s==="done"||s==="failed"?1:0)}catch{}' "$BORK_RUN_DIR"
+  node -e 'try{const s=JSON.parse(require("fs").readFileSync(process.argv[1]+"/run.json","utf8")).state;process.exit(s==="done"||s==="failed"?1:0)}catch{}' -- "$BORK_RUN_DIR"
 }

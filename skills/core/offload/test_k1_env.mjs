@@ -84,7 +84,7 @@ mkdirSync(join(CODEX_HOME, 'sessions'), { recursive: true });
 
 // Run dispatch.sh headless (TMUX='', no herdr, uname = Linux) with `harness` as the
 // override profile, or the custom-command profile when harness is 'custom'.
-function dispatchHeadless(harness, runDir) {
+function dispatchHeadless(harness, runDir, { cwd } = {}) {
   const s = stubs();
   const handoff = newHandoff();
   let spec = harness;
@@ -93,7 +93,7 @@ function dispatchHeadless(harness, runDir) {
     spec = undefined;
   }
   const env = { PATH: s.path, HOME: BOX, TMPDIR: tmpdir(), TMUX: '', BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME, ...hostile(runDir) };
-  const r = spawnSync('bash', [DISPATCH, BOX, BLOCK, handoff, SID, ...(spec ? [spec] : [])], { encoding: 'utf8', env });
+  const r = spawnSync('bash', [DISPATCH, BOX, BLOCK, handoff, SID, ...(spec ? [spec] : [])], { encoding: 'utf8', env, cwd });
   assert.equal(r.status, 0, `dispatch exited ${r.status}: ${r.stderr}`);
   return { env: readDump(s.dump), parentPath: s.path, handoff };
 }
@@ -108,11 +108,14 @@ const ROWS = [
   ['missing directory', false, null],
   ['directory with no run.json', true, () => {}],
   ['unreadable run.json', true, (d) => writeFileSync(join(d, 'run.json'), '{ not json')],
+  // K6: `[ -d ]` is false for a regular file, so the hook must call it dead too
+  ['run dir is a regular file', false, null, true],
 ];
 let rowN = 0;
-const rowDir = ([, , make]) => {
+const rowDir = ([, , make, asFile]) => {
   const d = join(BOX, `run-${++rowN}`);
-  if (make) { mkdirSync(d, { recursive: true }); make(d); }
+  if (asFile) writeFileSync(d, 'a file, not a run directory\n');
+  else if (make) { mkdirSync(d, { recursive: true }); make(d); }
   return d;
 };
 
@@ -141,6 +144,20 @@ for (const harness of HARNESSES) {
     }
   });
 }
+
+// K5: a run dir whose name starts with `-` must never be read as a node option.
+test('K5: a done run dir named -v is dead and node is never asked for its version', () => {
+  const rel = '-v';
+  mkdirSync(join(BOX, rel), { recursive: true });
+  writeFileSync(join(BOX, rel, 'run.json'), JSON.stringify({ schema: 1, state: 'done' }));
+  const { env } = dispatchHeadless('claude', rel, { cwd: BOX });
+  // `node -e '...' -v` prints the version and exits 0, which reads as live
+  assert.equal(env.has('BORK_RUN_DIR'), false, 'the dead run dir was kept: node read its name as an option');
+  const live = join(BOX, '-live');
+  mkdirSync(live, { recursive: true });
+  writeFileSync(join(live, 'run.json'), JSON.stringify({ schema: 1, state: 'running' }));
+  assert.equal(dispatchHeadless('claude', '-live', { cwd: BOX }).env.get('BORK_RUN_DIR'), '-live', 'a live dash-named run dir is kept');
+});
 
 // --- T1b: the interactive launch script runs in the tab shell -------------------------
 // Under herdr the harness runs in the new tab's shell, whose env came from the herdr
@@ -247,10 +264,10 @@ function stopHookChoosesEnvDir(envDir) {
 
 test('C14b: for every truth-table row the builder env agrees with the Stop hook’s envRunDir', () => {
   for (const row of ROWS) {
-    const [name, , make] = row;
+    const [name, , make, asFile] = row;
     // the Stop hook only counts a complete schema-1 record as needs-me, so each row writes one
     const full = (d) => { if (make) { make(d); const f = join(d, 'run.json'); try { const j = JSON.parse(readFileSync(f, 'utf8')); writeFileSync(f, JSON.stringify({ ...RUN_FIELDS(j.state), ...j })); } catch { /* missing or unreadable stays so */ } } };
-    const dir = rowDir([name, false, make ? (d) => full(d) : null]);
+    const dir = rowDir([name, false, make ? (d) => full(d) : null, asFile]);
     const { env } = dispatchHeadless('claude', dir);
     const hook = stopHookChoosesEnvDir(dir);
     assert.equal(env.has('BORK_RUN_DIR'), hook, `${name}: builder env ${env.has('BORK_RUN_DIR')} vs Stop hook ${hook}`);

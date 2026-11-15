@@ -10,7 +10,7 @@
 // unrelated work), nothing is owed, the run's run.json is needs-me, the hook already fired for this stop
 // (stop_hook_active), or stdin is unreadable. A hook crash must never block a
 // user, so every path that is not a deliberate block exits quietly.
-import { existsSync, readFileSync, writeSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { ledgerFor, renderBoard } from './ledger.mjs';
 
@@ -20,6 +20,8 @@ const RUN_FIELDS = [
   'id', 'run_dir', 'repo', 'goal', 'state', 'summary', 'delivery', 'questions', 'architect', 'launched_by',
   'revision', 'signal_revision', 'orchestrator_ack', 'created_at', 'updated_at', 'history',
 ];
+// `[ -d ]` in run-env.sh: a regular file is not a run directory.
+const isDir = (d) => { try { return statSync(d).isDirectory(); } catch { return false; } };
 function readRun(dir) {
   try { return JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')); } catch { return null; }
 }
@@ -27,7 +29,7 @@ function readRun(dir) {
 // (dispatch-slice.sh skips it the same way), so the ledger's run_dir decides.
 function envRunDir() {
   const d = process.env.BORK_RUN_DIR;
-  if (!d || !existsSync(d)) return '';
+  if (!d || !isDir(d)) return '';
   const s = readRun(d)?.state;
   return s === 'done' || s === 'failed' ? '' : d;
 }

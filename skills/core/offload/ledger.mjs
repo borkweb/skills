@@ -215,7 +215,7 @@ function applyFields(slice, f) {
 // It also carries `checkable: <tool>` (one lowercase token naming the kind of
 // deterministic check that could have caught the blocker) or `checkable: no`, so
 // the dreaming pass can count how much review work a lint or test could take over.
-const VERDICT_TAG = /\b(named\s+C\d+|unnamed)\b/i;
+const VERDICT_TAG = /\b(named\s+C\d+[a-z]?|unnamed)\b/i;
 const CHECKABLE_TAG = /\bcheckable:\s*(no\b|[a-z0-9][a-z0-9._\/-]*)/i;
 export function assertVerdict(fields) {
   if (fields.state !== 'rejected') return;

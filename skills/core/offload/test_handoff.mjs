@@ -1053,3 +1053,73 @@ test('C5l: the same added line moved to another place in the file is a different
   git(fx.dir, 'commit', '-q', '--amend', '--no-edit');
   assertRefused(docFor(fx), /patch-id mismatch/);
 });
+
+// --- corrective round 1 --------------------------------------------------------------
+
+test('K1: a marker for C1 is not backed by C12, nor C2 by C20; only a lowercase-letter sub-ID backs a parent', () => {
+  const block = ['Acceptance:', 'C12: twelve', 'C20: twenty', 'C3a: sub', 'Gates: G1', ''].join('\n');
+  for (const id of ['C1', 'C2']) {
+    const r = rulings(`Changes the bar (slice B): ${id}`, { block });
+    assert.equal(r.code, 6, id);
+    assert.deepEqual(unbackedLines(r), [`unbacked: Changes the bar (slice B): ${id}`], id);
+  }
+  assert.equal(rulings('Changes the bar (slice B): C3', { block }).code, 0, 'C3a still backs C3');
+  assert.equal(rulings('Changes the bar (slice B): C12, C20', { block }).code, 0, 'the IDs themselves are backed');
+});
+
+// The moved-line fixture (C5l) under a given repository or user git config: the pure rebase is
+// accepted, and the moved line is refused as a patch-id mismatch, never as an empty patch.
+const JS_BEFORE = 'function a() {\n  const x = 1;\n  return x;\n}\n\nfunction b() {\n  const y = 2;\n  return y;\n}\n';
+function guardFixture(name) {
+  const fx = rebaseRepo(name, { baseFiles: { 'f.js': JS_BEFORE }, patch: (d) => {
+    put(d, 'f.js', JS_BEFORE.replace('  const x = 1;\n', '  const x = 1;\n  guard();\n'));
+    return addCommit(d, 'guard in a', 'f.js');
+  } });
+  fx.rebase();
+  return fx;
+}
+function moveGuard(fx) {
+  put(fx.dir, 'f.js', JS_BEFORE.replace('  const y = 2;\n', '  const y = 2;\n  guard();\n'));
+  git(fx.dir, 'add', 'f.js');
+  git(fx.dir, 'commit', '-q', '--amend', '--no-edit');
+}
+function assertGuardCases(name, { repoConfig = [], env } = {}) {
+  const fx = guardFixture(name);
+  for (const [k, v] of repoConfig) git(fx.dir, 'config', k, v);
+  assert.equal(cli(['coverage', docFor(fx)], { env }).code, 0, `${name}: the pure rebase is accepted`);
+  moveGuard(fx);
+  const p = docFor(fx);
+  const r = cli(['coverage', p], { env });
+  assert.equal(r.code, 5, `${name}: ${r.err}`);
+  assert.match(r.err, /patch-id mismatch/, name);
+  assert.doesNotMatch(r.err, /patch is empty/, name);
+  assertRefused(p, /patch-id mismatch/, env);
+}
+
+test('K2a: repository config (diff.context 0, color.diff always, diff.noprefix, mnemonicPrefix) never changes the patch comparison', () => {
+  assertGuardCases('k2a-context', { repoConfig: [['diff.context', '0']] });
+  assertGuardCases('k2a-color', { repoConfig: [['color.diff', 'always'], ['color.ui', 'always']] });
+  assertGuardCases('k2a-prefix', { repoConfig: [['diff.noprefix', 'true'], ['diff.mnemonicPrefix', 'true']] });
+});
+
+test('K2b: user git config in HOME (context, color, prefix, ignoreSubmodules) never changes the carry-over', () => {
+  const home = join(BOX, 'k2b-home');
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, '.gitconfig'), '[diff]\n\tcontext = 0\n\tnoprefix = true\n\tignoreSubmodules = all\n[color]\n\tui = always\n\tdiff = always\n');
+  assertGuardCases('k2b-home', { env: { HOME: home } });
+});
+
+test('K3: a builder holding OFFLOAD_HANDOFF and OFFLOAD_SESSION_ID cannot rewrite base or base_ref', () => {
+  const dir = repo('k3');
+  const doc = run(['init', dir, 'arch-k3', 'k3']);
+  const sha = 'a'.repeat(40);
+  run(['base', doc, sha, 'refs/heads/main'], { session: 'arch-k3' });
+  const before = readFileSync(doc, 'utf8');
+  const builder = { session: 'builder-k3', env: { OFFLOAD_HANDOFF: doc, OFFLOAD_SESSION_ID: 'arch-k3' } };
+  const err = runFail(['base', doc, 'b'.repeat(40), 'refs/heads/slice'], builder);
+  assert.match(err, /owned by session arch-k3/);
+  assert.equal(readFileSync(doc, 'utf8'), before, 'the frontmatter is byte-identical');
+  run(['status', doc, 'dispatched'], builder); // the carried id still works for status, as the builder needs
+  run(['base', doc, 'c'.repeat(40)], { session: 'arch-k3' });
+  assert.match(readFileSync(doc, 'utf8'), /^base: c{40}$/m, 'the architect can still record a base');
+});
