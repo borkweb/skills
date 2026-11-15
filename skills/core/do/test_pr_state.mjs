@@ -155,6 +155,30 @@ for (const [name, opts, tier, code] of TABLE) {
   });
 }
 
+test('C30 every line carries integer checksPending and checksFailing counts, whatever the tier', () => {
+  const cases = [
+    [{ checks: [run('COMPLETED', 'SUCCESS'), ctx('SUCCESS')] }, 0, 0, 'ready'],
+    [{ checks: [run('QUEUED'), ctx('PENDING'), run('COMPLETED', 'FAILURE')] }, 2, 1, 'ci-failing'],
+    [{ checks: [run('IN_PROGRESS'), run('WAITING')], isDraft: true }, 2, 0, 'draft-or-changes-requested'],
+    [{ checks: [ctx('ERROR'), ctx('FAILURE'), run('COMPLETED', 'TIMED_OUT')], merge: 'DIRTY' }, 0, 3, 'conflict'],
+    [{ checks: [run('COMPLETED', 'NEUTRAL'), run('COMPLETED', 'SKIPPED')], threads: [{ isResolved: false }] }, 0, 0, 'threads'],
+    [{ checks: [], rollup: null }, 0, 0, 'ci-pending'], // a PR with no checks: both 0, still pending by X3
+    [{ checks: [], rollupState: 'SUCCESS' }, 0, 0, 'ready'],
+    [{ contexts: page([run('QUEUED')], 'c1') }, 'paged', 'paged', 'ci-failing'], // page 2 adds one failing and one in progress
+  ];
+  for (const [opts, pending, failing, tier] of cases) {
+    const box = makeBox();
+    const r = pr(box, [U1], { '*': { main: resp(opts), checksPages: [page([run('COMPLETED', 'FAILURE'), run('IN_PROGRESS')])] } });
+    const l = r.lines[0];
+    assert.ok(Number.isInteger(l.checksPending) && Number.isInteger(l.checksFailing), JSON.stringify(l));
+    assert.equal(l.tier, tier);
+    if (pending === 'paged') { assert.equal(l.checksPending, 2, 'counts cover every page'); assert.equal(l.checksFailing, 1); } else {
+      assert.equal(l.checksPending, pending, JSON.stringify(opts));
+      assert.equal(l.checksFailing, failing, JSON.stringify(opts));
+    }
+  }
+});
+
 test('C6i an unrecognized value never yields ready or exit 0', () => {
   const cases = [
     { merge: 'NEW_STATE' }, { mergeable: 'MAYBE' }, { review: 'NEW_DECISION' },

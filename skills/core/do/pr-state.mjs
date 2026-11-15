@@ -3,7 +3,7 @@
 //
 //   node pr-state.mjs <pr-url>...
 //
-// Each line carries url, head, mergeStateStatus and tier, plus the signals behind the tier. Exit code:
+// Each line carries url, head, mergeStateStatus, tier, and checksPending and checksFailing (counts of checks, independent of the tier). Exit code:
 // 0 every PR ready, 3 conflict (DIRTY, BEHIND or CONFLICTING: both are fixed by updating onto the base),
 // 4 unresolved review threads, 5 failing checks, 6 draft, changes requested, review required or BLOCKED,
 // 7 checks pending or state UNKNOWN, 2 usage error, 1 fetch error or a value this script does not know.
@@ -125,16 +125,17 @@ function classify(pr, threads, rollup, checks) {
   const mergeable = want(MERGEABLE, 'mergeable', pr.mergeable);
   const review = pr.reviewDecision == null ? 'ok' : want(REVIEW, 'reviewDecision', pr.reviewDecision);
   const signals = checks.map(checkSignal);
-  if (rollup?.state != null) signals.push(want(STATUS_STATE, 'rollup state', rollup.state));
+  // The counts are of checks, whatever the tier: no checks at all is 0 and 0 (a null rollup is still pending, below).
   const failing = signals.filter((s) => s === 'fail').length;
-  const pending = signals.filter((s) => s === 'pending').length + (rollup ? 0 : 1);
+  const pending = signals.filter((s) => s === 'pending').length;
+  const rollupSignal = rollup?.state == null ? null : want(STATUS_STATE, 'rollup state', rollup.state);
   const unresolved = threads.filter((t) => t?.isResolved === false).length;
   const is = {
     conflict: merge === 'conflict' || mergeable === 'conflict',
     threads: unresolved > 0,
-    'ci-failing': failing > 0,
+    'ci-failing': failing > 0 || rollupSignal === 'fail',
     'draft-or-changes-requested': pr.isDraft === true || merge === 'draft' || review === 'draft',
-    'ci-pending': pending > 0 || merge === 'pending' || mergeable === 'pending',
+    'ci-pending': pending > 0 || rollupSignal === 'pending' || !rollup || merge === 'pending' || mergeable === 'pending',
   };
   let tier = TIERS.map(([t]) => t).find((t) => is[t]);
   // BLOCKED with nothing else wrong still has an unmet rule (a required review or check), so it is not ready.
