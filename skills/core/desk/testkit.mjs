@@ -87,9 +87,20 @@ if (act === 'done') cli(['set', process.env.BORK_RUN_ID, '--state', 'done', '--d
 if (act === 'exit3') process.exit(3);
 `;
 
+// A test can leave a detached process behind (the `clean` that `set --state done` starts writes cleanup.log into the
+// run dir), and removing the box under it fails with ENOTEMPTY. Retry for up to about ten seconds before giving up.
+function removeBox(root) {
+  for (let i = 0; ; i++) {
+    try { rmSync(root, { recursive: true, force: true }); return; } catch (e) {
+      if (i >= 40 || !['ENOTEMPTY', 'EBUSY', 'EPERM'].includes(e.code)) throw e;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+  }
+}
+
 export function newBox() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'orch-')));
-  process.on('exit', () => rmSync(root, { recursive: true, force: true }));
+  process.on('exit', () => removeBox(root));
   const b = {
     root, bin: join(root, 'bin'), home: join(root, 'home'), handoffs: join(root, 'handoffs'),
     log: join(root, 'herdr.log'), argv: join(root, 'argv.log'),

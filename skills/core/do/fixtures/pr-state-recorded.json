@@ -1,0 +1,146 @@
+{
+  "gh_version": "gh version 2.99.0 (2026-09-01)",
+  "recorded": "2026-11-14",
+  "pull_request": "https://github.com/cli/cli/pull/15052",
+  "command": "gh api graphql -f query=<query> -f owner=cli -f name=cli -F number=15052",
+  "query": "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){headRefOid isDraft mergeable mergeStateStatus reviewDecision reviewThreads(first:100){nodes{isResolved} pageInfo{hasNextPage endCursor}} commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}} pageInfo{hasNextPage endCursor}}}}}}}}}",
+  "response": {
+    "data": {
+      "repository": {
+        "pullRequest": {
+          "headRefOid": "f219d43648a38f528a207c6f707a678e986dc079",
+          "isDraft": true,
+          "mergeable": "MERGEABLE",
+          "mergeStateStatus": "BLOCKED",
+          "reviewDecision": "REVIEW_REQUIRED",
+          "reviewThreads": {
+            "nodes": [
+              {
+                "isResolved": false
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": "Y3Vyc29yOnYyOpK0MjAyNi0xMS0xM1QxNjowNDo0N1rOty0ZkQ=="
+            }
+          },
+          "commits": {
+            "nodes": [
+              {
+                "commit": {
+                  "statusCheckRollup": {
+                    "state": "FAILURE",
+                    "contexts": {
+                      "nodes": [
+                        {
+                          "__typename": "CheckRun",
+                          "name": "CodeQL-Build (go, manual, ./.github/codeql/codeql-config.yml)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "label-external / label_issues",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "build (ubuntu-latest)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "CodeQL-Build (actions, none, security-and-quality)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "build (windows-latest)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "build (macos-latest)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "close-from-default-branch / close-from-default-branch",
+                          "status": "COMPLETED",
+                          "conclusion": "SKIPPED"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "integration-tests (ubuntu-latest)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "integration-tests (windows-latest)",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "integration-tests (macos-latest)",
+                          "status": "COMPLETED",
+                          "conclusion": "FAILURE"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "check-requirements / check-requirements",
+                          "status": "COMPLETED",
+                          "conclusion": "SKIPPED"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "check-requirements / close-unmet-requirements",
+                          "status": "COMPLETED",
+                          "conclusion": "SKIPPED"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "close-unmet-requirements",
+                          "status": "COMPLETED",
+                          "conclusion": "SKIPPED"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "close-no-help-wanted",
+                          "status": "COMPLETED",
+                          "conclusion": "SKIPPED"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "ready-for-review",
+                          "status": "COMPLETED",
+                          "conclusion": "SKIPPED"
+                        },
+                        {
+                          "__typename": "CheckRun",
+                          "name": "CodeQL",
+                          "status": "COMPLETED",
+                          "conclusion": "SUCCESS"
+                        }
+                      ],
+                      "pageInfo": {
+                        "hasNextPage": false,
+                        "endCursor": "MTY"
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
