@@ -23,11 +23,11 @@ const RUN_FIELDS = [
 function readRun(dir) {
   try { return JSON.parse(readFileSync(join(dir, 'run.json'), 'utf8')); } catch { return null; }
 }
-// A BORK_RUN_DIR whose run is done or failed is a finished run, never reused
+// A BORK_RUN_DIR whose directory is gone, or whose run is done or failed, is a finished run, never reused
 // (dispatch-slice.sh skips it the same way), so the ledger's run_dir decides.
 function envRunDir() {
   const d = process.env.BORK_RUN_DIR;
-  if (!d) return '';
+  if (!d || !existsSync(d)) return '';
   const s = readRun(d)?.state;
   return s === 'done' || s === 'failed' ? '' : d;
 }

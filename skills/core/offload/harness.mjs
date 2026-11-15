@@ -27,6 +27,22 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+// The only environment quota-axi gets (council-k1-ruling.md). It reads auth files and the macOS
+// keychain under HOME, so it needs no secret in its env; anything not named here (API keys, tokens,
+// run and session pointers) stays out. `LC_*` is a prefix. Cover what quota-axi reads: HOME, a PATH
+// with node and /usr/bin on it, USER for the keychain, the provider homes and auth overrides, the
+// proxy and CA variables for its network calls.
+export const QUOTA_ENV_PASS = Object.freeze([
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_*', 'TZ',
+  'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME',
+  'GROK_HOME', 'GROK_AUTH', 'GROK_AUTH_PATH', 'GROK_AUTH_JSON',
+  'CURSOR_STATE_DB', 'GITHUB_COPILOT_APPS_JSON',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+]);
+const quotaEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) =>
+  QUOTA_ENV_PASS.some((n) => (n.endsWith('*') ? k.startsWith(n.slice(0, -1)) : k === n))));
+
 const KNOWN = ['codex', 'claude', 'opencode', 'pi', 'grok'];
 // General (non-model) quota windows per provider, as quota-axi reports them.
 const GENERAL_WINDOWS = { claude: ['five_hour', 'seven_day'], codex: ['five_hour', 'weekly'] };
@@ -72,7 +88,7 @@ function quotaData(fixture, notes) {
   } else {
     try {
       raw = execFileSync('quota-axi', ['--json'], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], env: quotaEnv(),
       });
     } catch { notes.push('quota-axi unavailable; using preference order'); return null; }
   }

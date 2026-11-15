@@ -39,7 +39,7 @@ const run = (args, { env = {}, ok = true } = {}) => {
   try {
     const stdout = execFileSync('node', [HARNESS, ...args], {
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${BIN}:${NODE_DIR}`, BORKWEB_SKILLS_CONFIG: CONFIG, ...env },
+      env: { PATH: `${BIN}:${NODE_DIR}`, HOME: BOX, TMPDIR: tmpdir(), BORKWEB_SKILLS_CONFIG: CONFIG, ...env },
     });
     return { status: 0, stdout };
   } catch (e) {

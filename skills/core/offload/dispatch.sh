@@ -17,6 +17,14 @@
 #   "$HANDOFF.pane" (frontend=, pane=, tab=, harness= of the launched builder, so
 #   dispatch-slice.sh can send a corrective into the warm pane without parsing
 #   the human-facing launch line).
+# Builder environment: the builder is the user's own agent, so it keeps the user's environment
+#   (an auth key still reaches it) minus two things. CLAUDE_CODE_SESSION_ID and CODEX_SESSION_ID
+#   are always dropped, and OFFLOAD_HANDOFF / OFFLOAD_SESSION_ID are always this dispatch's own
+#   values. BORK_RUN_DIR and BORK_RUN_ID travel together and survive only while the run is live
+#   (run-env.sh env_run_dir_live: the directory exists and run.json is not done or failed); a
+#   dead run's pointers are dropped. Headless subshells and the generated launch script both do
+#   this. Under herdr or tmux the harness runs in the new tab's shell, whose own environment
+#   comes from the herdr or tmux server, so the launch script sets or unsets the pair itself.
 # OFFLOAD_BUILDER_MCP (claude builders): "none" (default) launches with no MCP
 #   servers (--strict-mcp-config and an empty --mcp-config), so the builder does
 #   not boot the machine's MCP fleet or carry its tool schemas on every turn;
@@ -131,6 +139,8 @@ if [ "${OFFLOAD_DRY_RUN:-}" = "1" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=run-env.sh
+. "$SCRIPT_DIR/run-env.sh"
 
 # Candidate lines: harness<TAB>model<TAB>effort<TAB>permissionMode<TAB>command
 # ('-' = unset), best-first — the harness.mjs `select --plain` contract.
@@ -311,6 +321,10 @@ build_custom() {
   printf '%s' "${template//__PROMPT_FILE__/$(printf %q "$BLOCK")}"
 }
 
+# The run pointers a builder may keep: dropped here (in a headless builder's own subshell) unless
+# the run they name is live. Session pointers are dropped by the `unset` beside each call.
+scrub_run_pointers() { env_run_dir_live || unset BORK_RUN_DIR BORK_RUN_ID; return 0; }
+
 # Headless form per harness; fails for interactive-only harnesses (pi, grok)
 # unless the profile carries a raw command. claude -p cannot answer permission
 # prompts, so auto mode would strand the run — headless claude keeps full bypass.
@@ -324,7 +338,7 @@ run_headless() {
   out=$(mktemp -t offload-result.XXXXXX) && mv "$out" "$out.md" && out="$out.md"
   case "$h" in
     codex)
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           codex exec ${m:+-m "$m"} ${e:+--config "model_reasoning_effort=$e"} \
             --dangerously-bypass-approvals-and-sandbox -C "$REPO" \
             --output-last-message "$out" - < "$BLOCK" ) ;;
@@ -332,16 +346,16 @@ run_headless() {
       claude_mcp_argv
       # --mcp-config is variadic: it swallows every following non-flag token, so
       # it must never sit directly before the prompt. A flag always follows here.
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           claude -p --dangerously-skip-permissions ${CLAUDE_MCP_ARGV[@]+"${CLAUDE_MCP_ARGV[@]}"} \
             --output-format text ${m:+--model "$m"} \
             ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           opencode run ${m:+--model "$m"} "$(cat "$BLOCK")" > "$out" ) ;;
     *)
       [ "$custom" = "-" ] && return 1
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           bash -c "$(build_custom "$custom")" > "$out" ) ;;
   esac && { write_pane_sidecar headless "" "" "$h"; echo "dispatch: ran $h headless; builder's final message at $out"; }
 }
@@ -363,6 +377,14 @@ make_launch() {
     # its tool calls; handoff.mjs reads the architect's id from here instead.
     echo "export OFFLOAD_SESSION_ID=$(printf %q "$SID")"
     echo "unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID"
+    # The tab shell's own BORK_RUN_DIR/BORK_RUN_ID may be stale (herdr and tmux hand a new tab
+    # the server's environment), so this dispatch decides: its live pair, else neither.
+    if env_run_dir_live; then
+      echo "export BORK_RUN_DIR=$(printf %q "$BORK_RUN_DIR")"
+      if [ -n "${BORK_RUN_ID:-}" ]; then echo "export BORK_RUN_ID=$(printf %q "$BORK_RUN_ID")"; else echo "unset BORK_RUN_ID"; fi
+    else
+      echo "unset BORK_RUN_DIR BORK_RUN_ID"
+    fi
     if [ -n "$MARKER" ]; then
       printf 'echo $$ > %s\n' "$(printf %q "$MARKER")"
       printf 'trap %s EXIT\n' "$(printf %q "rm -f $MARKER")"

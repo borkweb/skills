@@ -196,3 +196,11 @@ for (const [name, body, schemaNote] of [
     assert.equal(JSON.parse(res).decision, 'block');
   });
 }
+
+// C14c: dispatch-slice.sh and dispatch.sh treat a BORK_RUN_DIR whose directory is gone as no run
+// (one shared predicate); the hook must agree, so it falls back to the ledger's run_dir.
+test('a BORK_RUN_DIR that does not exist is ignored and the ledger run_dir (needs-me) allows the stop', () => {
+  const ledgerRun = runDirWith('ledger-needs-me-missing', runJson('needs-me'));
+  const REPO = owedRepo('env-missing-ledger-needs-me', ledgerRun);
+  assert.equal(fireRun({ session_id: 'arch', cwd: REPO }, join(BOX, 'no-such-run-dir')), '');
+});

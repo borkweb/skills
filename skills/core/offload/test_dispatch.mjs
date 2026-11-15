@@ -102,7 +102,7 @@ const run = (extraEnv, args = [], cwd = undefined) => {
       // session in the test runner's env doesn't steal the branch or workspace;
       // herdr tests opt back in explicitly.
       env: {
-        ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
+        HOME: BOX, TMPDIR: tmpdir(), HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
         BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME,
         PATH: TEST_PATH, ...extraEnv,
       },
@@ -124,7 +124,7 @@ const runFail = (extraEnv, args = []) => {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
-        ...process.env, HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
+        HOME: BOX, TMPDIR: tmpdir(), HERDR_ENV: '', HERDR_WORKSPACE_ID: '',
         BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME,
         PATH: TEST_PATH, ...extraEnv,
       },
@@ -453,7 +453,7 @@ test('clears a stale marker (dead pid) and proceeds to launch', () => {
 test('OFFLOAD_FORCE=1 replaces a running builder instead of refusing', () => {
   unameReports('Linux');
   // A real, live but harmless child we are willing to see killed.
-  const child = spawn('sleep', ['30'], { stdio: 'ignore' });
+  const child = spawn('sleep', ['30'], { stdio: 'ignore', env: { PATH: TEST_PATH } });
   writeFileSync(MARKER, `${child.pid}\n`);
   try {
     const { log } = run({ TMUX: '', OFFLOAD_FORCE: '1' });
