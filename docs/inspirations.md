@@ -31,6 +31,7 @@ Each of these was read end to end and compared with this repo. Only the rules li
 | [DietrichGebert/ponytail](https://github.com/DietrichGebert/ponytail) | v5.3.2, `09c434a` | The smallest-complete-change ladder and the one-test-where-logic-needs-one rule in builder briefs, a `Not checked` line in builder reports, an assumed-load line in `review`, `writeSync` before exit in plugin hooks, and a frozen-phrase canary in `scripts/validate-skills.rb`. | 3.20.0 |
 | [alibaba/open-code-review](https://github.com/alibaba/open-code-review) | `375f64c` | A per-file coverage ledger in `review` and `pr-review`, and the rule that a merged finding may be dropped only when the diff proves it wrong, with protected subjects that are demoted, never discarded. | 3.25.0 |
 | [EveryInc/compound-engineering-plugin](https://github.com/EveryInc/compound-engineering-plugin) | `fb5548f` | Giving the author, not only the reviewer, the sharpest rules: the test bar and evidence line in the builder brief, four builder self-checks, frozen criteria reaching the builder intact, a builder replay eval from real rejections, and per-repo rule packs. | 3.37.0 |
+| Lauren Tan's (poteto) [pstack](https://github.com/cursor/plugins/tree/main/pstack) | `cursor/plugins@3dbd22f` | Prose rules that keep failing escalate into checks with a named enforcer (from `/correct`). Re-verification scales with the size of the change, and a gate result survives a rebase when the `git patch-id` is unchanged. A lint checks every ruling against the frozen criteria. Builds do one unit first, then fan out (from the Orchestrate playbook). Review blocks only on what it can show, names the one fact a change is safe because of and proves it (from `blast-radius`), and follows stricter proof rules for runtime checks. Also a typed PR-state watcher, a fixed land order, and a spec reviewer that reads history first (from `/why`). | 3.42.0 |
 
 ## Articles and talks
 
@@ -39,19 +40,13 @@ Each of these was read end to end and compared with this repo. Only the rules li
 | Thariq Shihipar, [Lessons from building Claude Code: How we use skills](https://claude.dev/blog/lessons-from-building-claude-code-how-we-use-skills) (2026-06-03) | Growing skills from gotchas found in real failures: per-skill `gotchas.md` fed by dreaming, a skill usage log that `skills-audit` reads, descriptions written as triggers, product verification in the spec review, on-demand hooks in `offload`, and eval cases before trimming large skills. | 3.38.0–3.39.1 |
 | Lamis (Anthropic Applied AI), [Context Engineering, Memory Systems, and Dreaming](https://tessl.io/registry/ainativedev/aidevcon-2026-ldn/files/talk-lamis-context-engineering-dreaming/transcript.md), AI Native DevCon 2026 London | Memory as versioned files, compare-before-write updates, and out-of-band "dreaming" over past runs: the `dream` skill, per-class sources in review criteria, and ledger reports that cite the run they came from. | 3.31.0 |
 | Simon Maple (Tessl), [Lessons From Running Tessl's Software Factory](https://www.youtube.com/watch?v=v-0JZTX7Kzg) | Run and round caps, a human halt that every loop obeys, operational authority, and the rule that tests need a source of truth: the `offload` round cap, `handoff.mjs halt`, and the builder's `Loosened tests:` line. | 3.31.0 |
+| Lauren Tan (poteto), [All Code Is Slop (Except Mine)](https://www.youtube.com/watch?v=O_zcc6Xl12g), AI Engineer | Turning each correction into a deterministic check instead of another prose rule. Every review-only rejection records whether a check could have caught it. Dreaming accepts a cheap local check after one run and retires the prose rule it covers. Escapes found after merge are counted. This repo gained its own test-all script, a CI workflow and a property test for the ledger and handoff, and comments that justify a workaround became a review lead. | 3.42.0 |
 
 ## Standards and reference material
 
 - **[ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/).** The writing rules in `skills/core/writing-plans/ste100.md`, also used for `review` findings and `pr-review` comments.
 - **[Wikipedia: Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)**, maintained by [WikiProject AI Cleanup](https://en.wikipedia.org/wiki/Wikipedia:WikiProject_AI_Cleanup). The pattern catalog behind `humanize`.
 - **Public security audits and CVE research.** The 20 pattern files in `skills/core/review-security/patterns/` are built from published audits and fuzzing work, including [OSTIF](https://ostif.org/) audit reports, NCC Group and Trail of Bits audits, [OSS-Fuzz](https://github.com/google/oss-fuzz), [syzkaller](https://syzkaller.appspot.com/), [Rudra](https://github.com/sslab-gatech/Rudra) and Chromium's [IPC security tips](https://chromium.googlesource.com/chromium/src/+/main/docs/security/ipc-security-tips.md). Most pattern files cite the specific audits or CVEs they draw on.
-
-## Adoption in progress
-
-These are being compared with this repo now. Their entries will move to the sections above, with what was taken and the release that shipped it, once that work lands.
-
-- **Lauren Tan's (poteto) [pstack](https://github.com/cursor/plugins/tree/main/pstack)**, a Cursor and Claude Code plugin built around "fearless parallelism": the `/poteto-mode` playbooks, engineering principles and review subagents.
-- **Lauren Tan, [All Code Is Slop (Except Mine)](https://www.youtube.com/watch?v=O_zcc6Xl12g)**, AI Engineer.
 
 ## Studied, not adopted
 
