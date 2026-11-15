@@ -537,10 +537,12 @@ function rebaseCarryOver(cwd, text, h, head) {
   if (mb.status === 1) return `HEAD and ${baseRef} share no merge base.`;
   if (mb.status !== 0 || !SHA_ONLY.test(mb.out)) return failed('merge-base', mb);
 
-  // `-U0`: the patch is its changed lines, so a neighbouring edit in the base does
-  // not change it; merge-tree below is what judges the neighbourhood.
+  // Git's default three lines of context stay in the patch. Without them a patch is only its
+  // changed lines, and the same line moved to another place in the file would keep its id. The
+  // price is a false refusal when the base changed lines right beside the patch while it was
+  // rebased; the residual case is a line moved between two places with identical surroundings.
   const patchId = (from, to) => {
-    const diff = git('diff', '-U0', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', from, to);
+    const diff = git('diff', '--binary', '--full-index', '--no-renames', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', from, to);
     if (diff.status !== 0) return { err: failed('diff', diff) };
     if (!diff.raw.trim()) return { empty: true };
     const id = gitIn(cwd, ['patch-id', '--verbatim'], diff.raw);

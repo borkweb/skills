@@ -822,12 +822,13 @@ const addCommit = (dir, msg, ...files) => { git(dir, 'add', ...files); git(dir, 
 // main holds shared.txt at B0; `slice` carries the patch `files` (one or three
 // commits). Returns the recorded head (the patch tip before the rebase) and a
 // `rebase()` that advances main with an unrelated commit and rebases the slice.
-function rebaseRepo(name, { commits = 1, patch } = {}) {
+function rebaseRepo(name, { commits = 1, patch, baseFiles = {} } = {}) {
   const dir = repo(name);
   mkdirSync(dir, { recursive: true });
   git(dir, 'init', '-q', '-b', 'main');
   put(dir, 'shared.txt', 'line1\nline2\n');
-  const base = addCommit(dir, 'base', 'shared.txt');
+  for (const [file, text] of Object.entries(baseFiles)) put(dir, file, text);
+  const base = addCommit(dir, 'base', 'shared.txt', ...Object.keys(baseFiles));
   git(dir, 'checkout', '-q', '-b', 'slice');
   let recorded;
   if (patch) recorded = patch(dir);
@@ -1035,4 +1036,20 @@ test('C5k: ambient GIT_DIR, GIT_WORK_TREE and GIT_INDEX_FILE do not redirect the
   put(late.dir, 'late.txt', 'late\n');
   addCommit(late.dir, 'late', 'late.txt');
   assertRefused(docFor(late), /patch-id mismatch/, hostile);
+});
+
+test('C5l: the same added line moved to another place in the file is a different patch', () => {
+  // With zero context a patch is only its changed lines, so moving a line would keep its patch-id.
+  // The patch-id comparison therefore keeps git's default context.
+  const before = 'function a() {\n  const x = 1;\n  return x;\n}\n\nfunction b() {\n  const y = 2;\n  return y;\n}\n';
+  const fx = rebaseRepo('rb-moved', { baseFiles: { 'f.js': before }, patch: (d) => {
+    put(d, 'f.js', before.replace('  const x = 1;\n', '  const x = 1;\n  guard();\n'));
+    return addCommit(d, 'guard in a', 'f.js');
+  } });
+  fx.rebase();
+  assert.equal(cli(['coverage', docFor(fx)]).code, 0, 'the unmoved patch is accepted');
+  put(fx.dir, 'f.js', before.replace('  const y = 2;\n', '  const y = 2;\n  guard();\n'));
+  git(fx.dir, 'add', 'f.js');
+  git(fx.dir, 'commit', '-q', '--amend', '--no-edit');
+  assertRefused(docFor(fx), /patch-id mismatch/);
 });
