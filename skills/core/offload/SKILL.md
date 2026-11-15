@@ -86,27 +86,24 @@ one). Use the run directory `do` or `complete` created. When `offload` runs on i
 own, create one with `runs.mjs init --repo "$PWD" --goal "<goal>"` (`skills/core/desk/runs.mjs`, found
 beside the loaded `desk` skill): it makes
 `~/.agent-handoffs/runs/<YYYY-MM-DD>-<slug>-<4 random chars>/` (mode 700) and
-writes its `run.json`, Record
+writes its `run.json`. Record
 the path under *Decisions + why* and pass `--run-dir <run dir>` on the first
 `dispatch-slice.sh` call, which links it to the ledger it creates (`ledger init
 --run-dir` does the same when you open the ledger yourself). Without `--run-dir`
 it falls back to `BORK_RUN_DIR`, skipping one whose run is `done` or `failed`. These files are what the dreaming
 pass ([dreaming.md](../do/references/dreaming.md)) reads across runs.
 
-Builders, reviewers and the architect do not curate memory during a run: no
-"record what you learned" step, and no edits to `review-criteria.md`, briefs or
-skills from inside a run. They leave structured evidence (verdicts with tags, the
-review files above, `decisions.md`); only the dreaming pass, run on its own with
-the user approving each change, turns it into criteria.
+Nobody curates memory during a run: no "record what you learned" step, and no edits
+to `review-criteria.md`, briefs or skills. Builders, reviewers and the architect leave
+structured evidence (verdicts with tags, the review files above, `decisions.md`); only
+the dreaming pass, run on its own with the user approving each change, turns it into criteria.
 
 ## Resolve the builder harness
 
 - The builder comes from `~/.borkweb-skills/config.json` (`dispatch.rules[0].use`,
   an ordered failover chain of `{harness, model?, effort?, permissionMode?,
-  command?}` profiles), resolved deterministically by `harness.mjs` next to
-  `handoff.mjs`: `node "<…>/harness.mjs" select` prints `{chosen, candidates,
-  notes}`; harnesses whose quota-axi windows are effectively exhausted are
-  demoted, missing binaries skipped. `dispatch-slice.sh` runs it for you at
+  command?}` profiles), resolved deterministically by `harness.mjs`: `node "<…>/harness.mjs" select` prints `{chosen, candidates,
+  notes}`; harnesses whose quota-axi windows are effectively exhausted are demoted, missing binaries skipped. `dispatch-slice.sh` runs it for you at
   launch and prints the chosen harness and any demotion/skip notes; relay those
   to the user. Run `select` yourself only to answer a question before launching.
 - **Exit 3 (`missing-config`) means the config doesn't exist yet.** Read
@@ -120,7 +117,7 @@ A slice is one coherent feature: everything a builder needs to make one capabili
 
 ## One architect turn
 
-0. **Re-resolve `$HANDOFF` first** (shell state is gone between turns):
+0. **Re-resolve `$HANDOFF` first:**
    `HANDOFF=$(node "<…>/handoff.mjs" resolve "$PWD")`. Then **pick up ready work**:
    read `$HANDOFF`. If `status: results-ready`, judge it now. If `status: blocked`,
    the builder stopped mid-slice for a ruling: arbitrate its *Open disagreements*
@@ -163,8 +160,10 @@ A slice is one coherent feature: everything a builder needs to make one capabili
    the same time **spot-check:** re-run any gate you doubt via its reproduce
    command. A failed spot-check fails the slice: stop or discard that
    review and send the failure back. A **DO NOT LAND** verdict fails the slice no
-   matter how the gates read, when its blocker meets the proof rule (correctives.md
-   *Judge a rejection*); spec one corrective slice carrying every such blocker.
+   matter how the gates read, but only for a blocker that carries a red command or quotes
+   a shipped line the change made false (missing evidence, an unmet criterion, a merge
+   conflict, security, data loss and uncapped spend need neither); spec one corrective
+   slice carrying every such blocker.
    Read [correctives.md](correctives.md) before you spec, dispatch, judge or accept a corrective (`dispatch-slice.sh … --corrective`), or judge a rejection:
    it holds the proof rule, the two-miss stop, the round cap, send-backs, the
    scope of reruns and the delta review. Before you accept a slice that had a
@@ -246,7 +245,7 @@ Read [builder-template.md](builder-template.md) when preparing a slice. Fill it 
 
 ## Dispatch
 
-Launch within existing authorization. Ask only if the actual permission relaxation or dispatch scope is not already authorized:
+Launch within existing authorization; ask only when the permission relaxation or dispatch scope is not already authorized:
 
 1. Write the block to a temp file: `f=$(mktemp -t offload-block) && mv "$f" "$f.md"`,
    then write the block into `$f.md`.
@@ -288,7 +287,7 @@ Launch within existing authorization. Ask only if the actual permission relaxati
 rules and the warm-versus-cold re-dispatch are in [correctives.md](correctives.md).
 Either way, run the printed `NEXT` line again.
 
-**Leaving, or needing an MCP tool.** The `NEXT` bridge is a background task of this session and dies with it. Read [launch-options.md](launch-options.md) when the user is leaving (closing the laptop, clearing, walking away) or a slice genuinely needs an MCP tool: it holds the detached wake chain (`unattended.sh`, `--unattended`) and `OFFLOAD_BUILDER_MCP`.
+**Leaving, or needing an MCP tool.** The `NEXT` bridge is a background task of this session and dies with it. Read [launch-options.md](launch-options.md) when the user is leaving or a slice genuinely needs an MCP tool: it holds the detached wake chain (`unattended.sh`, `--unattended`) and `OFFLOAD_BUILDER_MCP`.
 
 **Safety:** dispatch launches the builder with its permission gates relaxed:
 codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local
