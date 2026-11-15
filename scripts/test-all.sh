@@ -134,7 +134,7 @@ report() { # label tests failed skipped
   if [ "$2" -eq 0 ]; then note="  (ran zero tests)"; fi
   printf '%-10s %s  tests=%s failed=%s skipped=%s%s\n' "$1" "$verdict" "$2" "$3" "$4" "$note"
 }
-show_skips() { grep -iE 'skip' "$1" | grep -vE '^# skipped|^ *# skipped' | head -50; }
+show_skips() { grep -E ' \.\.\. skipped ' "$1" | head -50; }
 show_failures() { # output file
   echo "  full output: $1"
   grep -E -B1 -A20 '^[[:space:]]*not ok|^(FAIL|ERROR):' "$1" | head -150
