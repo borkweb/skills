@@ -125,9 +125,11 @@ function classify(pr, threads, rollup, checks) {
   const mergeable = want(MERGEABLE, 'mergeable', pr.mergeable);
   const review = pr.reviewDecision == null ? 'ok' : want(REVIEW, 'reviewDecision', pr.reviewDecision);
   const signals = checks.map(checkSignal);
-  // The counts are of checks, whatever the tier: no checks at all is 0 and 0 (a null rollup is still pending, below).
+  // The counts are of checks, whatever the tier. A head with no reported checks yet (a null rollup or zero
+  // contexts) counts as one pending check, so a watcher that waits for checksPending 0 does not wake early.
+  const none = !rollup || checks.length === 0;
   const failing = signals.filter((s) => s === 'fail').length;
-  const pending = signals.filter((s) => s === 'pending').length;
+  const pending = signals.filter((s) => s === 'pending').length + (none ? 1 : 0);
   const rollupSignal = rollup?.state == null ? null : want(STATUS_STATE, 'rollup state', rollup.state);
   const unresolved = threads.filter((t) => t?.isResolved === false).length;
   const is = {
@@ -135,7 +137,7 @@ function classify(pr, threads, rollup, checks) {
     threads: unresolved > 0,
     'ci-failing': failing > 0 || rollupSignal === 'fail',
     'draft-or-changes-requested': pr.isDraft === true || merge === 'draft' || review === 'draft',
-    'ci-pending': pending > 0 || rollupSignal === 'pending' || !rollup || merge === 'pending' || mergeable === 'pending',
+    'ci-pending': pending > 0 || rollupSignal === 'pending' || none || merge === 'pending' || mergeable === 'pending',
   };
   let tier = TIERS.map(([t]) => t).find((t) => is[t]);
   // BLOCKED with nothing else wrong still has an unmet rule (a required review or check), so it is not ready.

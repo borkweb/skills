@@ -155,15 +155,15 @@ for (const [name, opts, tier, code] of TABLE) {
   });
 }
 
-test('C30 every line carries integer checksPending and checksFailing counts, whatever the tier', () => {
+test('C30 C31 every line carries integer checksPending and checksFailing counts, whatever the tier', () => {
   const cases = [
     [{ checks: [run('COMPLETED', 'SUCCESS'), ctx('SUCCESS')] }, 0, 0, 'ready'],
     [{ checks: [run('QUEUED'), ctx('PENDING'), run('COMPLETED', 'FAILURE')] }, 2, 1, 'ci-failing'],
     [{ checks: [run('IN_PROGRESS'), run('WAITING')], isDraft: true }, 2, 0, 'draft-or-changes-requested'],
     [{ checks: [ctx('ERROR'), ctx('FAILURE'), run('COMPLETED', 'TIMED_OUT')], merge: 'DIRTY' }, 0, 3, 'conflict'],
     [{ checks: [run('COMPLETED', 'NEUTRAL'), run('COMPLETED', 'SKIPPED')], threads: [{ isResolved: false }] }, 0, 0, 'threads'],
-    [{ checks: [], rollup: null }, 0, 0, 'ci-pending'], // a PR with no checks: both 0, still pending by X3
-    [{ checks: [], rollupState: 'SUCCESS' }, 0, 0, 'ready'],
+    [{ checks: [], rollup: null }, 1, 0, 'ci-pending'], // no checks reported yet (null rollup): one pending, so a watcher waits
+    [{ checks: [], rollupState: 'SUCCESS' }, 1, 0, 'ci-pending'], // a rollup with zero contexts: same
     [{ contexts: page([run('QUEUED')], 'c1') }, 'paged', 'paged', 'ci-failing'], // page 2 adds one failing and one in progress
   ];
   for (const [opts, pending, failing, tier] of cases) {
