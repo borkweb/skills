@@ -37,6 +37,8 @@ const SEEDS = process.env.SG07_SEED ? [Number(process.env.SG07_SEED)]
   : process.env.SG07_SEEDS ? process.env.SG07_SEEDS.split(',').map(Number) : DEFAULT_SEEDS;
 const STEPS = 16;
 const KINDS = ['dispatch', 'ready', 'corrective', 'stale', 'halt', 'unhalt', 'returned', 'abandoned', 'crash'];
+// What the contract says must be generated; kept apart from KINDS so dropping one from the generator fails the run.
+const REQUIRED_KINDS = ['dispatch', 'ready', 'corrective', 'stale', 'halt', 'unhalt', 'returned', 'abandoned', 'crash'];
 // How often each kind is drawn: correctives and ready attempts carry most of the invariants.
 const WEIGHTS = { dispatch: 2, ready: 4, corrective: 8, stale: 2, halt: 1, unhalt: 1, returned: 1, abandoned: 2, crash: 2 };
 const STATES = ['specced', 'dispatched', 'blocked', 'results-ready', 'returned', 'accepted', 'rejected', 'merged', 'abandoned'];
@@ -426,7 +428,7 @@ test('SG-07: random ledger, handoff and dispatch event sequences keep every inva
   for (const { S } of seeds) t.diagnostic(`seed ${S.seed}: ${S.history.join(' | ')}`);
   if (!process.env.SG07_SEED) {
     const seen = new Set(seeds.flatMap(({ S }) => [...S.kinds]));
-    for (const kind of KINDS) assert.ok(seen.has(kind), `no seed generated a ${kind} event (the generator lost a kind)`);
+    for (const kind of REQUIRED_KINDS) assert.ok(seen.has(kind), `no seed generated a ${kind} event (the generator lost a kind)`);
     const verdicts = new Set(seeds.flatMap(({ S }) => [...S.verdictKinds]));
     for (const v of VERDICTS) assert.ok(verdicts.has(v.kind), `no seed tried a ${v.kind} verdict (the generator lost a verdict kind)`);
   }
