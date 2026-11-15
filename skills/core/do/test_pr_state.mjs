@@ -35,7 +35,9 @@ const entry = cfg[kv.owner + '/' + kv.name + '#' + kv.number] ?? cfg['*'];
 if (kv.after) {
   const kind = kv.query.includes('reviewThreads') ? 'threads' : 'checks';
   const page = entry[kind + 'Pages'][Number(kv.after.slice(1)) - 1];
-  const pr = kind === 'threads' ? { reviewThreads: page } : { commits: { nodes: [{ commit: { statusCheckRollup: { contexts: page } } }] } };
+  const mainHead = (entry.main.data ?? {}).repository?.pullRequest?.headRefOid;
+  const head = (entry.checksHeads ?? [])[Number(kv.after.slice(1)) - 1] ?? mainHead;
+  const pr = kind === 'threads' ? { reviewThreads: page } : { headRefOid: head, commits: { nodes: [{ commit: { statusCheckRollup: { contexts: page } } }] } };
   process.stdout.write(JSON.stringify({ data: { repository: { pullRequest: pr } } }));
   process.exit(0);
 }
@@ -228,6 +230,55 @@ test('C6f a hasNextPage with no cursor is a fetch error, never ready', () => {
   const r = one({ threadPage: { nodes: [], pageInfo: { hasNextPage: true, endCursor: null } } });
   assert.equal(r.code, 1);
   assert.ok(r.lines.every((l) => l.tier !== 'ready'));
+});
+
+// ---- hosts and tokens (K1), head change while paging (K9) -----------------------------------------------------
+
+test('K1 only github.com and github.a8c.com are accepted; any other host exits 2 before a gh call', () => {
+  const bad = ['https://attacker.example/o/r/pull/1', 'https://github.com.evil.example/o/r/pull/1', 'https://evil.github.com/o/r/pull/1',
+    'https://github.a8c.com.evil.example/o/r/pull/1', 'https://xgithub.com/o/r/pull/1', 'https://github.comx/o/r/pull/1', 'https://127.0.0.1/o/r/pull/1'];
+  for (const url of bad) {
+    const box = makeBox();
+    const r = pr(box, [U1, url], { '*': { main: resp() } }, { GH_ENTERPRISE_TOKEN: 'ent', GITHUB_ENTERPRISE_TOKEN: 'ent' });
+    assert.equal(r.code, 2, url);
+    assert.deepEqual(calls(box), [], `${url}: no gh call, not even for the good URL`);
+    assert.equal(r.out, '');
+    assert.ok(r.err.includes('github.com'), r.err);
+  }
+});
+
+test('K1 the host match ignores case, and gh gets the lower-case host', () => {
+  const box = makeBox();
+  const r = pr(box, ['https://GitHub.COM/o/r/pull/1', 'https://GITHUB.A8C.COM/o/r/pull/2'], { '*': { main: resp() } });
+  assert.equal(r.code, 0, r.err);
+  const argvs = calls(box).map((c) => c.argv);
+  assert.ok(!argvs[0].includes('--hostname'));
+  assert.equal(argvs[1][argvs[1].indexOf('--hostname') + 1], 'github.a8c.com');
+});
+
+test('K1 the enterprise tokens reach gh only for github.a8c.com; GH_TOKEN reaches both', () => {
+  const box = makeBox();
+  const extra = { GH_ENTERPRISE_TOKEN: 'ent1', GITHUB_ENTERPRISE_TOKEN: 'ent2', GH_TOKEN: 'tok' };
+  const r = pr(box, [U1, 'https://github.a8c.com/team/repo/pull/9'], { '*': { main: resp() } }, extra);
+  assert.equal(r.code, 0, r.err);
+  const [com, ghe] = calls(box).map((c) => c.environ);
+  for (const name of ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) {
+    assert.ok(!(name in com), `${name} must not reach gh for a github.com URL`);
+    assert.equal(ghe[name], name === 'GH_ENTERPRISE_TOKEN' ? 'ent1' : 'ent2');
+  }
+  assert.equal(com.GH_TOKEN, 'tok');
+  assert.equal(ghe.GH_TOKEN, 'tok');
+});
+
+test('K9 a later check page from a different head fails closed', () => {
+  const box = makeBox();
+  const cfg = { '*': { main: resp({ head: 'a'.repeat(40), contexts: page([run('COMPLETED', 'SUCCESS')], 'c1') }), checksPages: [page([run('COMPLETED', 'SUCCESS')])], checksHeads: ['b'.repeat(40)] } };
+  const r = pr(box, [U1], cfg);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.err, /head changed/);
+  assert.ok(r.lines.every((l) => l.tier !== 'ready'));
+  cfg['*'].checksHeads = ['a'.repeat(40)];
+  assert.equal(pr(makeBox(), [U1], cfg).code, 0, 'the same head on every page stays ready');
 });
 
 // ---- several PRs (C6m, C6o) ----------------------------------------------------------------------------------------------

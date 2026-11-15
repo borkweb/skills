@@ -12,12 +12,15 @@
 //
 // gh is the command in PR_STATE_GH (split on whitespace, `~/` expanded, no shell), else `gh`. For
 // github.a8c.com use PR_STATE_GH='proxychains4 -q -f ~/.proxychains.conf gh'. Every call has a timeout
-// (PR_STATE_TIMEOUT_MS, default 30000). The gh child gets an allowlisted environment, never this one.
+// (PR_STATE_TIMEOUT_MS, default 30000). The gh child gets an allowlisted environment, never this one. Only github.com
+// and github.a8c.com URLs are accepted, and the enterprise tokens reach gh only for github.a8c.com.
 //
 // Node builtins only, no package.json.
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 
+// The only hosts a PR URL may name. Any other host would get a gh request, and gh sends a GitHub Enterprise token to it.
+const HOSTS = new Set(['github.com', 'github.a8c.com']);
 const URL_RE = /^https:\/\/([A-Za-z0-9.-]+)\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)\/pull\/([1-9][0-9]*)$/;
 const PAGE = 100;
 const MAX_PAGES = 50;
@@ -29,18 +32,21 @@ const THREADS = (after) => `reviewThreads(first:${PAGE}${after}){nodes{isResolve
 const CHECKS = (after) => `commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:${PAGE}${after}){${CONTEXT}}}}}}`;
 const QUERY = `query(${ARGS}){${PR(`headRefOid isDraft mergeable mergeStateStatus reviewDecision ${THREADS('')} ${CHECKS('')}`)}}`;
 const QUERY_THREADS = `query(${ARGS},$after:String!){${PR(THREADS(',after:$after'))}}`;
-const QUERY_CHECKS = `query(${ARGS},$after:String!){${PR(CHECKS(',after:$after'))}}`;
+// headRefOid rides along so a push between two pages of checks is seen (the page then belongs to another head).
+const QUERY_CHECKS = `query(${ARGS},$after:String!){${PR(`headRefOid ${CHECKS(',after:$after')}`)}}`;
 
 // What the gh child may see. Everything else in this process's environment stays here.
 const ENV_PASS = new Set([
   'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'TZ',
-  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
+  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_CONFIG_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME',
   'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
   'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS', 'PROXYCHAINS_CONF_FILE', 'PROXYCHAINS_QUIET_MODE',
 ]);
-const childEnv = () => {
+// gh sends these to any host that is not github.com, so only the host they belong to gets them.
+const ENTERPRISE_TOKENS = ['GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN'];
+const childEnv = (host) => {
   const env = { GH_PROMPT_DISABLED: '1' };
-  for (const [k, v] of Object.entries(process.env)) if (ENV_PASS.has(k) || k.startsWith('LC_')) env[k] = v;
+  for (const [k, v] of Object.entries(process.env)) if (ENV_PASS.has(k) || k.startsWith('LC_') || (host === 'github.a8c.com' && ENTERPRISE_TOKENS.includes(k))) env[k] = v;
   return env;
 };
 
@@ -63,7 +69,7 @@ function graphql(host, query, vars) {
   const args = [...pre, 'api', 'graphql', ...(host === 'github.com' ? [] : ['--hostname', host]), '-f', `query=${query}`];
   for (const [k, v] of Object.entries(vars)) args.push(k === 'number' ? '-F' : '-f', `${k}=${v}`);
   const ms = timeoutMs();
-  const r = spawnSync(cmd, args, { env: childEnv(), encoding: 'utf8', timeout: ms, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  const r = spawnSync(cmd, args, { env: childEnv(host), encoding: 'utf8', timeout: ms, killSignal: 'SIGKILL', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
   if (r.error) {
     if (r.error.code === 'ETIMEDOUT') throw new FetchError(`gh timed out after ${ms} ms (PR_STATE_TIMEOUT_MS)`);
     if (r.error.code === 'ENOENT') throw new FetchError(`cannot run ${cmd === 'gh' ? 'gh' : `gh via PR_STATE_GH (${cmd})`}: not found on PATH`);
@@ -148,12 +154,17 @@ function classify(pr, threads, rollup, checks) {
 // ---- main ---------------------------------------------------------------------------------------------
 
 function inspect(url) {
-  const [, host, owner, name, number] = URL_RE.exec(url);
+  const [, rawHost, owner, name, number] = URL_RE.exec(url);
+  const host = rawHost.toLowerCase();
   const vars = { owner, name, number };
   const pr = graphql(host, QUERY, vars);
   const threads = allNodes(pr.reviewThreads, (after) => graphql(host, QUERY_THREADS, { ...vars, after }).reviewThreads);
   const rollup = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup ?? null;
-  const checks = rollup ? allNodes(rollup.contexts, (after) => graphql(host, QUERY_CHECKS, { ...vars, after }).commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts) : [];
+  const checks = rollup ? allNodes(rollup.contexts, (after) => {
+    const next = graphql(host, QUERY_CHECKS, { ...vars, after });
+    if (next.headRefOid !== pr.headRefOid) throw new FetchError(`head changed while paging checks (${pr.headRefOid} then ${next.headRefOid}); run again`);
+    return next.commits?.nodes?.[0]?.commit?.statusCheckRollup?.contexts;
+  }) : [];
   const { tier, signals } = classify(pr, threads, rollup, checks);
   return { url, head: pr.headRefOid, mergeStateStatus: pr.mergeStateStatus, tier, ...signals };
 }
@@ -161,7 +172,9 @@ function inspect(url) {
 function main(urls) {
   if (!urls.length) { process.stderr.write('usage: pr-state.mjs <pr-url>...\n'); return 2; }
   const bad = urls.find((u) => !URL_RE.test(u));
-  if (bad !== undefined) { process.stderr.write(`pr-state: not a pull request URL: ${JSON.stringify(bad)}\nusage: pr-state.mjs https://<host>/<owner>/<repo>/pull/<n>...\n`); return 2; }
+  if (bad !== undefined) { process.stderr.write(`pr-state: not a pull request URL: ${JSON.stringify(bad)}\nusage: pr-state.mjs https://github.com|github.a8c.com/<owner>/<repo>/pull/<n>...\n`); return 2; }
+  const stranger = urls.find((u) => !HOSTS.has(URL_RE.exec(u)[1].toLowerCase()));
+  if (stranger !== undefined) { process.stderr.write(`pr-state: host not allowed in ${JSON.stringify(stranger)}; only github.com and github.a8c.com\n`); return 2; }
   const codes = [];
   for (const url of urls) {
     try {
