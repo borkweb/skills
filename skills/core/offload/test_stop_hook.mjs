@@ -20,11 +20,9 @@ const NODE = process.execPath;
 const BOX = mkdtempSync(join(tmpdir(), 'ofl-stop-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 
+// An allowlisted child env (PATH, HOME, TMPDIR, the ledger dir), never the ambient one.
 const envFor = (session) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.HERDR_ENV;
-  delete env.BORK_RUN_DIR;
+  const env = { PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), AGENT_HANDOFFS_DIR: BOX };
   if (session) env.CLAUDE_CODE_SESSION_ID = session;
   return env;
 };

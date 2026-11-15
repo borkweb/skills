@@ -247,14 +247,12 @@ function stopHookChoosesEnvDir(envDir) {
 
 test('C14b: for every truth-table row the builder env agrees with the Stop hook’s envRunDir', () => {
   for (const row of ROWS) {
-    const [name] = row;
-    const dir = rowDir(row);
+    const [name, , make] = row;
+    // the Stop hook only counts a complete schema-1 record as needs-me, so each row writes one
+    const full = (d) => { if (make) { make(d); const f = join(d, 'run.json'); try { const j = JSON.parse(readFileSync(f, 'utf8')); writeFileSync(f, JSON.stringify({ ...RUN_FIELDS(j.state), ...j })); } catch { /* missing or unreadable stays so */ } } };
+    const dir = rowDir([name, false, make ? (d) => full(d) : null]);
     const { env } = dispatchHeadless('claude', dir);
-    const hook = (() => {
-      // the Stop hook needs a valid schema-1 record to see a needs-me run, so its needs-me row uses one
-      if (name === 'needs-me') { const d = validRun(`row-${rowN}`, 'needs-me'); return stopHookChoosesEnvDir(d); }
-      return stopHookChoosesEnvDir(dir);
-    })();
+    const hook = stopHookChoosesEnvDir(dir);
     assert.equal(env.has('BORK_RUN_DIR'), hook, `${name}: builder env ${env.has('BORK_RUN_DIR')} vs Stop hook ${hook}`);
   }
 });
