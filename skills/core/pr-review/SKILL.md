@@ -22,19 +22,13 @@ allowed-tools:
 
 # PR Review (comment-first)
 
-You are running `/pr-review`. This is a **superset of `bork:review`**: same
-analysis, different disposition. `bork:review` reports findings by default and
-only fixes them when authorized. This skill puts the findings *on the PR*, where
-the author sees them, and asks up front whether to authorize local mechanical
-fixes.
-
-Two things make it a superset rather than a rename:
-
-1. **A second reviewer when the diff needs one.** The harness you invoked from
-   runs `bork:review`; the other harness runs an independent pass over the same
-   tree. Neither sees the other's findings until they're merged.
-2. **Findings become PR comments,** with applyable suggestion blocks, instead of
-   silent edits.
+You are running `/pr-review`, a **superset of `bork:review`**: same analysis,
+different disposition. `bork:review` reports findings and fixes them only when
+authorized. This skill puts the findings *on the PR* as comments with applyable
+suggestion blocks, where the author sees them, and asks up front whether to
+authorize local mechanical fixes. When the diff needs one, the other harness
+runs an independent second pass over the same tree. Neither pass sees the
+other's findings until they're merged.
 
 This file covers the common path. Some cases have their own file in
 `references/`. Each step says when to read one. Read it then, not before.
@@ -51,7 +45,8 @@ This file covers the common path. Some cases have their own file in
 | [setup.md](references/setup.md) | Step 0 starts (every run), or Step 2b finds the PR behind its base |
 | [worktree.md](references/worktree.md) | Step 2 sets up a worktree, or Step 7 removes one |
 | [host-contract.md](references/host-contract.md) | Step 3b dispatches the host pass, or a REQUIRED peer needs its brief |
-| [posting.md](references/posting.md) | Step 5a keeps at least one finding to anchor, show and post |
+| [posting.md](references/posting.md) | Step 5a starts with a merged finding to drop, verify, anchor, show and post |
+| [staleness.md](references/staleness.md) | Step 2b finds `<behind>` above `0` |
 
 ---
 
@@ -116,20 +111,17 @@ This overrides any conflicting instruction in the skills this one calls.
   `git checkout <file>`, `git restore`.
 - Approving, requesting changes on, or merging the PR.
 - Posting anything to the PR that the user has not seen and confirmed.
-- Editing anything in COMMENT-ONLY mode. Full stop.
+- Editing anything in COMMENT-ONLY mode.
 - In AUTO-FIX mode: touching files outside the diff under review, applying a fix
   for a finding classified ASK rather than AUTO-FIX, or applying a fix the user
   wasn't told about in the summary.
 
 If a request arrives outside this list — "go ahead and commit those fixes" — say
 it's out of scope for `/pr-review` in one line and point at the skill that does
-it. Don't half-do it.
-
-| Request | Skill |
-|---|---|
-| "Fix it until it's safe to land", "keep going until it's ready" | `bork:do` (its **land** pipeline) |
-| "Commit those fixes" | `bork:writing-commits` |
-| A deeper security audit of one area | `bork:review-security` |
+it. Don't half-do it. "Fix it until it's safe to land" or "keep going until it's
+ready" goes to `bork:do` (its **land** pipeline), "commit those fixes" to
+`bork:writing-commits`, and a deeper security audit of one area to
+`bork:review-security`.
 
 **The human-in-the-loop line**
 
@@ -161,18 +153,15 @@ anything else.
 | `--prepare-only <dir>` | Run as one lane of a `bork:do` batch: prepare the review in `<dir>` and stop before Step 5b. **Read [batch.md](references/batch.md) now.** It overrides Steps 0–7 where they differ. |
 
 **Read [setup.md](references/setup.md) now,** before running anything else. Its
-Step 0 section holds the commands and the six things to work out: the harness,
-the GitHub host, the PR, the repo match, the earlier reviews and the prefetch.
-The prefetch starts in the background before the Step 1 questions.
+Step 0 section holds the commands and the six things to work out. The prefetch
+starts in the background before the Step 1 questions.
 
 ---
 
 ## Step 1: The one set of questions
 
 Everything this skill asks about *how it should work*, it asks now, in a single
-batch. After this it runs to completion and only stops for the Step 5 post
-confirmation, which is about what goes on someone's PR, not about how the
-review runs.
+batch.
 
 In Claude, one `AskUserQuestion` call carrying all the questions. Not two
 rounds. **Skip any question a Step 0 flag already answers.** If flags answer all
@@ -180,9 +169,8 @@ of them, skip the questions and state the answers in one line. The two rules
 below still apply, whether an answer came from the user or a flag.
 
 **Once the mode is AUTO-FIX, read [auto-fix.md](references/auto-fix.md)
-before Step 2.** It changes Steps 1, 2, 3b, 3c, 3d, 4 and 7. Its AUTO-FIX +
-worktree warning applies to flags too: with `--auto-fix --worktree`, keep the
-worktree at the end and hand back a patch, and say so in one line.
+before Step 2.** It changes Steps 1, 2, 3b, 3c, 3d, 4 and 7, and says what to
+do for `--auto-fix --worktree`.
 
 **Question 1 — Fix mode.**
 
@@ -244,21 +232,14 @@ git rev-list --left-right --count <headRefOid>...<base-sha>
 ```
 
 **2. Staleness.** The last output is `<ahead> <behind>`. `<behind>` counts base
-commits the PR does not contain. If it is `0`, the status is **CURRENT**.
+commits the PR does not contain. If it is `0`, the status is **CURRENT** and
+nothing changes.
 
 Otherwise, follow the Step 2b section of [setup.md](references/setup.md) to
-find the files both sides changed and to test the merge. Then set the status:
-
-| Status | Condition | Effect |
-|---|---|---|
-| **CURRENT** | `<behind>` is `0` | None |
-| **BEHIND** | Behind, no overlapping files | Note the count in the summary |
-| **OVERLAP** | Overlapping files, clean merge | Reviewers check the PR against the base versions of those files; verdict is at most LAND WITH CAUTION |
-| **CONFLICT** | `merge-tree` exits `1` | Verdict is DO NOT LAND — the merged result has not been reviewed |
-
-A clean textual merge on an overlapping file can still break: the base can
-rename a function the PR calls, or change a contract the PR relies on. That is
-what OVERLAP exists to catch.
+find the files both sides changed and to test the merge. Then **read
+[staleness.md](references/staleness.md) now** to set the status. Step 7 applies
+it as a cap: CONFLICT means DO NOT LAND, and OVERLAP means at most LAND WITH
+CAUTION.
 
 **3. Scope — FULL or INCREMENTAL.** The scope is **FULL**, with `<scope-base>`
 set to `<merge-base>`, unless Step 0 found `<last-reviewed>` and the user didn't
@@ -271,11 +252,11 @@ The peer is **REQUIRED** when the diff makes nontrivial auth, payment or
 security changes, adds a new external integration, changes more than 200 lines,
 or the user passed `--peer`. Otherwise it is **SKIPPED**.
 
-- Using the same rule as `bork:review` matters. Its SAFE TO LAND gate requires
-  an independent review when those conditions hold, so a looser skip rule would
+- Use `bork:review`'s rule exactly: its SAFE TO LAND gate requires an
+  independent review when those conditions hold, so a looser skip rule would
   turn a skipped peer into missing evidence.
 - `--solo` skips the peer even when it is REQUIRED. Say in one line that the
-  verdict will then cap at DO NOT LAND for missing independent review.
+  verdict will cap at DO NOT LAND for missing independent review.
 - State the decision in one line: *"Peer: skipped — 38 changed lines, no auth,
   payment, security or new integration. Re-run with `--peer` to force it."*
 - **If the peer is REQUIRED, read [peer.md](references/peer.md) now.** It
@@ -293,20 +274,13 @@ other harness.
   posts everything.
 - **Peer** = the other harness, driven headless over its CLI. It reviews the same
   tree independently and returns findings. **It never posts, never asks the user
-  anything, and never writes to the repo — in either fix mode.**
+  anything, and never writes to the repo — in either fix mode.** Don't show it
+  the host's findings.
 
-Two models reading the same diff cold catch different things; that's the whole
-reason for the second pass, so don't show the peer the host's findings.
-
-**The work runs concurrently. This is not an optimization to apply when
-convenient — it is the step order.** The peer launches first, detached, in 3a,
-and the checks start right after it; the host pass runs while both work in 3b;
-3c joins all three. Run sequentially and the review takes as long as the passes
-added together, for no gain — they share nothing.
-
-Never wait on the peer before starting the host pass. If you catch yourself
-holding a completed peer result while the host pass hasn't started, you've
-serialized it — start the host pass now.
+The work runs concurrently, and that is the step order: 3a starts the checks, 3b
+runs the host pass while they work, and 3c joins them. With a peer, it launches
+first and the order is stricter; the Step 3 section of
+[peer.md](references/peer.md) holds that rule.
 
 ### Step 3a: Launch the peer, then the checks
 
@@ -343,8 +317,8 @@ runs, as [incremental.md](references/incremental.md) describes.
 
 ### Step 3c: Join — peer, checks, host
 
-Only now do you wait. The host pass is done; the peer and the checks have had
-that whole time to work. If the peer ran, join it as
+Only now do you wait: the peer and the checks have had the whole host pass to
+work. If the peer ran, join it as
 [peer.md](references/peer.md) describes.
 
 **The checks.** For a CI check still pending, and for each local run, follow
@@ -405,78 +379,44 @@ worth nothing.
 Split the merged findings into CRITICAL and INFORMATIONAL. Auto-fixed items are
 neither — they go in the summary, not on the PR.
 
-**Drop on proof, not on judgment.** Re-read the hunk around each finding before
-you keep it. A finding leaves the list on two grounds only: a line of the diff
-literally contradicts its central claim with no chain of reasoning (the check it
-calls missing is added in a later hunk; the value it calls hardcoded is read from
-config), or its `EVIDENCE` quote is not in the file and a re-read finds nothing
-to anchor. "Unlikely", "cannot verify" and "minor" are not grounds: an
-unconfirmed finding becomes a `LEAD` with what would confirm it, and value is
-the user's call in 5b, not yours here. Findings on protected subjects are never
-dropped, only kept or demoted to a `LEAD` that quotes the contradicting line:
-memory or bounds safety, concurrency, declaration or linkage consistency, a
-behavior or compatibility change (a message, field, status, default or error
-path the old code produced and the new code does not), an unused parameter, and
-the checklist's forced-CRITICAL classes (data loss, trust-boundary bypass,
-uncapped spend). A wrong finding on a PR costs the author minutes; a right one
-dropped is destroyed silently, and nobody learns that it was.
+**Read [posting.md](references/posting.md) now** when the merged list has a
+finding in it. Its Step 5a sections cover dropping on proof, checking each
+`EVIDENCE` line, the anchor check, the comment body and the ASD-STE100 rules for
+all PR prose.
+
+**Drop on proof, not on judgment.** Only the two grounds in posting.md remove a
+finding. An unconfirmed finding becomes a `LEAD`, and value is the user's call
+in 5b, not yours here. Findings on protected subjects are never dropped, only
+kept or demoted to a `LEAD` that quotes the contradicting line.
 
 **Don't post anything already on the PR.** Compare each finding with
-`existing-comments.jsonl`: the same `path`, a line within a few of `line` (or of
-`original_line`, because an outdated comment has `line: null`), and the same
-problem. Also compare with the bodies in `earlier-reviews.jsonl`, which hold
-the findings that couldn't go inline. If an earlier `/pr-review` comment
-matches, don't post the finding again; note the existing URL. If another
+`existing-comments.jsonl` and the bodies in `earlier-reviews.jsonl`, by the
+matching rule in posting.md. If an earlier `/pr-review` comment matches, don't
+post the finding again; note the existing URL. If another
 reviewer already raised it, don't post it either; list it in chat as already
 raised, with the URL. **A duplicate stays in the findings list.** Not posting it
 doesn't resolve it: a duplicate CRITICAL finding still counts as unresolved in
 Step 7.
 
-**Check every `EVIDENCE` line against the file.** Search for the quoted line in
-`<file>` at `<headRefOid>`, or at `<merge-base>` for a `LEFT` finding. If the
-quote isn't in the file, the reviewer misread the code: re-read the code, then
-correct the finding or demote it to a lead. The quote also confirms the anchor:
-`LINE` must point at the quoted line. A `SOURCE: check` finding with
-`FILE: none` is verified by its check result instead.
-
-**Before you anchor the first finding, read [posting.md](references/posting.md).**
-Its Step 5a section covers the anchor check, the comment body and the
-ASD-STE100 rules for all PR prose.
+**Check every `EVIDENCE` line against the file,** as posting.md describes, before
+you anchor the finding.
 
 ### 5b: Show, then confirm once
 
 Show everything that could go on the PR, then ask once. The critical comments
 and the informational choice share one confirmation, and the result is one
-review.
-
-Print every planned comment exactly as it will appear, in the formats in the
-Step 5b section of [posting.md](references/posting.md): the critical comments
-first, then the INFORMATIONAL findings, numbered and grouped by source.
-
-Then one `AskUserQuestion` call with up to two questions. Leave out a question
-that has nothing to ask about. With no critical and no informational findings,
-there is nothing to post: skip to Step 6.
-
-- **Critical comments** — *Post* or *Cancel*. The user edits a comment through
-  the free-text answer.
-- **Informational findings** (single-select) — *My recommendation (#1, #4)*,
-  *All <n>*, *None*. The user types other numbers through the free-text answer.
-  Say which you'd post and why in one line; they're informational precisely
-  because reasonable people would leave some of them off a PR.
+review. With no critical and no informational findings, there is nothing to
+post: skip to Step 6. Otherwise print and ask as the Step 5b section of
+[posting.md](references/posting.md) says.
 
 Don't re-litigate the answer. Cancel posts nothing, informational findings
 included.
 
 ### 5c: Post
 
-Build the payload and post it as a *single* COMMENT review — one notification for
-the author, not one per finding. It holds the critical comments and the chosen
-informational ones, with bodies labeled `**INFORMATIONAL — <title>**`. The
-informational ones follow the same anchor, duplicate and ASD-STE100 rules. The
-hidden marker on the first line lets the next run find this review in Step 0.
-
-The payload format and the `gh api` call are in the Step 5c section of
-[posting.md](references/posting.md).
+Post the critical comments and the chosen informational ones as a *single*
+COMMENT review. The payload format and the `gh api` call are in the Step 5c
+section of [posting.md](references/posting.md).
 
 **`event` is always `COMMENT`.** Never `REQUEST_CHANGES` — this skill leaves a
 review gate on nobody's PR — and never `APPROVE`.
@@ -541,10 +481,9 @@ to **LAND WITH CAUTION**. A cap never raises a verdict. Say plainly that the
 verdict describes the PR as it stands, not as it would stand once the
 suggestions are applied.
 
-**When the verdict isn't SAFE TO LAND**, name the next step in one line. Don't
-start it. `bork:do` runs its **land** pipeline to fix the PR until it is safe to
-land. Give it the unresolved CRITICAL findings as its starting blockers, so it
-checks the same bar this review used.
+**When the verdict isn't SAFE TO LAND**, name the next step in one line and
+don't start it: `bork:do`'s **land** pipeline, with the unresolved CRITICAL
+findings as its starting blockers, so it checks the same bar this review used.
 
 **Cleanup.** If you created a worktree in Step 2, or local checks created one at
 the merge-base, follow the Step 7 section of

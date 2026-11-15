@@ -51,7 +51,7 @@ errors << 'duplicate skill names' unless names.uniq == names
 SIZE_BUDGET = 20_000
 SIZE_ALLOWLIST = {
   'skills/core/offload/SKILL.md' => 24_094,
-  'skills/core/pr-review/SKILL.md' => 27_678
+  'skills/core/pr-review/SKILL.md' => 23_994
 }.freeze
 notes = []
 skill_files = paths.map { |path| root.join(path, 'SKILL.md').relative_path_from(root).to_s }

@@ -4,6 +4,21 @@ Read this file when Step 2b records the peer as **REQUIRED**. If the host is
 Codex, launch with [codex-host.md](codex-host.md) instead of the command below,
 and use this file for the brief and the merge.
 
+## Step 3: Run the passes concurrently
+
+Two models reading the same diff cold catch different things; that's the whole
+reason for the second pass, so don't show the peer the host's findings.
+
+**The work runs concurrently. This is not an optimization to apply when
+convenient — it is the step order.** The peer launches first, detached, in 3a,
+and the checks start right after it; the host pass runs while both work in 3b;
+3c joins all three. Run sequentially and the review takes as long as the passes
+added together, for no gain — they share nothing.
+
+Never wait on the peer before starting the host pass. If you catch yourself
+holding a completed peer result while the host pass hasn't started, you've
+serialized it — start the host pass now.
+
 ## Step 3a: Launch
 
 Start the peer **before** the host pass and do not block on it. Point it at the
@@ -110,8 +125,9 @@ Combine the host and peer findings into one list before triage:
    rather than discounting it for being unseconded. If the two assigned different
    severities, take the higher one and note the split.
 5. **Drop on proof only.** A finding leaves the merged list on the two grounds
-   in Step 5a and no other; one you cannot confirm becomes a `LEAD`. On a
-   protected subject (Step 5a's list) it is demoted, never dropped.
+   in [posting.md](posting.md)'s Step 5a drop section and no other; one you
+   cannot confirm becomes a `LEAD`. On a protected subject (that section's list)
+   it is demoted, never dropped.
 
 Agreement raises confidence; it is not a vote, and a solo finding is not
 outvoted. The point of the second pass is coverage.

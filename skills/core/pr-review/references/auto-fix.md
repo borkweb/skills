@@ -12,6 +12,9 @@ options — run in place instead, or keep the worktree at the end and hand back 
 patch — and go with what they pick. Silently losing the fixes is the failure
 mode here, and it looks like success right up until it doesn't.
 
+With `--auto-fix --worktree` there is nobody to ask: keep the worktree at the
+end and hand back a patch, and say so in one line.
+
 ## Step 2: Recommend in place
 
 In AUTO-FIX mode, recommend **in place** even when the worktree rules would

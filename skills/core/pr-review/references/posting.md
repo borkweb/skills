@@ -1,7 +1,41 @@
-# Anchor, show and post
+# Triage, anchor, show and post
 
-Read this file when Step 5a keeps at least one finding, before you anchor it.
-Each section names the step it belongs to.
+Read this file when Step 5a starts with at least one merged finding, before you
+drop, verify or anchor any. Each section names the step it belongs to.
+
+## Step 5a: Drop on proof
+
+Re-read the hunk around each finding before you keep it. A finding leaves the
+list on two grounds only: a line of the diff literally contradicts its central
+claim with no chain of reasoning (the check it calls missing is added in a later
+hunk; the value it calls hardcoded is read from config), or its `EVIDENCE` quote
+is not in the file and a re-read finds nothing to anchor. "Unlikely", "cannot
+verify" and "minor" are not grounds: an unconfirmed finding becomes a `LEAD` with
+what would confirm it, and value is the user's call in 5b, not yours here.
+Findings on protected subjects are never dropped, only kept or demoted to a
+`LEAD` that quotes the contradicting line: memory or bounds safety, concurrency,
+declaration or linkage consistency, a behavior or compatibility change (a
+message, field, status, default or error path the old code produced and the new
+code does not), an unused parameter, and the checklist's forced-CRITICAL classes
+(data loss, trust-boundary bypass, uncapped spend). A wrong finding on a PR
+costs the author minutes; a right one dropped is destroyed silently, and nobody
+learns that it was.
+
+## Step 5a: Check every `EVIDENCE` line
+
+Search for the quoted line in `<file>` at `<headRefOid>`, or at `<merge-base>`
+for a `LEFT` finding. If the quote isn't in the file, the reviewer misread the
+code: re-read the code, then correct the finding or demote it to a lead. The
+quote also confirms the anchor: `LINE` must point at the quoted line. A
+`SOURCE: check` finding with `FILE: none` is verified by its check result
+instead.
+
+## Step 5a: Match a finding against comments already on the PR
+
+Compare each finding with `existing-comments.jsonl`: the same `path`, a line
+within a few of `line` (or of `original_line`, because an outdated comment has
+`line: null`), and the same problem. Also compare with the bodies in
+`earlier-reviews.jsonl`, which hold the findings that couldn't go inline.
 
 ## Step 5a: Anchor and write each comment
 
@@ -96,7 +130,23 @@ Design (1)
   ...
 ```
 
+Then one `AskUserQuestion` call with up to two questions. Leave out a question
+that has nothing to ask about.
+
+- **Critical comments** — *Post* or *Cancel*. The user edits a comment through
+  the free-text answer.
+- **Informational findings** (single-select) — *My recommendation (#1, #4)*,
+  *All <n>*, *None*. The user types other numbers through the free-text answer.
+  Say which you'd post and why in one line; they're informational precisely
+  because reasonable people would leave some of them off a PR.
+
 ## Step 5c: The payload and the call
+
+Post one COMMENT review: one notification for the author, not one per finding.
+It holds the critical comments and the chosen informational ones, with bodies
+labeled `**INFORMATIONAL — <title>**`. The informational ones follow the same
+anchor, duplicate and ASD-STE100 rules. The hidden marker on the first line lets
+the next run find this review in Step 0.
 
 ```jsonc
 // <scratchpad>/pr-review-payload.json
