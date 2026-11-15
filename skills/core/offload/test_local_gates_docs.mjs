@@ -55,7 +55,7 @@ test('C9f: the freeze step says which gates to mark local, the syntax and the ti
   const where = [correctives, skill].find((t) => /L\d+: local: <command>/.test(t)) ?? '';
   assert.ok(where, 'a doc gives the exact syntax');
   assert.match(where, /test-resources/);
-  assert.match(where, /620/);
+  assert.match(where, /full suites are not local[^.]*120 s[^.]*hook/);
   assert.match(where, /not local/i);
   const code = readFileSync(HANDOFF, 'utf8').match(/LOCAL_GATE_TIMEOUT_S = (\d+)/)?.[1];
   assert.ok(code, 'the default timeout constant');
