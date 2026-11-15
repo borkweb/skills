@@ -1141,7 +1141,8 @@ test('C1b: the freeze copy and handoff.mjs read the same local lines (table, wit
 });
 
 test('C1b: the freeze and handoff.mjs both refuse the same malformed lines', () => {
-  for (const [what, lines] of [['empty command', ['L1: local:']], ['spaces only', ['L1: local:    ']], ['duplicate id', ['L1: local: true', 'L1: local: true']], ['no colon after local', ['L1: local true']]]) {
+  for (const [what, lines] of [['empty command', ['L1: local:']], ['spaces only', ['L1: local:    ']], ['duplicate id', ['L1: local: true', 'L1: local: true']], ['no colon after local', ['L1: local true']],
+    ['decorated id', ['**L1**: local: make']], ['backticked line', ['`L1: local: make`']], ['table row', ['| L1: local: make |']], ['bold list form', ['- **L1: local:** make']], ['Local in another case', ['L1: Local: make']]]) {
     const R = repo();
     const WT = join(BOX, `wt-bad-${what.replace(/\W/g, '')}`);
     const r = runFail([R, WT, `feat/bad-${what.replace(/\W/g, '')}`, blockFile(`bad-${what.replace(/\W/g, '')}.md`, blockWith(lines))]);
@@ -1242,4 +1243,20 @@ test('C9h: the dispatch-slice.sh header documents freezing local lines', () => {
   const head = readFileSync(SLICE, 'utf8').split('\nset -uo pipefail')[0];
   assert.match(head, /local: <command>/);
   assert.match(head, /malformed|empty command/);
+});
+
+test('K1: a near-miss local line in the block refuses the dispatch, naming the line: nothing launched, Frozen gates untouched', () => {
+  for (const line of ['**L1**: local: make', '`L1: local: make`', '| L1: local: make |', '- **L1: local:** make', 'L1: Local: make']) {
+    const R = repo();
+    const tag = Buffer.from(line).toString('hex').slice(0, 10);
+    const WT = join(BOX, `wt-near-${tag}`);
+    git(R, ['worktree', 'add', '-q', '-b', `feat/near-${tag}`, WT]);
+    const doc = hoff(['init', WT, 'arch', 'near']);
+    const before = frozenOf(doc);
+    const r = runFail([R, WT, `feat/near-${tag}`, blockFile(`near-${tag}.md`, blockWith([line]))]);
+    assert.notEqual(r.status, 0, line);
+    assert.ok(r.stderr.includes(line), `the refusal names the line: ${r.stderr}`);
+    assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
+    assert.equal(frozenOf(doc), before);
+  }
 });

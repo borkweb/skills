@@ -6,7 +6,7 @@
 // one fails, times out or cannot start. These cases drive the real CLI against real git
 // repos; the Stop hook runs the same runner (test_gate_hook.mjs).
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import test from 'node:test';
@@ -412,4 +412,73 @@ test('C11: the timeout knob is read by the runner only: a line cannot set it and
   const fx = readyFx(['sleep 2; exit 0']);
   const bad = ready(fx, { env: { OFFLOAD_LOCAL_GATE_TIMEOUT_S: 'nope' } });
   assert.equal(bad.code, 0, 'a non-numeric knob falls back to the default, not to a zero timeout');
+});
+
+// --- corrective r1 ----------------------------------------------------------------------
+// K1: a near-miss of a local line is refused with the line named, never silently skipped.
+test('K1: decorated, backticked, table-row, bold-list and wrong-case local lines are refused by ready, naming the line', () => {
+  const forms = ['**L1**: local: make', '`L1: local: make`', '| L1: local: make |', '- **L1: local:** make', 'L1: Local: make', 'L1: LOCAL: make', '`L1`: local: make'];
+  for (const line of forms) {
+    const repo = gitRepo();
+    const out = scratch();
+    const doc = mkGateDoc({ frozen: [line, L('L2', `touch ${out}/ran`)], head: repo.head, cwd: repo.dir });
+    const before = read(doc);
+    const r = cli(['ready', doc], { session: 's' });
+    refused(r, line);
+    assert.ok(r.err.includes(line.trim()), `the refusal names the line ${line}: ${r.err}`);
+    assert.equal(read(doc), before, line);
+    assert.ok(!existsSync(join(out, 'ran')), `${line}: no gate ran`);
+  }
+});
+
+test('K1: the lines that are not near-misses still pass: a lowercase id, a mid-line mention, a criterion line', () => {
+  const repo = gitRepo();
+  const doc = mkGateDoc({ frozen: ['l11: local: make', 'see L9: local: make', 'L12: runs locally'], head: repo.head, cwd: repo.dir });
+  assert.equal(cli(['ready', doc], { session: 's' }).code, 0);
+});
+
+// K2: the old-output sweep never follows a symlinked <doc>.gates and deletes only run directories.
+const daysAgo = (p, d) => { const t = new Date(Date.now() - d * 24 * 60 * 60 * 1000); utimesSync(p, t, t); };
+
+test('K2: a symlinked <doc>.gates is not swept: an old file and an old non-matching directory in its target survive', () => {
+  const fx = readyFx(['true']);
+  const target = scratch('linktarget');
+  writeFileSync(join(target, 'old-file.txt'), 'x');
+  mkdirSync(join(target, 'old-dir'));
+  writeFileSync(join(target, 'old-dir', 'inner.txt'), 'x');
+  daysAgo(join(target, 'old-file.txt'), 3); daysAgo(join(target, 'old-dir'), 3);
+  symlinkSync(target, `${fx.doc}.gates`);
+  assert.equal(ready(fx).code, 0);
+  assert.ok(existsSync(join(target, 'old-file.txt')), 'the old file in the symlink target was deleted');
+  assert.ok(existsSync(join(target, 'old-dir', 'inner.txt')), 'the old directory in the symlink target was deleted');
+});
+
+test('K2: in a real <doc>.gates only old run directories are swept; other old entries stay', () => {
+  const fx = readyFx(['true']);
+  const gates = `${fx.doc}.gates`;
+  mkdirSync(gates);
+  const oldRun = join(gates, '1700000000000-123-abcdef');
+  const oldOther = join(gates, 'notes');
+  const oldFile = join(gates, '1700000000001-124-abcdef');
+  mkdirSync(oldRun); mkdirSync(oldOther); writeFileSync(oldFile, 'a file with a run name');
+  for (const q of [oldRun, oldOther, oldFile]) daysAgo(q, 3);
+  assert.equal(ready(fx).code, 0);
+  assert.ok(!existsSync(oldRun), 'an old run directory is swept');
+  assert.ok(existsSync(oldOther), 'an old non-matching directory was deleted');
+  assert.ok(existsSync(oldFile), 'an old file with a run-dir name is not a run directory');
+});
+
+// K4: no test in the new files spawns a child without an explicit env.
+test('K4: every child a new test file spawns passes an explicit env', () => {
+  const calls = /\b(spawnSync|spawn|execFileSync|execSync)\(/g;
+  for (const f of ['gate-fixture.mjs', 'test_local_gates.mjs', 'test_gate_hook.mjs', 'test_local_gates_docs.mjs']) {
+    const src = readFileSync(join(HERE, f), 'utf8');
+    for (const m of src.matchAll(calls)) {
+      const line = src.slice(0, m.index).split('\n').length;
+      if (/import /.test(src.slice(src.lastIndexOf('\n', m.index) + 1, m.index))) continue;
+      const rest = src.slice(m.index, m.index + 420);
+      const call = rest.slice(0, rest.search(/\)\s*(;|\)|,|$)/m) + 1 || rest.length);
+      assert.ok(/\benv\b/.test(rest.split(/\n\s*\n/)[0].slice(0, 420)), `${f}:${line} spawns without env: ${call.slice(0, 90)}`);
+    }
+  }
 });

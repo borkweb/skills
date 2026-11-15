@@ -130,3 +130,9 @@ test('C9j: SKILL.md stays within the size the allowlist held before this slice',
 });
 
 
+
+test('K3: the builder brief states the dirty-tree refusal with its condition', () => {
+  const line = template.split('\n').find((l) => /uncommitted changes/.test(l)) ?? '';
+  assert.ok(line, 'a line names the dirty-tree refusal');
+  assert.match(line, /When the slice has local gates, it also refuses/);
+});
