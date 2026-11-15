@@ -12,7 +12,7 @@ A brief carries a step's inputs to an agent. Handoffs are fast because briefs ar
 - **Inputs**: paths to the spec, prior findings, `decisions.md`, and the absolute `repo-rules-<slice>/` path once the spec reviewer has recorded it ([repo-rules.md](repo-rules.md)).
 - **Return**: the output format below, written to an absolute result path under the run directory.
 - **Probes**: an agent that runs a probe or hostile test input writes it to a file in its scratch directory with the file-write tool, never as a shell heredoc, because a data line that matches the delimiter ends the heredoc and the shell runs the rest. It runs probes from that scratch directory, never from the user's checkout, and sends no request to a real external host.
-- **Waits**: a subagent never ends its turn to wait and never starts a background waiter, because its own background task does not wake it once its turn ends. When it needs CI or a shared resource, it writes the need where the host watches (`waiting.md` in **land batch**) and returns. A message from the host wakes it.
+- **Waits**: a subagent never ends its turn to wait and never starts a background waiter, because its own background task does not wake it once its turn ends. When it needs CI or a shared resource, it writes the need where the host watches (`waiting.md` in **land batch**, with `ci <n>` for the nth CI run on a head) and returns. A message from the host wakes it.
 
 ## Reviewer
 
