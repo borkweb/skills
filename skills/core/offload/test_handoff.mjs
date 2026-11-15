@@ -19,13 +19,11 @@ process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 // reads $CLAUDE_CODE_SESSION_ID. Pass { session } to control it; omit to run
 // with no session in the env (to exercise the empty-id guard). { env } adds the
 // variables a dispatched builder carries ($OFFLOAD_HANDOFF, $OFFLOAD_SESSION_ID).
-// Both are cleared first, so a suite run inside a builder stays hermetic.
+// The env is built from PATH, HOME, TMPDIR and the test's own variables, so a suite
+// run inside a builder stays hermetic: nothing ambient reaches the CLI.
+const baseEnv = () => ({ PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), AGENT_HANDOFFS_DIR: BOX });
 const run = (args, { session, env: extra = {} } = {}) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.CODEX_SESSION_ID;
-  delete env.OFFLOAD_HANDOFF;
-  delete env.OFFLOAD_SESSION_ID;
+  const env = baseEnv();
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
   Object.assign(env, extra);
   return execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env }).trim();
@@ -49,7 +47,7 @@ const repo = (name) => join(BOX, `repo-${name}`);
 // A git repo with one commit. `ready` checks a doc's `Head:` line against the
 // HEAD of the worktree its `cwd:` names, so a doc that must reach results-ready
 // needs a real repo there. git() commits with a fixed identity and no signing.
-const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+const GIT_ENV = { PATH: process.env.PATH, HOME: BOX, TMPDIR: tmpdir(), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t', GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
 const git = (dir, ...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env: GIT_ENV }).trim();
 const commit = (dir, msg) => { git(dir, 'commit', '-q', '--allow-empty', '-m', msg); return git(dir, 'rev-parse', 'HEAD'); };
 const gitRepo = (name) => {
@@ -439,8 +437,7 @@ test('updateDoc retries on a concurrent write instead of dropping it, and leaves
 
 // spawnSync keeps the exit code, stdout and stderr together, which runFail() drops.
 const cli = (args, { session, env: extra = {} } = {}) => {
-  const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
-  for (const k of ['CLAUDE_CODE_SESSION_ID', 'CODEX_SESSION_ID', 'OFFLOAD_HANDOFF', 'OFFLOAD_SESSION_ID']) delete env[k];
+  const env = baseEnv();
   if (session !== undefined) env.CLAUDE_CODE_SESSION_ID = session;
   Object.assign(env, extra);
   const r = spawnSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env });

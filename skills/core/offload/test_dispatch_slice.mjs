@@ -59,13 +59,13 @@ writeFileSync(BLOCK, 'Execute the nav slice in the worktree.\nAcceptance: 3 crit
 const FIX = join(BOX, 'fix.md');
 writeFileSync(FIX, 'Corrective: blocker B1 token leak; blocker B2 missing test.\n');
 
-// Hermetic: run-dir and round-cap settings from the architect that runs these tests must not leak in.
-const AMBIENT_DROPPED = ['BORK_RUN_DIR', 'OFFLOAD_UNATTENDED_TURN', 'OFFLOAD_ROUND_CAP'];
-const ambientEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => !AMBIENT_DROPPED.includes(k)));
+// Hermetic: the child env is an allowlist (PATH, HOME, TMPDIR and this test's own
+// variables), never the ambient one, so the architect's BORK_RUN_DIR, run
+// registry, round cap or session ids cannot reach a dispatch.
 const env = (extra = {}) => ({
-  ...ambientEnv(),
+  PATH: TEST_PATH, HOME: BOX, TMPDIR: tmpdir(),
   AGENT_HANDOFFS_DIR: BOX, CLAUDE_CODE_SESSION_ID: 'arch', BORKWEB_SKILLS_CONFIG: CONFIG,
-  HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '', PATH: TEST_PATH, ...extra,
+  HERDR_ENV: '1', HERDR_WORKSPACE_ID: 'w3', TMUX: '', ...extra,
 });
 const hoff = (args) => execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env: env() }).trim();
 const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...env(), GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
@@ -207,7 +207,7 @@ test('corrective into a warm builder: no new tab, the brief goes into the pane, 
   // The builder finished and reported; its process is still at the prompt.
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
   finish(doc);
-  hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak (unnamed)']);
+  hoff(['ledger', 'set', R, '2', '--state', 'rejected', '--verdict', 'review = do not land: token leak (unnamed) checkable: no']);
 
   const { stdout, log } = run([R, WT, 'feat/warm2', FIX, '--id', '2', '--corrective']);
   assert.doesNotMatch(log, /tab create/, 'no second builder was launched');
@@ -233,10 +233,10 @@ test('corrective after results records the rejection with its verdict; a follow-
   writeFileSync(`${doc}.builder`, `${process.pid}\n`);
   finish(doc);
   hoff(['ledger', 'set', R, '4', '--state', 'results-ready']);
-  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint']);
   let s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
-  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3)');
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint');
 
   hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
   run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective']);
@@ -248,10 +248,10 @@ test('corrective after results records the rejection with its verdict; a follow-
   // ledger recorded none of them).
   finish(doc);
   hoff(['ledger', 'set', R, '4', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
-  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'security review = DO NOT LAND: lockout guard fails open (unnamed)']);
+  run([R, WT, 'feat/verdict', FIX, '--id', '4', '--corrective', '--verdict', 'security review = DO NOT LAND: lockout guard fails open (unnamed) checkable: test']);
   s = JSON.parse(hoff(['ledger', 'show', R])).slices[0];
   assert.deepEqual(s.history.slice(-3).map((h) => h.state), ['accepted', 'rejected', 'dispatched']);
-  assert.equal(s.history.at(-2).verdict, 'security review = DO NOT LAND: lockout guard fails open (unnamed)');
+  assert.equal(s.history.at(-2).verdict, 'security review = DO NOT LAND: lockout guard fails open (unnamed) checkable: test');
 });
 
 test('corrective from unjudged results without a verdict is refused and leaves the brief alone', () => {
@@ -446,10 +446,40 @@ function reported(branch) {
 
 test('a one-slice corrective records --verdict', () => {
   const { R, WT } = reported('feat/c1');
-  run([R, WT, 'feat/c1', FIX, '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3)']);
+  run([R, WT, 'feat/c1', FIX, '--corrective', '--verdict', 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint']);
   const s = row(R, '1');
   assert.deepEqual(s.history.map((h) => h.state), ['specced', 'dispatched', 'results-ready', 'rejected', 'dispatched']);
-  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3)');
+  assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint');
+});
+
+// X1: a review-only verdict without `checkable:` is refused on every corrective
+// path that records a rejection, before the brief changes or anything is sent.
+for (const [label, prep] of [
+  ['results-ready', () => {}],
+  ['accepted', (R) => hoff(['ledger', 'set', R, '1', '--state', 'accepted', '--verdict', 'SAFE TO LAND'])],
+]) {
+  test(`C1c: --corrective --verdict without a checkable tag is refused on a ${label} row`, () => {
+    const { R, WT, doc } = reported(`feat/x1-${label}`);
+    prep(R);
+    const before = hoff(['section', 'get', doc, 'Next slice']);
+    const ledgerBefore = readFileSync(hoff(['ledger', 'path', R]));
+    const r = runFail([R, WT, `feat/x1-${label}`, FIX, '--corrective', '--verdict', 'DO NOT LAND unnamed: x']);
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /checkable: <tool>/);
+    assert.match(r.stderr, /checkable: no/);
+    assert.equal(r.log, '', 'nothing was sent and nothing was launched');
+    assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'Next slice unchanged');
+    assert.equal(row(R, '1').state, label);
+    assert.ok(ledgerBefore.equals(readFileSync(hoff(['ledger', 'path', R]))), 'ledger bytes unchanged');
+  });
+}
+
+test('C1d: --corrective --verdict accepts checkable: <tool>, checkable: no and checkable:lint', () => {
+  for (const [i, tag] of ['checkable: grep-ratchet', 'checkable: no', 'checkable:lint'].entries()) {
+    const { R, WT } = reported(`feat/x1-ok-${i}`);
+    run([R, WT, `feat/x1-ok-${i}`, FIX, '--corrective', '--verdict', `review = DO NOT LAND: x (unnamed) ${tag}`]);
+    assert.equal(row(R, '1').history.find((h) => h.state === 'rejected').verdict.endsWith(tag), true, tag);
+  }
 });
 
 test('a corrective without --id applies to the most recently updated row with this handoff', () => {
@@ -566,29 +596,14 @@ test('a round-cap refusal re-run with the same --verdict plus --past-cap succeed
   assert.match(s.note, /corrective verdict: g4 failed/, 'and the verdict is not replaced by it');
 });
 
-test('an ambient OFFLOAD_ROUND_CAP and OFFLOAD_UNATTENDED_TURN do not reach the dispatch tests', () => {
-  const saved = { cap: process.env.OFFLOAD_ROUND_CAP, un: process.env.OFFLOAD_UNATTENDED_TURN };
-  process.env.OFFLOAD_ROUND_CAP = '0';
-  process.env.OFFLOAD_UNATTENDED_TURN = '1';
-  try {
-    const R = repo();
-    const WT = join(BOX, 'wt-ambientcap');
-    hoff(['ledger', 'init', R, 'g']);
-    run([R, WT, 'feat/ambientcap', BLOCK, '--id', '9', '--title', 'cap']);
-    for (let i = 1; i <= 3; i++) { // a leaked cap of 0 would refuse the first of these
-      hoff(['ledger', 'set', R, '9', '--state', 'results-ready']);
-      run([R, WT, 'feat/ambientcap', FIX, '--id', '9', '--corrective', '--verdict', `g${i} failed`]);
-    }
-    hoff(['ledger', 'set', R, '9', '--state', 'results-ready']);
-    const args = [R, WT, 'feat/ambientcap', FIX, '--id', '9', '--corrective', '--verdict', 'g4 failed'];
-    assert.match(runFail(args).stderr, /rejected 4 times \(cap 3\)/);
-    run([...args, '--past-cap', 'user: one more']); // a leaked unattended marker would refuse this
-    assert.equal(row(R, '9').state, 'dispatched');
-  } finally {
-    for (const [k, v] of [['OFFLOAD_ROUND_CAP', saved.cap], ['OFFLOAD_UNATTENDED_TURN', saved.un]]) {
-      if (v === undefined) delete process.env[k]; else process.env[k] = v;
-    }
-  }
+test('the dispatch env is an allowlist: no run pointer, round cap or session id beyond the test’s own', () => {
+  // Replaces the two cases that set an ambient OFFLOAD_ROUND_CAP, OFFLOAD_UNATTENDED_TURN
+  // and BORK_RUN_DIR in process.env and checked they did not leak. The env is now
+  // built from nothing ambient, so the leak cannot exist; C11c's sentinel run checks it.
+  assert.deepEqual(Object.keys(env()).sort(), [
+    'AGENT_HANDOFFS_DIR', 'BORKWEB_SKILLS_CONFIG', 'CLAUDE_CODE_SESSION_ID', 'HERDR_ENV',
+    'HERDR_WORKSPACE_ID', 'HOME', 'PATH', 'TMPDIR', 'TMUX',
+  ]);
 });
 
 // --- argument parsing, ledger-less correctives and BORK_RUN_DIR hygiene ---
@@ -629,15 +644,11 @@ test('a BORK_RUN_DIR whose run.json is done or failed is not linked; a running o
   assert.equal(linked, dir);
 });
 
-test('the dispatch tests ignore an ambient BORK_RUN_DIR', () => {
-  const d = join(BOX, 'run-ambient');
-  mkdirSync(d, { recursive: true });
-  process.env.BORK_RUN_DIR = d;
-  try {
-    const R = repo();
-    run([R, join(BOX, 'wt-ambient'), 'feat/ambient', BLOCK, '--title', 't']);
-    assert.equal(ledger(R).run_dir, '');
-  } finally { delete process.env.BORK_RUN_DIR; }
+test('a fresh dispatch with no BORK_RUN_DIR links no run dir', () => {
+  // Replaces 'the dispatch tests ignore an ambient BORK_RUN_DIR' (see the env test above).
+  const R = repo();
+  run([R, join(BOX, 'wt-ambient'), 'feat/ambient', BLOCK, '--title', 't']);
+  assert.equal(ledger(R).run_dir, '');
 });
 
 test('the usage line and header document --run-dir and the one-call-without---id limit', () => {
