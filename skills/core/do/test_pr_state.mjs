@@ -27,7 +27,7 @@ function stubSource(cfgPath, logPath) {
   return `#!${process.execPath}
 const fs = require('node:fs');
 const a = process.argv.slice(2);
-fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv: a, env: process.env }) + '\\n');
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv: a, environ: process.env }) + '\\n');
 const cfg = JSON.parse(fs.readFileSync(${JSON.stringify(cfgPath)}, 'utf8'));
 const kv = {};
 for (let i = 0; i < a.length; i++) if (a[i] === '-f' || a[i] === '-F') { const s = a[i + 1]; kv[s.slice(0, s.indexOf('='))] = s.slice(s.indexOf('=') + 1); }
@@ -223,11 +223,11 @@ test('C6o a fetch error is never hidden by another PR', () => {
   const box = makeBox();
   const r = pr(box, [U1, U2], { [key(U1)]: { main: resp() }, [key(U2)]: { main: { __exit: 1, __stderr: 'boom' } } });
   assert.equal(r.code, 1);
-  assert.equal(r.lines.length, 2);
-  assert.equal(r.lines[0].tier, 'ready');
-  assert.notEqual(r.lines[1].tier, 'ready');
+  assert.deepEqual(r.lines.map((l) => [l.url, l.tier]), [[U1, 'ready']], 'the failed PR prints no stdout line; its error is on stderr');
+  assert.ok(r.err.includes(U2));
   const r2 = pr(makeBox(), [U2, U1], { [key(U1)]: { main: resp({ merge: 'DIRTY' }) }, [key(U2)]: { main: { __exit: 1 } } });
   assert.equal(r2.code, 1, 'a fetch error beats a conflict too');
+  assert.deepEqual(r2.lines.map((l) => l.tier), ['conflict']);
 });
 
 // ---- fetch errors (C6n, C6p, C25) ----------------------------------------------------------------------------------------
@@ -333,7 +333,7 @@ test('C15a the gh child gets an allowlisted environment: no ambient secret or ru
   };
   const r = pr(box, [U1], { '*': { main: resp() } }, hostile);
   assert.equal(r.code, 0, r.err);
-  const env = calls(box)[0].env;
+  const env = calls(box)[0].environ;
   for (const name of [canary, 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'AWS_SECRET_ACCESS_KEY', 'BORK_RUN_DIR', 'OFFLOAD_HANDOFF', 'CLAUDE_CODE_SESSION_ID', 'PR_STATE_GH', 'GH_HOST']) {
     assert.ok(!(name in env), `${name} must not reach gh`);
   }

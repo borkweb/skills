@@ -8,6 +8,7 @@
 // 4 unresolved review threads, 5 failing checks, 6 draft, changes requested, review required or BLOCKED,
 // 7 checks pending or state UNKNOWN, 2 usage error, 1 fetch error or a value this script does not know.
 // With several PRs the lowest nonzero code wins, so a fetch error is never hidden by a ready PR.
+// A PR that fails to fetch prints nothing on stdout (its error goes to stderr), so stdout only ever holds the tiers above.
 //
 // gh is the command in PR_STATE_GH (split on whitespace, `~/` expanded, no shell), else `gh`. For
 // github.a8c.com use PR_STATE_GH='proxychains4 -q -f ~/.proxychains.conf gh'. Every call has a timeout
@@ -165,10 +166,9 @@ function main(urls) {
       process.stdout.write(`${JSON.stringify(line)}\n`);
       codes.push(EXIT[line.tier]);
     } catch (e) {
-      // Any failure, including an unexpected response shape, is an error line and exit 1, never a stack trace.
+      // Any failure, including an unexpected response shape, is a stderr line and exit 1, never a stack trace. stdout keeps only the X3 tiers.
       const message = e instanceof FetchError || e instanceof Unknown ? e.message : `unexpected response: ${e.message}`;
       process.stderr.write(`pr-state: ${url}: ${message}\n`);
-      process.stdout.write(`${JSON.stringify({ url, tier: 'error', error: message })}\n`);
       codes.push(1);
     }
   }
