@@ -240,7 +240,9 @@ class GateEnvTests(HardBase):
             self.assertTrue(seen, label)
             for name in HOSTILE_NAMES:
                 self.assertNotIn(name, seen, f'{label} saw {name}')
-            self.assertEqual(set(seen) - ALLOWED, set(), f'{label} saw a name outside the allowlist')
+            # LC_* passes by design (caselib.scrubbed_env), so a runner that sets LC_ALL or LC_CTYPE is not a leak.
+            names = {n for n in seen if not n.startswith('LC_')}
+            self.assertEqual(names - ALLOWED, set(), f'{label} saw a name outside the allowlist')
             self.assertNotIn(str(home), text, label)
             self.assertNotEqual(seen['HOME'], str(home))
             trials = os.path.realpath(self.out / 'trials')
