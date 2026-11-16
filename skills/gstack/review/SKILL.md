@@ -84,7 +84,7 @@ In report-only mode, stop at findings, background check results and verdict. In 
 
 ## Result
 
-Write finding prose, the verdict reason and any PR comment to the ASD-STE100 rules in [ste100.md](../../core/writing-plans/ste100.md). Keep the headers, status tokens, table labels and verdict tokens below exactly as shown.
+Write finding prose, the verdict reason and any PR comment to the ASD-STE100 rules in [ste100.md](../../core/writing-plans/ste100.md). A PR comment also follows [pr-comments.md](../../core/writing-plans/pr-comments.md). Keep the headers, status tokens, table labels and verdict tokens below exactly as shown.
 
 Use this readable output contract for the human-facing report. An explicit caller schema may replace the presentation for a machine-consumed pass; the primary owner still reports the evidence and verdict.
 

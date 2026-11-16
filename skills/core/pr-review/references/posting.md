@@ -66,8 +66,15 @@ Confirm the line appears in a hunk. Then:
 
 <suggestion block, only when REPLACEMENT is a clean swap for the anchored lines>
 
-<"Flagged independently by both reviewers." — only when the tag is `both`>
+<details>
+<summary>Details</summary>
+
+<evidence, trace or longer reasoning, only when the finding needs it>
+</details>
 ```
+
+The `both` tag is for the preview in Step 5b only. Do not put it, or any word
+about the reviewers, models or this skill, in the comment.
 
 The suggestion block must contain the complete replacement for *exactly* the
 anchored line range — that's what GitHub applies when the author clicks Commit.
@@ -76,10 +83,13 @@ Wrong indentation or a partial line makes an unapplyable suggestion. When
 decision, **write the fix in prose and skip the suggestion block.** A suggestion
 the author can't safely click is worse than no suggestion.
 
-**Write all PR prose in ASD-STE100 Simplified Technical English.** This covers
-the title, the problem and any prose fix in every comment, and the review body.
-Use [ste100.md](../../writing-plans/ste100.md), the same rules file that
-`bork:review` cites in **Result**. Read it before you write the first comment.
+**Follow [pr-comments.md](../../writing-plans/pr-comments.md) for all PR
+prose.** It says what a comment must never mention (the user, skills, models,
+loops, runs), how short to keep it, and when to collapse detail. Write the
+prose in ASD-STE100 Simplified Technical English. This covers the title, the
+problem and any prose fix in every comment, and the review body. Use
+[ste100.md](../../writing-plans/ste100.md), the same rules file that
+`bork:review` cites in **Result**. Read both before you write the first comment.
 Rewrite each finding here; do not paste `PROBLEM` and `FIX` unchanged, because
 the peer does not follow these rules.
 
@@ -154,7 +164,7 @@ the next run find this review in Step 0.
 {
   "commit_id": "<headRefOid>",
   "event": "COMMENT",
-  "body": "<!-- pr-review sha=<headRefOid> -->\nReview via /pr-review (<host model> + <peer model, or 'no peer'>). <n> critical findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
+  "body": "<!-- review sha=<headRefOid> -->\n<n> critical findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
   "comments": [
     { "path": "app/models/post.rb", "line": 42, "side": "RIGHT", "body": "..." }
   ]

@@ -67,7 +67,8 @@ Then work out six things:
    ```bash
    gh api user --jq .login                                  # → <me>
    jq -c --arg me "<me>" '.reviews[] | select(.author.login == $me)
-         | select((.body // "") | (contains("<!-- pr-review sha=")
+         | select((.body // "") | (contains("<!-- review sha=")
+                                   or contains("<!-- pr-review sha=")
                                    or startswith("Review via /pr-review")))
          | {submittedAt, commit: .commit.oid, body}' \
      <scratchpad>/pr.json > <scratchpad>/earlier-reviews.jsonl

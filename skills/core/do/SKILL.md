@@ -80,7 +80,7 @@ runs.mjs resume --goal "<goal, verbatim>" [--repo "$PWD"] [--candidate <dir>]...
 
 ## Finish
 
-Stop at the endpoint or a circuit breaker. Report the verdict, fixes, gate results (pass/fail, count, command), open decisions, and a **delivery line**: uncommitted, committed `<sha>`, pushed, PR `<url>`. Write PR bodies and PR comments to the ASD-STE100 rules in [ste100.md](../writing-plans/ste100.md). Before reporting a delivery blocker, retry the failing command once and show its exact error and the command the user can run to clear it.
+Stop at the endpoint or a circuit breaker. Report the verdict, fixes, gate results (pass/fail, count, command), open decisions, and a **delivery line**: uncommitted, committed `<sha>`, pushed, PR `<url>`. Write PR bodies and PR comments to the ASD-STE100 rules in [ste100.md](../writing-plans/ste100.md). Every PR description, comment, review body and reply also follows [pr-comments.md](../writing-plans/pr-comments.md): only the work, never the user, a skill, a model, a loop or a run; short; deep detail in a collapsed `<details>` block. A PR description opens with a short What, Why and How. Before reporting a delivery blocker, retry the failing command once and show its exact error and the command the user can run to clear it.
 
 Record the final state in the run with `runs.mjs set <run> --state <s> --summary "<line>" --delivery "<delivery line>"`, always passing `--delivery`:
 

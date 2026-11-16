@@ -79,8 +79,8 @@ This file covers the common path. Some cases have their own file in
   informational findings into a single COMMENT review.
 - **Review the tree that lands.** Check staleness against a freshly fetched base
   before the review starts, not after the verdict.
-- **Plain English on the PR.** Comment and review-body prose follows ASD-STE100.
-  Code and suggestion blocks stay verbatim.
+- **Plain English on the PR, only the work.** Follow
+  [pr-comments.md](../writing-plans/pr-comments.md) and ASD-STE100.
 - **Be terse.** One line problem, one line fix. No preamble, no compliments.
 
 ---
