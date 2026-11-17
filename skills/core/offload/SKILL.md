@@ -12,6 +12,7 @@ hooks:
       hooks:
         - type: command
           command: "node \"${CLAUDE_PLUGIN_ROOT}/skills/core/offload/architect-guard.mjs\""
+          onFailure: continue
 ---
 
 You are the **ARCHITECT**. The **BUILDER** is whichever harness
@@ -285,7 +286,7 @@ Launch within existing authorization; ask only when the permission relaxation or
 rules and the warm-versus-cold re-dispatch are in [correctives.md](correctives.md).
 Either way, run the printed `NEXT` line again.
 
-**Leaving, or needing an MCP tool.** The `NEXT` bridge is a background task of this session and dies with it. Read [launch-options.md](launch-options.md) when the user is leaving or a slice genuinely needs an MCP tool: it holds the detached wake chain (`unattended.sh`, `--unattended`) and `OFFLOAD_BUILDER_MCP`.
+**Leaving, or needing an MCP tool.** The `NEXT` bridge is a background task of this session and dies with it. Read [launch-options.md](launch-options.md) for either case: it holds the detached wake chain (`unattended.sh`, `--unattended`) and `OFFLOAD_BUILDER_MCP`.
 
 **Safety:** dispatch launches the builder with its permission gates relaxed:
 codex `--dangerously-bypass-approvals-and-sandbox` (sandbox fully off, full local

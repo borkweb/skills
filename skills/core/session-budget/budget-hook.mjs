@@ -15,6 +15,9 @@ function silent() { process.exit(0); }
 
 let input = {};
 try { input = JSON.parse(readFileSync(0, 'utf8')); } catch { silent(); }
+// Code Mode runs this hook on background code output too (source "poll_event").
+// Nudge only on a real turn, so code output never uses up a band.
+if (input.source === 'poll_event') silent();
 
 const transcript = input.transcript_path;
 if (!transcript || !existsSync(transcript)) silent();

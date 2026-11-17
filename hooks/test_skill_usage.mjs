@@ -81,6 +81,20 @@ check('plain prompts and file paths are not logged', () => {
   assert.strictEqual(lines().length, before);
 });
 
+check('Code Mode background output (source poll_event) is never read as a slash command', () => {
+  // Its own log directory, so the report checks below keep their counts.
+  const box = mkdtempSync(join(tmpdir(), 'su-poll-'));
+  const log = join(box, 'usage', 'skills.jsonl');
+  try {
+    fire({ ...prompt('/done\nall 12 files checked'), source: 'poll_event' }, { AGENT_HANDOFFS_DIR: box });
+    assert.strictEqual(existsSync(log), false);
+    fire({ ...prompt('/bork:layman'), source: 'user' }, { AGENT_HANDOFFS_DIR: box });
+    assert.deepStrictEqual(readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l).skill), ['bork:layman']);
+  } finally {
+    rmSync(box, { recursive: true, force: true });
+  }
+});
+
 check('BORK_SKILL_USAGE_LOG=0 turns logging off', () => {
   const before = lines().length;
   fire(tool('bork:do'), { BORK_SKILL_USAGE_LOG: '0' });

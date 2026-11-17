@@ -57,6 +57,13 @@ const bigger = transcriptOf('big.jsonl', THRESHOLD + BAND + 10_000); // overwrit
 check('higher band: nudges again', () =>
   assert.match(fire({ session_id: 's2', transcript_path: bigger }).trim(), /PROACTIVE/));
 
+// Code Mode background output -> silent, and the band stays unused for the next real turn
+const pollBig = transcriptOf('poll.jsonl', THRESHOLD + 10_000);
+check('poll_event (Code Mode output): no output', () =>
+  assert.strictEqual(fire({ session_id: 's4', transcript_path: pollBig, source: 'poll_event' }).trim(), ''));
+check('poll_event does not use up the band', () =>
+  assert.match(fire({ session_id: 's4', transcript_path: pollBig, source: 'user' }).trim(), /PROACTIVE/));
+
 // missing transcript -> silent
 check('missing transcript_path: no output', () =>
   assert.strictEqual(fire({ session_id: 's3' }).trim(), ''));

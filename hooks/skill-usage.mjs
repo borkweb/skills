@@ -6,6 +6,8 @@
 //   PreToolUse, matcher Skill -> {ts, via:"tool", skill, session, cwd[, agent]}
 //   UserPromptSubmit          -> {ts, via:"slash", skill, session, cwd} when the
 //                                prompt starts with a slash command
+// A UserPromptSubmit with source "poll_event" carries Code Mode background code
+// output, not a typed prompt, so it is never read as a slash command.
 // It records the skill or command name only, never arguments or prompt text.
 // It never blocks, never writes to stdout and exits 0 on every error.
 // BORK_SKILL_USAGE_LOG=0 turns logging off.
@@ -52,6 +54,7 @@ function record(input) {
     via = 'tool';
     skill = input.tool_input?.skill ?? input.tool_input?.command ?? input.tool_input?.name;
   } else if (event === 'UserPromptSubmit') {
+    if (input.source === 'poll_event') return;
     via = 'slash';
     skill = slashName(input.prompt);
   } else {
