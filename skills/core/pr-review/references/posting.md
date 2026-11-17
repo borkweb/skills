@@ -85,16 +85,18 @@ the author can't safely click is worse than no suggestion.
 
 **Follow [pr-comments.md](../../writing-plans/pr-comments.md) for all PR
 prose.** It says what a comment must never mention (the user, skills, models,
-loops, runs), how short to keep it, and when to collapse detail. Write the
-prose in ASD-STE100 Simplified Technical English. This covers the title, the
-problem and any prose fix in every comment, and the review body. Use
-[ste100.md](../../writing-plans/ste100.md), the same rules file that
-`bork:review` cites in **Result**. Read both before you write the first comment.
-Rewrite each finding here; do not paste `PROBLEM` and `FIX` unchanged, because
-the peer does not follow these rules.
+loops, runs), how short to keep it, and what goes in the collapsed Details
+block. Read it before you write the first comment. The title and problem are
+visible text: write them in plain English, lead with the effect on the code's
+behavior, and name no more than two identifiers. Evidence, traces and further
+identifiers go in Details, in ASD-STE100 Simplified Technical English
+([ste100.md](../../writing-plans/ste100.md), the same rules file that
+`bork:review` cites in **Result**). This covers every comment and the review
+body. Rewrite each finding here; do not paste `PROBLEM` and `FIX` unchanged,
+because the peer does not follow these rules.
 
 Keep code, identifiers, paths, error strings, the `**CRITICAL —**` label and the
-suggestion block exactly as written. STE applies to the prose around them, never
+suggestion block exactly as written. The prose rules apply around them, never
 inside a suggestion block. Chat output in Step 6 stays terse and is not bound by
 these rules.
 
@@ -156,8 +158,18 @@ that has nothing to ask about.
 Post one COMMENT review: one notification for the author, not one per finding.
 It holds the critical comments and the chosen informational ones, with bodies
 labeled `**INFORMATIONAL — <title>**`. The informational ones follow the same
-anchor, duplicate and ASD-STE100 rules. The hidden marker on the first line lets
+anchor, duplicate and prose rules. The hidden marker on the first line lets
 the next run find this review in Step 0.
+
+Before the call, check the payload, and fix every line it prints until it exits
+0:
+
+```bash
+node skills/core/writing-plans/pr-text-check.mjs --payload <scratchpad>/pr-review-payload.json
+```
+
+Resolve the path from the loaded skill. Pass `--allow <word>` only when the PR
+is about a word the check refuses. Never post a payload that fails.
 
 ```jsonc
 // <scratchpad>/pr-review-payload.json

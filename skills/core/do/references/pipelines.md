@@ -20,7 +20,7 @@ For an existing change (branch, PR or working tree) that should reach SAFE TO LA
 
    Join.
 5. **Loop or stop.** No blockers left: SAFE TO LAND, or LAND WITH CAUTION if nonblocking caveats remain. Otherwise go back to step 3. **Circuit breaker:** after 3 fix rounds, or if the same finding survives two rounds, stop at DO NOT LAND and report the remaining findings with what you tried.
-6. **Deliver** only if requested: commit (`writing-commits`), push without force, open or update the PR, update the tracker. Confirm each step against the remote (for example, the PR head SHA) before reporting it done.
+6. **Deliver** only if requested: commit (`writing-commits`), push without force, open or update the PR, update the tracker. A comment about the push or a base merge uses the fix-report or status-update template in [pr-comments.md](../../writing-plans/pr-comments.md). Run `pr-text-check.mjs` on every description and comment file, and post only after it exits 0. Confirm each step against the remote (for example, the PR head SHA) before reporting it done.
 
 A review-only request is step 1 plus step 2, then the verdict. It makes no fixes.
 
@@ -43,7 +43,7 @@ For two or more existing PRs or branches that should each reach SAFE TO LAND, wi
    - **Deadline:** treat it as a stall. A lane that is idle with neither file written gets a message to continue from its notes. CI still pending re-arms once more; at the second deadline, record that PR as blocked with the check name. A `ci <n>` line never seen pending, with `checksPending` 0, re-arms once; at the second deadline, record that PR as blocked (rerun never seen pending). Never relay the current result in that case: it is the result from before the rerun. Never stop a resource you did not start; reclaim a stale lock only as [test-resources.md](test-resources.md) says.
 
    Never end a host turn while lanes are in flight and no watcher is armed.
-5. **Deliver.** At its endpoint each lane performs only the recorded authority: push without force, then an APPROVE review at SAFE TO LAND with CI green, or at the circuit breaker a COMMENT review with one inline comment per open item. Every review body and comment follows [pr-comments.md](../../writing-plans/pr-comments.md). A lane never approves a PR the user authored. When the request did not authorize posting, the lane drafts the review into its directory, and the host shows every draft together and confirms them as **review batch** step 5 does. The lane writes `result.md`: verdict, review URL or `not posted`, commits pushed, gate lines, open items.
+5. **Deliver.** At its endpoint each lane performs only the recorded authority: push without force, then an APPROVE review at SAFE TO LAND with CI green, or at the circuit breaker a COMMENT review with one inline comment per open item. Every review body and comment follows [pr-comments.md](../../writing-plans/pr-comments.md), and `pr-text-check.mjs` passes on it (`--payload` for a review) before it posts. A lane never approves a PR the user authored. When the request did not authorize posting, the lane drafts the review into its directory, and the host shows every draft together and confirms them as **review batch** step 5 does. The lane writes `result.md`: verdict, review URL or `not posted`, commits pushed, gate lines, open items.
 6. **Report.** One table with a row per PR: verdict, pushed SHAs, review URL or `not posted`, open items. Set the run state.
 
 ## ship
