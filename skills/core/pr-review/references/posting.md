@@ -60,7 +60,7 @@ Confirm the line appears in a hunk. Then:
 **Write each comment body** as:
 
 ```markdown
-**CRITICAL — <title>**
+🤖 **CRITICAL — <title>**
 
 <problem, one to three sentences>
 
@@ -95,8 +95,10 @@ identifiers go in Details, in ASD-STE100 Simplified Technical English
 body. Rewrite each finding here; do not paste `PROBLEM` and `FIX` unchanged,
 because the peer does not follow these rules.
 
-Keep code, identifiers, paths, error strings, the `**CRITICAL —**` label and the
-suggestion block exactly as written. The prose rules apply around them, never
+Keep code, identifiers, paths, error strings, the `🤖 **CRITICAL —**` label and the
+suggestion block exactly as written. Every comment and the review body start
+with 🤖 unless the user asks you to leave it out; then pass `--no-robot` to the
+check. The prose rules apply around them, never
 inside a suggestion block. Chat output in Step 6 stays terse and is not bound by
 these rules.
 
@@ -108,7 +110,7 @@ First, print every planned critical comment exactly as it will appear:
 Posting 3 inline comments to PR #<n> (<title>) as a COMMENT review:
 
 1. app/models/post.rb:42  [RIGHT]  [both]  — Race condition in status transition
-   **CRITICAL — Race condition in status transition**
+   🤖 **CRITICAL — Race condition in status transition**
    Two concurrent publishes both read status='draft' and both write...
    ```suggestion
      .where(status: 'draft')
@@ -134,7 +136,7 @@ INFORMATIONAL — 6 findings (post only the ones you pick)
 
 Error handling (2)
   1. app/jobs/import.rb:31  [RIGHT]  [both]
-     **INFORMATIONAL — The timeout log does not include the job ID**
+     🤖 **INFORMATIONAL — The timeout log does not include the job ID**
      The log for an expected timeout does not include the job ID. Add the job
      ID to the structured log.
   2. ...
@@ -157,7 +159,7 @@ that has nothing to ask about.
 
 Post one COMMENT review: one notification for the author, not one per finding.
 It holds the critical comments and the chosen informational ones, with bodies
-labeled `**INFORMATIONAL — <title>**`. The informational ones follow the same
+labeled `🤖 **INFORMATIONAL — <title>**`. The informational ones follow the same
 anchor, duplicate and prose rules. The hidden marker on the first line lets
 the next run find this review in Step 0.
 
@@ -176,7 +178,7 @@ is about a word the check refuses. Never post a payload that fails.
 {
   "commit_id": "<headRefOid>",
   "event": "COMMENT",
-  "body": "<!-- review sha=<headRefOid> -->\n<n> critical findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
+  "body": "<!-- review sha=<headRefOid> -->\n🤖 <n> critical findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
   "comments": [
     { "path": "app/models/post.rb", "line": 42, "side": "RIGHT", "body": "..." }
   ]

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // pr-text-check.mjs — check PR text against pr-comments.md before it is posted.
 //
-//   node pr-text-check.mjs [--kind comment|description] [--allow <word>]... <body.md>
-//   node pr-text-check.mjs --payload <review.json> [--allow <word>]...
+//   node pr-text-check.mjs [--kind comment|description] [--allow <word>]... [--no-robot] <body.md>
+//   node pr-text-check.mjs --payload <review.json> [--allow <word>]... [--no-robot]
 //
 // A payload is a pull request review body as `gh api .../reviews --input` takes it: `body` and
 // `comments[].body` are each checked as a comment.
@@ -10,6 +10,8 @@
 // The visible text is the body without HTML comments, fenced code blocks (suggestion blocks included) and
 // <details> blocks. In a description, a section whose heading names testing is not visible text either,
 // because its steps must stay visible and often hold commands. Rules:
+//   robot        a comment's text starts with the robot emoji (a leading hidden HTML marker may come first);
+//                a description does not need it, and --no-robot turns the rule off
 //   process      anywhere outside HTML comments and fences: no skill, model, harness, process word or local path
 //   details      every <details> is closed and every </summary> is followed by a blank line
 //   length       visible words <= 120 (comment) or 300 (description)
@@ -25,6 +27,7 @@ import { readFileSync } from 'node:fs';
 const WORD_LIMIT = { comment: 120, description: 300 };
 const MAX_SENTENCES = 3;
 const MAX_CODE_SPANS = 2;
+const ROBOT = '\u{1F916}';
 
 const PROCESS = [
   ['a skill name', /\bbork:[a-z][a-z-]*/gi],
@@ -51,13 +54,13 @@ const LINT_RESULT = /\b(?:PHPCS|PHPStan|ESLint|Stylelint|tsc|lint|linter)\b[^.\n
 
 function usage(msg) {
   process.stderr.write(`pr-text-check: ${msg}\n`);
-  process.stderr.write('usage: pr-text-check.mjs [--kind comment|description] [--allow <word>]... <body.md>\n');
-  process.stderr.write('       pr-text-check.mjs --payload <review.json> [--allow <word>]...\n');
+  process.stderr.write('usage: pr-text-check.mjs [--kind comment|description] [--allow <word>]... [--no-robot] <body.md>\n');
+  process.stderr.write('       pr-text-check.mjs --payload <review.json> [--allow <word>]... [--no-robot]\n');
   process.exit(2);
 }
 
 function parseArgs(argv) {
-  const opts = { kind: 'comment', allow: [], payload: null, file: null };
+  const opts = { kind: 'comment', allow: [], payload: null, file: null, robot: true };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--kind' || a === '--allow' || a === '--payload') {
@@ -68,7 +71,8 @@ function parseArgs(argv) {
         opts.kind = v;
       } else if (a === '--allow') opts.allow.push(v.toLowerCase());
       else opts.payload = v;
-    } else if (a.startsWith('--')) usage(`unknown option '${a}'`);
+    } else if (a === '--no-robot') opts.robot = false;
+    else if (a.startsWith('--')) usage(`unknown option '${a}'`);
     else if (opts.file === null) opts.file = a;
     else usage('give one body file');
   }
@@ -161,9 +165,13 @@ const snippet = (block) => {
   return one.length > 60 ? `${one.slice(0, 57)}...` : one;
 };
 
-function check(body, kind, allow) {
+function check(body, kind, allow, robot) {
   const problems = [];
   const noComments = stripComments(body);
+
+  if (robot && kind === 'comment' && !noComments.trimStart().startsWith(ROBOT)) {
+    problems.push(['robot', `start the comment with ${ROBOT}, after any hidden marker`]);
+  }
   const outsideFences = stripFences(noComments);
 
   for (const [what, re] of PROCESS) {
@@ -230,7 +238,7 @@ if (opts.payload !== null) {
 
 let failed = 0;
 for (const [label, body, kind] of targets) {
-  for (const [rule, msg] of check(body.replace(/\r\n?/g, '\n'), kind, opts.allow)) {
+  for (const [rule, msg] of check(body.replace(/\r\n?/g, '\n'), kind, opts.allow, opts.robot)) {
     process.stdout.write(`${label}: ${rule}: ${msg}\n`);
     failed++;
   }

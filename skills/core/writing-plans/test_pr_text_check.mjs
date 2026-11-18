@@ -58,7 +58,7 @@ test('a paragraph of four sentences fails', () => {
 });
 
 test('deep detail inside a Details block is not visible text', () => {
-  const r = run(file(`Fixed the share check. It now skips broken accounts.\n\n${DETAILS}`));
+  const r = run(file(`🤖 Fixed the share check. It now skips broken accounts.\n\n${DETAILS}`));
   assert.strictEqual(r.code, 0, r.out + r.err);
 });
 
@@ -68,7 +68,7 @@ test('a harness name fails anywhere, even in Details, and --allow lets it pass',
   assert.strictEqual(r.code, 1);
   assert.match(r.out, /process: remove a harness name \("Codex"\)/);
   assert.match(r.out, /process: remove a process word \("Codex pass"\)|process: remove a harness name/);
-  const allowed = run('--allow', 'codex', file('Codex now starts in the right folder.\n'));
+  const allowed = run('--allow', 'codex', file('🤖 Codex now starts in the right folder.\n'));
   assert.strictEqual(allowed.code, 0, allowed.out);
 });
 
@@ -81,13 +81,13 @@ test('skill names, slash commands, session links and local paths fail', () => {
 });
 
 test('a hidden HTML marker is ignored', () => {
-  const r = run(file('<!-- bork:do review-marker with `a` `b` `c` -->\nFixed the share check.\n'));
+  const r = run(file('<!-- bork:do review-marker with `a` `b` `c` -->\n🤖 Fixed the share check.\n'));
   assert.strictEqual(r.code, 0, r.out + r.err);
 });
 
 test('a suggestion block is not visible text', () => {
   const code = Array.from({ length: 60 }, (_, i) => `$a${i} = foo( \`x\`, 'y' ); // 1/2 tests pass. Done. Again. More. Yes.`).join('\n');
-  const r = run(file(`**CRITICAL — Wrong default**\n\nThe default turns sharing on for every site.\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`));
+  const r = run(file(`🤖 **CRITICAL — Wrong default**\n\nThe default turns sharing on for every site.\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`));
   assert.strictEqual(r.code, 0, r.out + r.err);
 });
 
@@ -104,7 +104,7 @@ test('an unclosed Details block fails', () => {
 });
 
 test('a bold lead-in and abbreviations do not count as sentences', () => {
-  const r = run(file('- **It shared broken accounts.** It now checks each one, e.g. expired ones. Then it queues the share. Tests cover it.\n'));
+  const r = run(file('🤖 It shared broken accounts.\n\n- **It shared broken accounts.** It now checks each one, e.g. expired ones. Then it queues the share. Tests cover it.\n'));
   assert.strictEqual(r.code, 0, r.out + r.err);
 });
 
@@ -136,16 +136,60 @@ test('a payload checks the review body and every inline comment, with their loca
   const payload = {
     commit_id: 'abc',
     event: 'COMMENT',
-    body: 'Two problems block landing.',
+    body: '🤖 Two problems block landing.',
     comments: [
-      { path: 'a.php', line: 3, side: 'RIGHT', body: '**CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
-      { path: 'b.php', line: 9, side: 'RIGHT', body: 'Uses `a`, `b` and `c` in `d`.' },
+      { path: 'a.php', line: 3, side: 'RIGHT', body: '🤖 **CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
+      { path: 'b.php', line: 9, side: 'RIGHT', body: '🤖 Uses `a`, `b` and `c` in `d`.' },
     ],
   };
   const r = run('--payload', file(JSON.stringify(payload), 'json'));
   assert.strictEqual(r.code, 1);
   assert.match(r.out, /:comments\[1\] \(b\.php:9\): code-spans: 4 code spans/);
   assert.doesNotMatch(r.out, /comments\[0\]|:body:/);
+});
+
+test('a comment without the robot prefix fails, and --no-robot turns the rule off', () => {
+  const body = file('Fixed the share check.\n');
+  const r = run(body);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.out, /: robot: start the comment with 🤖/);
+  const off = run('--no-robot', body);
+  assert.strictEqual(off.code, 0, off.out + off.err);
+});
+
+test('the robot prefix must lead the text, not sit later in it', () => {
+  const r = run(file('Fixed the share check. 🤖\n'));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.out, /: robot: /);
+});
+
+test('a hidden marker may come before the robot prefix, but a marker alone does not count', () => {
+  assert.strictEqual(run(file('<!-- review sha=abc -->\n🤖 One problem blocks landing.\n')).code, 0);
+  const r = run(file('<!-- review sha=abc 🤖 -->\nOne problem blocks landing.\n'));
+  assert.strictEqual(r.code, 1);
+  assert.match(r.out, /: robot: /);
+});
+
+test('a description does not need the robot prefix', () => {
+  const r = run('--kind', 'description', file('## What\n\nAdds sharing.\n'));
+  assert.strictEqual(r.code, 0, r.out + r.err);
+});
+
+test('a payload needs the robot prefix on the review body and on every inline comment', () => {
+  const payload = {
+    body: 'One problem blocks landing.',
+    comments: [
+      { path: 'a.php', line: 3, body: '🤖 **CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
+      { path: 'b.php', line: 9, body: '**CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
+    ],
+  };
+  const path = file(JSON.stringify(payload), 'json');
+  const r = run('--payload', path);
+  assert.strictEqual(r.code, 1);
+  assert.match(r.out, /:body: robot: /);
+  assert.match(r.out, /:comments\[1\] \(b\.php:9\): robot: /);
+  assert.doesNotMatch(r.out, /comments\[0\]/);
+  assert.strictEqual(run('--payload', path, '--no-robot').code, 0);
 });
 
 test('usage and read errors exit 2', () => {

@@ -12,7 +12,11 @@ Write the body to a file. Then run:
 node skills/core/writing-plans/pr-text-check.mjs --kind comment <body.md>
 ```
 
-Resolve the path from the loaded skill. Use `--kind description` for a PR description and `--payload <review.json>` for a review payload (its `body` and each `comments[].body`). The script exits 0 when the text passes. When it exits 1, fix each line it prints and run it again. Never post a body that fails. Post with `--body-file` or `--input`, so the checked file is the posted text. When the PR is about a word that the check refuses, such as a PR that changes the `herdr` integration, pass `--allow herdr`.
+Resolve the path from the loaded skill. Use `--kind description` for a PR description and `--payload <review.json>` for a review payload (its `body` and each `comments[].body`). The script exits 0 when the text passes. When it exits 1, fix each line it prints and run it again. Never post a body that fails. Post with `--body-file` or `--input`, so the checked file is the posted text. When the PR is about a word that the check refuses, such as a PR that changes the `herdr` integration, pass `--allow herdr`. When the user asks for comments without the robot prefix, pass `--no-robot`.
+
+## Start each comment with 🤖
+
+The visible text of every comment, review body, inline comment and reply starts with `🤖 `, so a person can see that a tool posted it. A hidden marker comes first, on its own line, and 🤖 starts the line after it. A PR description does not get the prefix. Leave the prefix out only when the user says to. The check enforces the prefix for comments.
 
 ## Talk about the work only
 
@@ -25,7 +29,7 @@ Never mention:
 - the process: loops, sweeps, passes, rounds, runs, lanes, councils, "both reviewers", "flagged independently", "automated review";
 - run IDs, local paths, scratchpad files, worktrees or herdr tabs.
 
-A hidden HTML marker (`<!-- ... -->`) that a later run must find is permitted. Give it a neutral name, and put it on the first line.
+The 🤖 prefix is the one signal of automation that is permitted. A hidden HTML marker (`<!-- ... -->`) that a later run must find is permitted. Give it a neutral name, and put it on the first line.
 
 ## The visible part: write for a person
 
@@ -62,7 +66,7 @@ Use the template for the comment you write. Review findings use the format in `p
 Use it after you push fixes to a PR.
 
 ```markdown
-Pushed <short sha> with <N> fixes to <the feature, in product words>:
+🤖 Pushed <short sha> with <N> fixes to <the feature, in product words>:
 
 - **<What was wrong, as a person sees it.>** <What happens now. One or two sentences.>
 - **<...>** <...>
@@ -81,7 +85,7 @@ Pushed <short sha> with <N> fixes to <the feature, in product words>:
 Use it after a merge, a rebase, a regenerated file or another change that has no behavior effect.
 
 ```markdown
-<What you did, in one sentence.> <What the reader should know about the result, in one sentence.>
+🤖 <What you did, in one sentence.> <What the reader should know about the result, in one sentence.>
 
 <details>
 <summary>Details</summary>
@@ -95,7 +99,7 @@ Use it after a merge, a rebase, a regenerated file or another change that has no
 Before: correct, but written for the person who wrote the fix.
 
 ```markdown
-Pushed ff7a545de25 with two fixes to `jetpack-social/share-post`:
+🤖 Pushed ff7a545de25 with two fixes to `jetpack-social/share-post`:
 
 - **Broken accounts counted as working.** The pre-check fetched connections without `test_connections`, and in that case the route sets every `status` to `null`. Broken and `must_reauth` accounts therefore counted as working, so the ability returned `queued: true` with `connections: N` even when no account could receive the share. The pre-check now sends `test_connections`, matching what the editor does before it shares.
 - **Posts that Publicize does not share.** Auto-share refuses password-protected posts and post types without `publicize` support (`Publicize_Base::save_meta()`, `post_type_is_publicizeable()`). The ability now returns a 400 for both cases.
@@ -106,7 +110,7 @@ Tests: one data-provider test covers the two refused cases. `Social_Abilities` g
 After: the same facts, for two readers.
 
 ```markdown
-Pushed ff7a545de25 with two fixes to sharing a post:
+🤖 Pushed ff7a545de25 with two fixes to sharing a post:
 
 - **It reported success when no account could post.** Broken or expired accounts counted as working, so the share showed as queued even when nothing would go out. It now checks each account first, as the editor does.
 - **It accepted posts that Social never shares.** Password-protected posts, and post types that do not support sharing, now get an error instead of being queued.
