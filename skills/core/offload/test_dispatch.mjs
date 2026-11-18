@@ -394,6 +394,70 @@ test('every launch carries the architect id in OFFLOAD_SESSION_ID beside the han
   writeConfig([{ harness: 'codex' }]);
 });
 
+// review-criteria class 2: a builder runs with its gates off, so it never sees the user's tokens.
+const SECRETS = {
+  GITHUB_PERSONAL_ACCESS_TOKEN: 'ghp-leak', ELEVENLABS_API_KEY: 'el-leak', AWS_SECRET_ACCESS_KEY: 'aws-leak',
+  NPM_TOKEN: 'npm-leak', DB_PASSWORD: 'db-leak', GATE_ONLY_TOKEN: 'gate-pass',
+  ANTHROPIC_API_KEY: 'anthropic-keep', OPENAI_API_KEY: 'openai-keep', TOKENIZERS_PARALLELISM: 'false',
+  SSH_AUTH_SOCK: '/tmp/agent.sock',
+};
+const ENV_NAMES = Object.keys(SECRETS);
+const envProbe = (name) => {
+  const p = join(BIN, name);
+  writeFileSync(p, `#!/usr/bin/env bash\n{ ${ENV_NAMES.map((n) => `echo "env ${n}=\${${n}-UNSET}"`).join('; ')}; } >> "${LOG}"\n`);
+  chmodSync(p, 0o755);
+};
+const assertScrubbed = (log, { pass = [] } = {}) => {
+  for (const n of ['GITHUB_PERSONAL_ACCESS_TOKEN', 'ELEVENLABS_API_KEY', 'AWS_SECRET_ACCESS_KEY', 'NPM_TOKEN', 'DB_PASSWORD']) {
+    assert.match(log, new RegExp(`^env ${n}=UNSET$`, 'm'), `${n} reached the builder`);
+  }
+  assert.match(log, new RegExp(`^env GATE_ONLY_TOKEN=${pass.includes('GATE_ONLY_TOKEN') ? 'gate-pass' : 'UNSET'}$`, 'm'));
+  for (const [n, v] of [['ANTHROPIC_API_KEY', 'anthropic-keep'], ['OPENAI_API_KEY', 'openai-keep'],
+    ['TOKENIZERS_PARALLELISM', 'false'], ['SSH_AUTH_SOCK', '/tmp/agent.sock']]) {
+    assert.match(log, new RegExp(`^env ${n}=${v}$`, 'm'), `${n} should stay`);
+  }
+};
+
+test('a headless builder gets no token or secret from the environment, but keeps its harness key and the ssh agent', () => {
+  unameReports('Linux');
+  writeConfig([{ harness: 'claude' }]);
+  envProbe('claude');
+  try {
+    assertScrubbed(run({ TMUX: '', ...SECRETS }).log);
+  } finally {
+    stub('claude');
+    writeConfig([{ harness: 'codex' }]);
+  }
+});
+
+test('OFFLOAD_BUILDER_PASS_ENV keeps a named secret, and OFFLOAD_BUILDER_ENV=inherit keeps them all', () => {
+  unameReports('Linux');
+  writeConfig([{ harness: 'claude' }]);
+  envProbe('claude');
+  try {
+    assertScrubbed(run({ TMUX: '', ...SECRETS, OFFLOAD_BUILDER_PASS_ENV: 'NPM_X GATE_ONLY_TOKEN' }).log, { pass: ['GATE_ONLY_TOKEN'] });
+    assert.match(run({ TMUX: '', ...SECRETS, OFFLOAD_BUILDER_ENV: 'inherit' }).log, /^env GITHUB_PERSONAL_ACCESS_TOKEN=ghp-leak$/m);
+  } finally {
+    stub('claude');
+    writeConfig([{ harness: 'codex' }]);
+  }
+});
+
+test('an interactive launch script scrubs secrets from the tab environment it starts in', () => {
+  // The launch script runs in a herdr or tmux tab, which starts from the server's environment,
+  // not the architect's: run it under a hostile environment the dispatch never saw.
+  const { log } = run({ TMUX: '/tmp/tmux-1,1,0', OFFLOAD_BUILDER_PASS_ENV: 'GATE_ONLY_TOKEN' });
+  const script = log.match(/bash (\S+\.sh)/)[1];
+  envProbe('codex');
+  try {
+    rmSync(LOG, { force: true });
+    execFileSync('bash', [script], { env: { HOME: BOX, PATH: TEST_PATH, ...SECRETS }, encoding: 'utf8' });
+    assertScrubbed(readFileSync(LOG, 'utf8'), { pass: ['GATE_ONLY_TOKEN'] });
+  } finally {
+    stub('codex');
+  }
+});
+
 test('a headless builder gets OFFLOAD_SESSION_ID in its environment', () => {
   unameReports('Linux');
   writeConfig([{ harness: 'claude' }]);

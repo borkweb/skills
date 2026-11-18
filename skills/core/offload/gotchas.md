@@ -17,3 +17,11 @@ This file is the public seed. After reading it, also read the user's private `~/
 **What you see:** scripts or reviewer recipes that the builder wrote work in its worktree but fail for the reviewer, in a detached mutation worktree, or after the slice worktree is removed. They may also pass on a dirty tree.
 
 **Do:** when a slice adds tools that other agents will run, add a criterion that they take the checkout path as an argument or resolve it from `git rev-parse --show-toplevel`, and that they refuse to run on a dirty tree when the result depends on committed state. Check it by running the tool from a second worktree.
+
+## A gate needs a secret the builder does not have
+
+**What you see:** a gate that passes for the architect fails in the builder with an authentication error, or a tool reports a missing token.
+
+**Why:** dispatch removes tokens, secrets and API keys from every builder's environment, except the model-provider keys a harness signs in with and the SSH agent, because builders run with their permission gates off.
+
+**Do:** name the variable in the slice spec and pass it with `OFFLOAD_BUILDER_PASS_ENV` on the dispatch ([launch-options.md](launch-options.md), *Builder credentials*). Pass only what a frozen gate needs. A tool that reads its own keychain or config file (`gh`, cloud CLIs) is not affected.

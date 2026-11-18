@@ -341,6 +341,27 @@ build_custom() {
 # the run they name is live. Session pointers are dropped by the `unset` beside each call.
 scrub_run_pointers() { env_run_dir_live || unset BORK_RUN_DIR BORK_RUN_ID; return 0; }
 
+# Builders run with their permission gates off, so they get no credential they do not need
+# (review-criteria class 2). Unset every exported variable whose name has a secret word as a whole
+# `_`-separated part (TOKEN, SECRET, PASSWORD, API_KEY, ACCESS_KEY, PRIVATE_KEY, CREDENTIALS...):
+# GITHUB_PERSONAL_ACCESS_TOKEN and AWS_SECRET_ACCESS_KEY go, TOKENIZERS_PARALLELISM stays.
+# Kept: the model-provider credentials a harness authenticates with (ANTHROPIC_, CLAUDE_, OPENAI_,
+# CODEX_, XAI_, GROK_, OPENROUTER_, GEMINI_), OFFLOAD_*, and every name in OFFLOAD_BUILDER_PASS_ENV
+# (space-separated) for a gate that needs one. SSH_AUTH_SOCK stays: builders sign their commits.
+# OFFLOAD_BUILDER_ENV=inherit turns the scrub off. The interactive launch script carries a copy of
+# this function (declare -f), because a herdr or tmux tab starts from the server's environment.
+scrub_builder_secrets() {
+  [ "${OFFLOAD_BUILDER_ENV:-scrub}" = inherit ] && return 0
+  local n re='(^|_)(TOKEN|TOKENS|SECRET|SECRETS|PASSWORD|PASSWD|PASS|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|AUTH_?KEY|CREDENTIAL|CREDENTIALS)(_|$)'
+  local keep=" ${OFFLOAD_BUILDER_PASS_ENV:-} "
+  for n in $(compgen -e); do
+    case "$n" in ANTHROPIC_*|CLAUDE_*|OPENAI_*|CODEX_*|XAI_*|GROK_*|OPENROUTER_*|GEMINI_*|OFFLOAD_*) continue ;; esac
+    case "$keep" in *" $n "*) continue ;; esac
+    [[ "$n" =~ $re ]] && unset "$n"
+  done
+  return 0
+}
+
 # Headless form per harness; fails for interactive-only harnesses (pi, grok)
 # unless the profile carries a raw command. claude -p cannot answer permission
 # prompts, so auto mode would strand the run — headless claude keeps full bypass.
@@ -354,7 +375,7 @@ run_headless() {
   out=$(mktemp -t offload-result.XXXXXX) && mv "$out" "$out.md" && out="$out.md"
   case "$h" in
     codex)
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && scrub_builder_secrets && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           codex exec ${m:+-m "$m"} ${e:+--config "model_reasoning_effort=$e"} \
             --dangerously-bypass-approvals-and-sandbox -C "$REPO" \
             --output-last-message "$out" - < "$BLOCK" ) ;;
@@ -362,16 +383,16 @@ run_headless() {
       claude_mcp_argv
       # --mcp-config is variadic: it swallows every following non-flag token, so
       # it must never sit directly before the prompt. A flag always follows here.
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && scrub_builder_secrets && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           claude -p --dangerously-skip-permissions ${CLAUDE_MCP_ARGV[@]+"${CLAUDE_MCP_ARGV[@]}"} \
             --settings "$(claude_hook_settings)" --output-format text ${m:+--model "$m"} \
             ${BUILDER_SID:+--session-id "$BUILDER_SID"} "$(cat "$BLOCK")" > "$out" ) ;;
     opencode)
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && scrub_builder_secrets && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           opencode run ${m:+--model "$m"} "$(cat "$BLOCK")" > "$out" ) ;;
     *)
       [ "$custom" = "-" ] && return 1
-      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
+      ( cd "$REPO" && unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID && scrub_run_pointers && scrub_builder_secrets && OFFLOAD_HANDOFF="$HANDOFF" OFFLOAD_SESSION_ID="$SID" \
           bash -c "$(build_custom "$custom")" > "$out" ) ;;
   esac && { write_pane_sidecar headless "" "" "$h"; echo "dispatch: ran $h headless; builder's final message at $out"; }
 }
@@ -393,6 +414,12 @@ make_launch() {
     # its tool calls; handoff.mjs reads the architect's id from here instead.
     echo "export OFFLOAD_SESSION_ID=$(printf %q "$SID")"
     echo "unset CLAUDE_CODE_SESSION_ID CODEX_SESSION_ID"
+    # The tab starts from the herdr or tmux server's environment, not this one, so the scrub
+    # runs in the tab. This dispatch's settings for it travel with the script.
+    [ -n "${OFFLOAD_BUILDER_ENV:-}" ] && echo "export OFFLOAD_BUILDER_ENV=$(printf %q "$OFFLOAD_BUILDER_ENV")"
+    [ -n "${OFFLOAD_BUILDER_PASS_ENV:-}" ] && echo "export OFFLOAD_BUILDER_PASS_ENV=$(printf %q "$OFFLOAD_BUILDER_PASS_ENV")"
+    declare -f scrub_builder_secrets
+    echo "scrub_builder_secrets"
     # The tab shell's own BORK_RUN_DIR/BORK_RUN_ID may be stale (herdr and tmux hand a new tab
     # the server's environment), so this dispatch decides: its live pair, else neither.
     if env_run_dir_live; then

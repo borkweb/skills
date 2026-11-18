@@ -21,6 +21,19 @@ machine's MCP fleet or its tool schemas on every turn. Set
 `OFFLOAD_BUILDER_MCP=inherit` for the user's full MCP configuration, or a path to
 load exactly that `--mcp-config` file, when a slice genuinely needs an MCP tool.
 
+**Builder credentials.** Every builder, headless or in a tab, starts without the
+exported variables whose names hold a secret word as a whole `_`-separated part
+(`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY`,
+`CREDENTIALS` and their close forms), so `GITHUB_PERSONAL_ACCESS_TOKEN` and
+`AWS_SECRET_ACCESS_KEY` never reach a builder whose gates are off. It keeps the
+model-provider keys a harness signs in with (`ANTHROPIC_*`, `CLAUDE_*`,
+`OPENAI_*`, `CODEX_*`, `XAI_*`, `GROK_*`, `OPENROUTER_*`, `GEMINI_*`) and
+`SSH_AUTH_SOCK`, because builders sign their commits. When a frozen gate needs
+a secret, pass its name in `OFFLOAD_BUILDER_PASS_ENV` (space-separated) and name
+it in the slice spec. `OFFLOAD_BUILDER_ENV=inherit` turns the scrub off; say so
+plainly when you use it. The scrub covers environment variables only: a tool
+that reads its own keychain or config file (`gh`, cloud CLIs) still works.
+
 ## No builder config (exit 3)
 
 **Exit 3 (`missing-config`) means the config doesn't exist yet.** Prompt the
