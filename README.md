@@ -32,7 +32,8 @@ is `.agents/plugins/marketplace.json`; this repository does not mirror the plugi
 under `.agents/skills`.
 
 Session-start hooks are silent when no handoffs are saved. When needed, they load a
-pending session handoff or list saved runs; helper paths are resolved when the
+pending session handoff after `/clear` or `/compact` (a new or resumed session only
+gets its name) or list saved runs; helper paths are resolved when the
 skill is invoked. After updating the plugin, start a fresh session to drop older
 startup instructions already in the conversation.
 

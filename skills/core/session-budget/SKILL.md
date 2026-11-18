@@ -110,9 +110,13 @@ authoritative. If that location is also gone after an upgrade, refresh skill
 discovery and load the current session-budget skill. Do not guess a cache version
 or create a replacement helper. Do not assume a Claude hook exists in Codex.
 
-The SessionStart hook is silent without pending handoffs. It auto-loads and consumes
-a single handoff; for several, it shows a selection menu. To load a selected one,
-run the current helper with `show <token>`, then `consume <token>` after reading it.
+The SessionStart hook is silent without pending handoffs. After `/clear` or `/compact`
+it auto-loads and consumes a single handoff; for several, it shows a selection menu.
+A new or resumed session only gets a one-line notice and consumes nothing, because it
+may be another session in the same directory. An unattended architect wake or a builder
+gets nothing. A consumed handoff moves to the mailbox's `consumed/` directory until
+the 7-day TTL. To load a selected one, run the current helper with `show <token>`,
+then `consume <token>` after reading it.
 
 Pick a writable temp path ending in `.md` — the helper **moves** it into the mailbox, so nothing is left behind. A cross-platform way to get one (works on Windows too, unlike `mktemp`):
 

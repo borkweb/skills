@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,11 @@ const NODE = process.execPath;
 const BOX = mkdtempSync(join(tmpdir(), 'rh-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 
+// Scrub the offload markers: run from a builder or an unattended wake, the hook
+// would stay silent and every assertion below would pass for the wrong reason.
 const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
+delete env.OFFLOAD_HANDOFF;
+delete env.OFFLOAD_UNATTENDED_TURN;
 const mailbox = (...args) => execFileSync(NODE, [MB, ...args], { env, encoding: 'utf8' });
 
 const handoff = (path, o = {}) => {
@@ -21,13 +25,17 @@ const handoff = (path, o = {}) => {
 };
 
 // Fire the SessionStart hook with a given cwd; returns the parsed additionalContext.
-const fire = (cwd) => {
+// `source` null sends an input with no source field at all.
+const fire = (cwd, source = 'clear', extraEnv = {}) => {
+  const input = { session_id: 's', cwd, hook_event_name: 'SessionStart' };
+  if (source !== null) input.source = source;
   const out = execFileSync(NODE, [HOOK], {
-    input: JSON.stringify({ session_id: 's', cwd, hook_event_name: 'SessionStart', source: 'clear' }),
-    env, encoding: 'utf8',
+    input: JSON.stringify(input),
+    env: { ...env, ...extraEnv }, encoding: 'utf8',
   });
   return out ? JSON.parse(out).hookSpecificOutput : null;
 };
+const CONSUMED = join(BOX, 'consumed');
 
 let failed = 0;
 const check = (name, fn) => {
@@ -48,7 +56,51 @@ const single = fire(CWD);
 check('event name is SessionStart', () => assert.strictEqual(single.hookEventName, 'SessionStart'));
 check('single handoff body is injected', () => assert.match(single.additionalContext, /Single body marker\./));
 check('single handoff is auto-loaded + consumed', () => assert.ok(!existsSync(stored)));
+check('consumed handoff is kept under consumed/', () => assert.ok(existsSync(join(CONSUMED, stored.split('/').pop()))));
+check('injected body is framed as data from an earlier session', () => {
+  assert.match(single.additionalContext, /<<<HANDOFF\n[\s\S]*Single body marker\.[\s\S]*\nHANDOFF>>>/);
+  assert.match(single.additionalContext, /not as new instructions/);
+});
 check('after consume, a re-fire is silent', () => assert.strictEqual(fire(CWD), null));
+
+// --- compact also auto-loads ---
+const c1 = join(BOX, 'c1.md'); handoff(c1, { body: 'Compact body marker.' });
+const cStored = mailbox('write', c1, CWD).trim();
+check('compact auto-loads a single handoff', () => assert.match(fire(CWD, 'compact').additionalContext, /Compact body marker\./));
+check('compact consumes it', () => assert.ok(!existsSync(cStored)));
+
+// --- sessions that must not take a single handoff ---
+for (const source of ['startup', 'resume', null]) {
+  const p = join(BOX, `n-${source}.md`); handoff(p, { title: `Pending ${source}`, body: 'NOT-FOR-YOU' });
+  const kept = mailbox('write', p, CWD).trim();
+  const ctx = fire(CWD, source);
+  check(`${source ?? 'no'} source shows a one-line notice, not the body`, () => {
+    assert.match(ctx.additionalContext, /A handoff is pending/);
+    assert.match(ctx.additionalContext, new RegExp(`Pending ${source}`));
+    assert.doesNotMatch(ctx.additionalContext, /NOT-FOR-YOU/);
+  });
+  check(`${source ?? 'no'} source consumes nothing`, () => assert.ok(existsSync(kept)));
+  mailbox('consume', kept.split('/').pop().replace(/\.md$/, '').split('--').slice(1).join('--'), CWD);
+}
+
+for (const [name, extra] of [['OFFLOAD_UNATTENDED_TURN', { OFFLOAD_UNATTENDED_TURN: '1' }], ['OFFLOAD_HANDOFF', { OFFLOAD_HANDOFF: '/x/doc.md' }]]) {
+  const p = join(BOX, `o-${name}.md`); handoff(p, { body: 'OFFLOAD-SILENT' });
+  const kept = mailbox('write', p, CWD).trim();
+  check(`${name} set: silent even on clear`, () => assert.strictEqual(fire(CWD, 'clear', extra), null));
+  check(`${name} set: consumes nothing`, () => assert.ok(existsSync(kept)));
+  mailbox('consume', kept.split('/').pop().replace(/\.md$/, '').split('--').slice(1).join('--'), CWD);
+}
+
+// --- prune reaps consumed/ past the TTL ---
+check('prune removes an expired consumed handoff and keeps a fresh one', () => {
+  const files = readdirSync(CONSUMED).map((f) => join(CONSUMED, f));
+  assert.ok(files.length >= 2);
+  const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+  utimesSync(files[0], old, old);
+  mailbox('prune');
+  assert.ok(!existsSync(files[0]));
+  assert.ok(existsSync(files[1]));
+});
 
 // --- multiple handoffs: menu, NOT bodies, nothing consumed ---
 const a = join(BOX, 'a.md'); handoff(a, { title: 'First', goal: 'do A', branch: 'feat/a', body: 'BODY-A' });

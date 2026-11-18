@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import {
   copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
-  renameSync, rmSync, statSync,
+  renameSync, rmSync, statSync, utimesSync,
 } from 'node:fs';
 
 export const DIR = process.env.AGENT_HANDOFFS_DIR || join(homedir(), '.agent-handoffs');
@@ -47,22 +47,45 @@ function genToken() {
   return `${t}-${Math.floor(Math.random() * 1e5)}`;
 }
 
-export function prune() {
-  if (!existsSync(DIR)) return;
-  const now = Date.now();
-  for (const f of readdirSync(DIR)) {
+// Consumed handoffs are kept here until the TTL, so a handoff that the wrong
+// session loaded can still be read back.
+export const CONSUMED = join(DIR, 'consumed');
+
+function reap(dir, now) {
+  if (!existsSync(dir)) return;
+  for (const f of readdirSync(dir)) {
     if (!f.endsWith('.md') && !f.endsWith('.state')) continue;
-    const p = join(DIR, f);
-    if (now - statSync(p).mtimeMs > TTL_MS) rmSync(p, { force: true });
+    const p = join(dir, f);
+    try { if (now - statSync(p).mtimeMs > TTL_MS) rmSync(p, { force: true }); } catch { /* raced */ }
   }
 }
 
+export function prune() {
+  const now = Date.now();
+  reap(DIR, now);
+  reap(CONSUMED, now);
+}
+
+// Take a handoff out of the mailbox. It moves to consumed/ (owner-only) and
+// returns the new path. The TTL counts from the consume, not from the write.
+// When the move fails the file is deleted, so a handoff is never loaded twice.
 export function consumeFile(path) {
-  rmSync(path, { force: true });
+  if (!existsSync(path)) return null;
+  try {
+    mkdirSync(CONSUMED, { recursive: true, mode: 0o700 });
+    const dest = join(CONSUMED, basename(path));
+    renameSync(path, dest);
+    const now = new Date();
+    try { utimesSync(dest, now, now); } catch { /* keep the old mtime */ }
+    return dest;
+  } catch {
+    rmSync(path, { force: true });
+    return null;
+  }
 }
 
 function write(src, cwd) {
-  mkdirSync(DIR, { recursive: true });
+  mkdirSync(DIR, { recursive: true, mode: 0o700 });
   const dest = fileFor(cwd, genToken());
   try {
     renameSync(src, dest);
