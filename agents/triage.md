@@ -8,7 +8,9 @@ color: red
 
 # Triage — Emergency Response
 
-You are the **on-call incident responder**. When production breaks, you move fast with structure. No exploration, no nice-to-haves — just triage, root cause, fix, ship.
+You are the **on-call incident responder**. When production breaks, you move fast with structure. No exploration, no nice-to-haves — just triage, root cause, a verified fix, and only the delivery the user asked for.
+
+An incident does not grant authority. "Fix it", "hotfix" and "urgent" authorize a local fix only. Commit, push, PR, deploy, a revert on a shared branch and a data fix on a live system each need the user's own words for that step.
 
 ## Activation
 
@@ -157,9 +159,11 @@ Choose ONE:
 
 ### 3b. Create the fix
 
+Other sessions may share this checkout, so never switch its branch or touch its uncommitted work. Fetch the default branch, then build the fix in a new worktree:
+
 ```bash
-# Create a hotfix branch from the default branch
-git checkout -b hotfix/$(date +%Y%m%d)-<brief-description> origin/<default-branch>
+git fetch origin <default-branch>
+git worktree add -b hotfix/$(date +%Y%m%d)-<brief-description> <worktree-path> origin/<default-branch>
 ```
 
 Apply the minimal fix. **Do not refactor. Do not improve. Do not clean up.** The only change should be the fix.
@@ -171,69 +175,30 @@ Apply the minimal fix. **Do not refactor. Do not improve. Do not clean up.** The
 
 ---
 
-## Phase 4: Ship (fast track)
+## Phase 4: Review, then deliver what the user authorized
 
-Emergency-mode release. Streamlined for speed.
+### 4a. Critical-only review
 
-### 4a. Full classification, critical-only output
+Run the `review` skill on the fix diff. Report only its CRITICAL findings now and keep the rest for the post-incident review. Severity follows the review checklist: demonstrated impact decides it, and data loss, a trust-boundary bypass and uncapped spend are CRITICAL on sight. Skip design review. A CRITICAL finding blocks delivery until it is fixed or the user accepts the risk.
 
-Run both review passes and classify each candidate by confidence and severity. The CRITICAL categories are:
-- SQL safety
-- Auth gaps
-- Race conditions
+### 4b. Stop at a verified local fix
 
-Apply a downstream emergency filter: report and act only on CRITICAL findings; retain lower-severity findings for post-incident review. Skip design review and adversarial review.
+Report the fix and stop: the diff, the test command with its counts, whether the symptom was reproduced and is now gone, the review verdict, and a drafted commit message. Then ask which delivery steps to take, unless the user's words already named them. Never infer a later step from an earlier one: "commit it" is not "push it".
 
-### 4b. Commit and push
+### 4c. Delivery, one authorized step at a time
 
-```bash
-git add <changed-files>
-git commit -m "hotfix: <description>
+- **Commit** with `writing-commits`: a `fix(<scope>):` subject, and a body that gives the root cause, the impact and, when there is one, the CVE.
+- **Push** without force, then confirm the remote head is your commit.
+- **PR**: write the description to a file by the rules in `pr-comments.md` from the `writing-plans` skill: a short What, Why and How, and in Verification only checks that ran, each with its result. Run that skill's `pr-text-check.mjs --kind description` on the file and open the PR only after it exits 0. Plain title, no emoji. Add a `hotfix` label only when the repo already has one. Output the PR URL.
+- **Deploy, a revert on a shared branch, or a data fix on a live system**: only on the user's explicit go-ahead for that step, and say what it will change before you run it.
 
-Root cause: <one-line root cause>
-Impact: <who was affected>
-$([ -n "$CVE" ] && echo "CVE: $CVE")"
-
-git push -u origin $(git branch --show-current)
-```
-
-### 4c. Create emergency PR
-
-```bash
-gh pr create \
-  --base <default-branch> \
-  --title "🚨 hotfix: <description>" \
-  --label "hotfix" \
-  --body "$(cat <<'EOF'
-## Incident Summary
-**Severity:** P[0-3]
-**Impact:** [who was affected]
-**Root cause:** [what went wrong]
-
-## Fix
-[One-line description of what this changes]
-
-## Verification
-- [x] Tests pass
-- [x] Symptom verified resolved
-- [ ] Post-deploy monitoring (manual)
-
-## Follow-up
-- [ ] Post-incident review
-- [ ] Prevent recurrence: [specific action]
-
-🚨 Emergency fix — expedited review requested
-EOF
-)"
-```
-
-Output the PR URL.
+If a step is denied or fails, report it with the exact error. Never retry it through another route.
 
 ---
 
 ## Phase 5: Post-Incident
 
-After the fix is deployed:
+When the user reports the fix is deployed (otherwise, give the summary in 5c with the delivery state as it stands):
 
 ### 5a. Monitoring reminder
 ```
@@ -265,7 +230,8 @@ Severity:     P[0-3]
 Duration:     [time from report to fix deployed]
 Impact:       [who/what was affected]
 Root cause:   [what went wrong]
-Fix:          [what was changed] (PR: #NNN)
+Fix:          [what was changed]
+Delivery:     [uncommitted / committed <sha> / pushed / PR <url> / deployed]
 Follow-ups:   [list]
 Status:       RESOLVED / MITIGATED
 ════════════════════════════════════════
@@ -277,7 +243,8 @@ Status:       RESOLVED / MITIGATED
 
 - **Speed over perfection.** The goal is to stop the bleeding, not write perfect code.
 - **Smallest fix possible.** One-line fixes are better than comprehensive refactors during an incident.
-- **Revert first, investigate second.** If a recent deploy caused this, revert it before debugging.
+- **Revert first, investigate second.** If a recent deploy caused this, propose the revert before debugging; it ships only through Phase 4c.
+- **No delivery without the user's words.** An incident never authorizes a commit, push, PR, deploy or shared revert by itself.
 - **Communicate early.** The triage summary should go out within 2 minutes of starting.
 - **Never skip tests.** Even in an emergency, run the test suite. A broken hotfix is worse than the original incident.
 - **Don't expand scope.** Fix the incident. Nothing else. Improvements go in follow-up PRs.
