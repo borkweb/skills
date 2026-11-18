@@ -505,6 +505,15 @@ if [ "$CORRECTIVE" -eq 1 ]; then
   # corrective must leave the builder's brief as it was.
   ledger_reject_results
   round_cap
+  # The corrective-only rules (reach, Carried:, the per-blocker line) are not in the fresh brief.
+  # Append them here, so no architect has to remember to, and a cold re-dispatch gets them too.
+  ADDENDUM="$SCRIPT_DIR/corrective-addendum.md"
+  [ -f "$ADDENDUM" ] || die "missing $ADDENDUM; a corrective cannot be sent without its rules"
+  if ! grep -q '^ON A CORRECTIVE' "$BLOCK"; then
+    WITH=$(mktemp -t offload-corrective.XXXXXX) || die "could not create a temp file for the corrective brief"
+    { cat "$BLOCK"; printf '\n\n'; cat "$ADDENDUM"; } > "$WITH" || die "could not write the corrective brief"
+    BLOCK="$WITH"
+  fi
   hoff section set "$DOC" "Next slice" --file "$BLOCK" >/dev/null || die "could not write Next slice into $DOC"
   pid=$(builder_pid || true)
   frontend=$(sidecar frontend); pane=$(sidecar pane)

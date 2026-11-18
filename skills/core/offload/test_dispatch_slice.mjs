@@ -213,6 +213,7 @@ test('corrective into a warm builder: no new tab, the brief goes into the pane, 
   assert.doesNotMatch(log, /tab create/, 'no second builder was launched');
   assert.match(log, /^herdr pane run w9:p7 .*Next slice/m, 'the corrective was typed into the warm pane');
   assert.match(readFileSync(doc, 'utf8'), /## Next slice\n[\s\S]*blocker B1 token leak/);
+  assert.match(hoff(['section', 'get', doc, 'Next slice']), /blocker B1 token leak[\s\S]*\nON A CORRECTIVE[\s\S]*`Carried:[\s\S]*blocker: before the fix/, 'the dispatcher appended the corrective rules');
   assert.equal(status(doc), 'dispatched');
   assert.match(stdout, /dispatch-slice: corrective sent into herdr pane w9:p7 \(warm builder pid \d+\)/);
   assert.match(stdout, /^NEXT \(background\)/m, 'the bridge still has to be re-armed');
@@ -334,6 +335,12 @@ test('corrective when the builder is gone: re-dispatch cold and say so', () => {
   assert.match(log, /tab create/, 'a fresh builder was launched');
   assert.equal(status(doc), 'dispatched');
   assert.match(readFileSync(doc, 'utf8'), /blocker B1 token leak/);
+  // The cold builder reads the block file, not the doc: the rules must be in that file too.
+  const scripts = [...log.matchAll(/bash (\S+\.sh)/g)].map((m) => m[1]);
+  const blockFile = /\$\(cat (\S+?)\)/.exec(readFileSync(scripts.at(-1), 'utf8'))?.[1];
+  assert.ok(blockFile, 'the launch script names a block file');
+  assert.match(readFileSync(blockFile, 'utf8'), /blocker B1 token leak[\s\S]*\nON A CORRECTIVE/);
+  assert.equal((readFileSync(blockFile, 'utf8').match(/^ON A CORRECTIVE/gm) || []).length, 1);
   const rejected = JSON.parse(hoff(['ledger', 'show', R])).slices[0].history.find((h) => h.state === 'rejected');
   assert.equal(rejected?.verdict, 'g2 failed 3/5');
 });

@@ -342,9 +342,9 @@ async function setStatus(p, value, steal) {
   const snapshot = frozenSnapshot(p);
   const gateCheck = (b) => {
     const missing = missingCriteria(b, snapshot);
-    if (missing.length) die(incompleteMessage(missing), 4);
+    if (missing.length) die(`${incompleteMessage(missing)}\n${NEXT_INCOMPLETE}`, 4);
     const stale = staleHead(b);
-    if (stale) die(`stale: ${stale}`, 5);
+    if (stale) die(`stale: ${stale}\n${NEXT_STALE}`, 5);
   };
   // results-ready: coverage, then stale, then the local gates, once and outside updateDoc (its
   // retry would run them again). The write re-checks coverage and the head on the fresh text and
@@ -447,6 +447,12 @@ function missingCriteria(doc, snapshot = '') {
   const leaf = (id) => !frozen.some((o) => o !== id && /^C\d+[a-z]$/.test(o) && o.slice(0, -1) === id);
   return frozen.filter((id) => leaf(id) && !have.has(id));
 }
+
+// What the builder does after each `ready` refusal. The brief says only "do what the message says",
+// so each of these must be a complete instruction, and test_local_gates_docs.mjs reads them from real refusals.
+const NEXT_INCOMPLETE = 'Then run `ready` again. Do not run `blocked`, use `--steal` or run `status`.';
+const NEXT_STALE = "Rerun at HEAD every gate and check you list under `Head:` (on a corrective, the gates your diff can reach and every criterion's check; keep the `Carried:` line), update the evidence and the `Head:` line, then run `ready` again. Do not run `blocked`, use `--steal` or run `status`.";
+const NEXT_RED = 'Read each saved output, fix the cause within your owned files, commit it and run `ready` again. Do not edit Frozen gates, use `--steal` or run `status`. A red gate you cannot fix within your owned files (red at the base, or failing because of the environment) goes under Open disagreements; then run `blocked`.';
 
 const incompleteMessage = (missing) =>
   `incomplete: Gate results has no line for ${missing.join(', ')}.\n` +
@@ -576,7 +582,7 @@ async function runLocalGates(doc, { path: docPath, requireClean }) {
   const head1 = gitIn(cwd, ['rev-parse', '--verify', 'HEAD^{commit}']);
   if (head1.out !== head0.out) reds.push(`HEAD moved from ${head0.out.slice(0, 12)} to ${head1.out.slice(0, 12) || 'unknown'} while the gates ran; a gate must not commit or switch branches. Rerun every gate at the new HEAD and update the Head line`);
   if (!reds.length) return { ok: true, sig };
-  return red(`${reds.join('\n')}\nRead each saved output, fix the cause within your owned files, then run ready again.`);
+  return red(`${reds.join('\n')}\n${NEXT_RED}`);
 }
 
 // The Stop hook's question: should this builder be sent back? null to let the stop through, else

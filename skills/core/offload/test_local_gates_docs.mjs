@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import assert from 'node:assert';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { N, HANDOFF, cli, gitRepo, mkGateDoc, scratch } from './gate-fixture.mjs';
+import { N, HANDOFF, cli, gitRepo, mkGateDoc, readyFx, scratch } from './gate-fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const doc = (name) => readFileSync(join(HERE, name), 'utf8');
@@ -22,21 +22,45 @@ test('C9a: builder-template says ready runs the frozen local gates at HEAD and r
   assert.match(template, new RegExp(`exit ${N}\\b`));
 });
 
-test('C9b: the builder reads the saved output, fixes within the owned files, reruns ready, and never edits gates, steals or runs status', () => {
-  const para = template.split('\n').find((p) => p.includes('red:') && /saved output/i.test(p)) ?? '';
-  assert.ok(para, 'a paragraph on handling a red: refusal');
-  assert.match(para, /read/i);
-  assert.match(para, /owned files/i);
-  assert.match(para, /rerun `ready`|run `ready` again/i);
-  assert.match(para, /Frozen gates/);
-  assert.match(para, /--steal/);
-  assert.match(para, /`status`/);
+// The brief no longer spells out what to do after a refusal: `ready` says it. These read real refusals.
+const redRefusal = () => {
+  const fx = readyFx(['false']);
+  return cli(['ready', fx.doc], { session: 's' });
+};
+
+test('C9b: a red: refusal tells the builder to read the saved output, fix within the owned files, commit, rerun ready, and never edit gates, steal or run status', () => {
+  const r = redRefusal();
+  assert.equal(r.code, N);
+  assert.match(r.err, /^red: /);
+  assert.match(r.err, /Read each saved output/);
+  assert.match(r.err, /owned files/i);
+  assert.match(r.err, /commit it and run `ready` again/);
+  assert.match(r.err, /Do not edit Frozen gates/);
+  assert.match(r.err, /--steal/);
+  assert.match(r.err, /`status`/);
 });
 
-test('C9c: a red gate the builder cannot fix goes to Open disagreements, then blocked', () => {
-  const para = template.split('\n').find((p) => /red gate/.test(p) && /Open disagreements/.test(p)) ?? '';
-  assert.ok(para, 'the escape for a red gate that cannot be fixed within the owned files');
-  assert.match(para, /`blocked`/);
+test('C9c: a red: refusal says a red gate the builder cannot fix goes to Open disagreements, then blocked', () => {
+  const line = redRefusal().err.split('\n').find((l) => /red gate you cannot fix/.test(l)) ?? '';
+  assert.ok(line, 'the escape for a red gate that cannot be fixed within the owned files');
+  assert.match(line, /Open disagreements/);
+  assert.match(line, /`blocked`/);
+});
+
+test('an incomplete: refusal and a stale: refusal each give the next step', () => {
+  const repo = gitRepo();
+  const missing = cli(['ready', mkGateDoc({ frozen: ['C2: y'], head: repo.head, cwd: repo.dir })], { session: 's' });
+  assert.equal(missing.code, 4);
+  assert.match(missing.err, /^incomplete: [\s\S]*C2[\s\S]*run `ready` again\. Do not run `blocked`, use `--steal` or run `status`\./);
+  const stale = cli(['ready', mkGateDoc({ head: '0'.repeat(40), cwd: repo.dir })], { session: 's' });
+  assert.equal(stale.code, 5);
+  assert.match(stale.err, /^stale: [\s\S]*Rerun at HEAD every gate[\s\S]*keep the `Carried:` line[\s\S]*run `ready` again/);
+});
+
+test('the brief sends the builder to the refusal message', () => {
+  const line = template.split('\n').find((l) => l.startsWith('On a refusal')) ?? '';
+  assert.match(line, /do what its message says/);
+  for (const token of ['`incomplete:`', '`stale:`', '`red:`']) assert.ok(line.includes(token), token);
 });
 
 test('C9d: ready is no longer described as only a coverage check without saying it runs local gates', () => {
@@ -45,10 +69,14 @@ test('C9d: ready is no longer described as only a coverage check without saying 
   assert.ok(template.includes('it refuses unless Gate results has one line for every frozen criterion ID'), 'frozen phrase kept');
 });
 
-test('C9e: the corrective reach rule says local gates rerun at HEAD on every ready, whatever Carried: says', () => {
-  const para = template.split('\n').find((p) => p.includes('Carried:') && /local gates?/i.test(p) && /every `?ready`?/.test(p)) ?? '';
-  assert.ok(para, 'a Carried: paragraph naming local gates');
-  assert.match(para, /every `?ready`?|each `?ready`?/i);
+test('C9e: the corrective rules the dispatcher appends say local gates rerun at HEAD on every ready, whatever Carried: says', () => {
+  const addendum = doc('corrective-addendum.md');
+  assert.match(addendum, /^ON A CORRECTIVE/);
+  const para = addendum.split('\n').find((p) => p.includes('Carried:') && /local gates?/i.test(p) && /every `?ready`?/.test(p)) ?? '';
+  assert.ok(para, 'a Carried: line naming local gates');
+  assert.ok(!template.includes('ON A CORRECTIVE'), 'the fresh brief does not carry the corrective rules');
+  const src = readFileSync(join(HERE, 'dispatch-slice.sh'), 'utf8');
+  assert.match(src, /corrective-addendum\.md/);
 });
 
 test('C9f: the freeze step says which gates to mark local, the syntax and the timeout', () => {

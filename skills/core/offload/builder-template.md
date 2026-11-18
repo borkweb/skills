@@ -1,6 +1,6 @@
 # Builder brief
 
-Fill this template for the slice. Save the brief and link it; print it in full only for manual handoff. The labelled blocks are short on purpose: a builder drops rules it has to dig out of long paragraphs. The bar (`Acceptance:` and `Gates:`) comes last, so it is the freshest text when the builder starts and the text it re-reads before ready. RETURNS is a form to fill in, not a description. TRANSPORT applies only to builders that have `$OFFLOAD_HANDOFF`; a Local-tier subagent follows the rest and writes RETURNS to the result file. Never start a line of a block other than `Acceptance:` with a criterion ID (`C5:`) or a local gate (`L1: local:`): the dispatcher freezes every such line.
+Fill this template for the slice. Save the brief and link it; print it in full only for manual handoff. The labelled blocks are short on purpose: a builder drops rules it has to dig out of long paragraphs. The bar (`Acceptance:` and `Gates:`) comes last, so it is the freshest text when the builder starts and the text it re-reads before ready. RETURNS is a form to fill in, not a description. Two things are deliberately not here: the corrective rules, which `dispatch-slice.sh --corrective` appends from [corrective-addendum.md](corrective-addendum.md), and the step after a `ready` refusal, which each refusal message gives. TRANSPORT applies only to builders that have `$OFFLOAD_HANDOFF`; a Local-tier subagent follows the rest and writes RETURNS to the result file. Never start a line of a block other than `Acceptance:` with a criterion ID (`C5:`) or a local gate (`L1: local:`): the dispatcher freezes every such line.
 
 ```text
 Execute <slice goal> in <absolute worktree> on <branch>.
@@ -34,25 +34,18 @@ BEFORE READY
 - (b) Read the callbacks, middleware, observers and hooks up to two levels out from the change, plus any other interface that exposes the changed behavior. Run the tests that cover them.
 - (c) Never narrow requested behavior to fit a safeguard by delaying, gating, capping or skipping part of it. An open conflict is a blocker.
 - (d) After two failed fixes for the same failing check, name the assumption both relied on and check it before a third try.
-- (e) Re-read every `Acceptance:` line at the end of this brief and check each one against the code, the way the independent `review` will. Fix what you find. This pre-check is not acceptance. Do not grade your own work or change frozen gates.
+- (e) Re-read the criteria (the `Acceptance:` lines at the end of this brief; with a handoff, the TRANSPORT step's `Frozen gates` copy, which also holds later rulings) and check each one against the code, the way the independent `review` will. Fix what you find. This pre-check is not acceptance. Do not grade your own work or change frozen gates.
 - While iterating, run the narrowest gate that covers the file you are editing. On a fresh dispatch, run the full frozen gate set once after your last edit and report that run.
 - A frozen gate you cannot run here (no access, no sandbox, wrong runtime version) is `NOT RUN` with the reason, never a pass.
 - Complete the authorized delivery steps before you report: commit as the `Authorization:` line allows, and nothing it prohibits. Then fill RETURNS.
 
-ON A CORRECTIVE
-- Rerun the gates your diff can reach and every criterion's check at HEAD. A gate your diff can reach is a test that imports, executes or reads a changed file, or a validator that reads a changed doc. A change to dependency, build or test configuration reaches every gate. When unsure, rerun it.
-- Measure reach over `git diff <Carried sha>..HEAD`; the `Carried:` sha must be an ancestor of HEAD. A corrective that rebases onto or merges its base carries nothing. A local gate (a frozen `L<n>: local: <command>` line) is never carried: it reruns at HEAD on every `ready`, whatever the `Carried:` line says.
-- Report every criterion again, not only the blockers. The architect runs the full set once on the head it accepts.
-
 RETURNS (fill every line in this order; a criterion with no line counts as not met)
 Gate results:
 Head: <sha of the commit the final gate run used; after any later commit, even a comment or a description string, rerun and update it>
-Carried: <earlier head sha> — <gate names your diff cannot reach> (corrective only; omit on a fresh dispatch)
 <gate name>: PASS | FAIL | NOT RUN <reason> — <exact counts> — `<command>` exit <code> — <raw evidence path>
 Safety fact: <the one fact the change is safe because of> — rung <1 cited line | 2 walked failure | 3 real code with hostile input | 4 reproduced live; go as far as is cheap> — <evidence path>
 <ID>: MET — <test, command or file:line that proves it> — <result> — <the break this check would catch>
 <ID>: NOT MET | NOT RUN — <reason>
-<ID> blocker: before the fix <red command result> — after <result> (corrective only, one line per blocker)
 One criterion line per ID, by its ID exactly as frozen (C5, C5a).
 Loosened tests: <each assertion, expected value, fixture value, golden file or test case removed, skipped or loosened, with the source of truth that justifies it (spec section, API doc, recorded real response)>, or None. Never change an expectation to match the code without one; an unlisted change counts as a defect.
 Work summary: <changed paths, branch and commit state, remaining work and blockers>
@@ -62,13 +55,11 @@ Without `$OFFLOAD_HANDOFF` (a Local-tier subagent), write the same Returns to th
 
 TRANSPORT (only when `$OFFLOAD_HANDOFF` is set). Handoff: $OFFLOAD_HANDOFF.
 Report through the handoff CLI: set builder_session to your actual session or resume ID, and write Gate results, Work summary and Open disagreements with `node "<resolved handoff.mjs>" section append|set "$OFFLOAD_HANDOFF" "<heading>" --file <file>`. Never splice Markdown or write the architect's ledger.
-Before the final gate run, also re-read `## Frozen gates` with `node "<resolved handoff.mjs>" section get "$OFFLOAD_HANDOFF" "Frozen gates"` and report against that copy.
+For BEFORE READY (e), read `## Frozen gates` with `node "<resolved handoff.mjs>" section get "$OFFLOAD_HANDOFF" "Frozen gates"`.
 At completion, run `node "<resolved handoff.mjs>" ready "$OFFLOAD_HANDOFF"`. It is a coverage check plus a run of the frozen local gates, not a check of the evidence: it refuses unless Gate results has one line for every frozen criterion ID, and lines from an earlier round satisfy it. It also refuses with `stale:` when the `Head:` line is missing or does not match your worktree's HEAD. Once those pass, `ready` runs every frozen local gate (`L<n>: local: <command>` lines in Frozen gates) in your worktree at HEAD and refuses with `red:` and exit 7, naming each red gate and the file that holds its output; the status does not change. When the slice has local gates, it also refuses, with `red:`, when tracked files have uncommitted changes. A Claude builder's Stop hook runs the same gates and sends you back once.
-On an `incomplete:` refusal, add the missing lines and run `ready` again. Do not run `blocked`, use `--steal` or run `status`. On a `stale:` refusal, rerun at HEAD every gate and check you list under `Head:` (on a corrective, the gates your diff can reach and every criterion's check; keep the `Carried:` line), update the evidence and the `Head:` line, then run `ready` again. Do not run `blocked`, use `--steal` or run `status`.
-On a `red:` refusal, read the saved output at the path it names, fix the cause within your owned files, commit it and run `ready` again. Do not edit Frozen gates, use `--steal` or run `status`.
-If the red gate is one you cannot fix within your owned files (red at the base, or failing because of the environment), record it under Open disagreements, then run `blocked`.
+On a refusal, do what its message says: each `incomplete:`, `stale:` or `red:` message gives the next step. On an `incomplete:` refusal, add the missing lines and run `ready` again. Do not run `blocked`, use `--steal` or run `status`.
 For a mid-slice blocker, record Open disagreements, then run `node "<resolved handoff.mjs>" blocked "$OFFLOAD_HANDOFF"` and report what needs a ruling. Do not silently wait.
-Ownership refusal is a blocker: do not use --steal or edit the path to bypass it. The dispatcher supplies the architect's session identity in `$OFFLOAD_SESSION_ID`, which the CLI honors for `$OFFLOAD_HANDOFF` even when your own `$CLAUDE_CODE_SESSION_ID` differs. Use only the status vocabulary documented by the CLI.
+Ownership refusal is a blocker: do not use --steal or edit the path to bypass it.
 
 THE BAR (the independent reviewer applies this same list)
 Acceptance: <copy every criterion verbatim from the spec review, one per line below this label, each line starting with its ID as `<ID>: <condition>`>
