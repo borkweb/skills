@@ -539,6 +539,50 @@ test('coverage: read-only, needs no session, and a missing path is neither 0 nor
   assert.match(gone.err, /\/nonexistent\/x\.md/);
 });
 
+// The builder writes the doc, so the freeze's copy (`<doc>.frozen`) keeps a
+// criterion owed after its line is deleted from Frozen gates.
+test('coverage and ready owe a line for every ID in the frozen copy, even one deleted from the doc', () => {
+  const p = mkDoc('C1: a\n', 'C1: pass\n');
+  assert.equal(cli(['coverage', p]).code, 0, 'without a copy, the doc alone decides (a slice frozen before the copy)');
+  writeFileSync(`${p}.frozen`, 'C1: a\nC2: b\n');
+  const r = cli(['coverage', p]);
+  assert.deepEqual(ids(r.out), ['C2'], 'C2 was deleted from the doc but is still owed');
+  assert.equal(r.code, 4);
+  const before = readFileSync(p, 'utf8');
+  const ready = cli(['ready', p], { session: 's' });
+  assert.equal(ready.code, 4);
+  assert.match(ready.err, /^incomplete:.*C2/);
+  assert.equal(readFileSync(p, 'utf8'), before, 'ready wrote nothing');
+});
+
+test('a ruling appended to the doc after the freeze is owed too, and a covered doc passes', () => {
+  const p = mkDoc('C1: a\nC2: b\nC3: appended ruling\n', 'C1: pass\nC2: pass\n');
+  writeFileSync(`${p}.frozen`, 'C1: a\nC2: b\n');
+  assert.deepEqual(ids(cli(['coverage', p]).out), ['C3']);
+  const q = mkDoc('C1: a\n', 'C1: pass\nC2: NOT MET because x\n');
+  writeFileSync(`${q}.frozen`, 'C1: a\nC2: b\n');
+  assert.equal(cli(['coverage', q]).code, 0);
+});
+
+test('end removes the frozen copy, and a new doc at the same path starts without one', () => {
+  const REPO = repo('end-frozen');
+  const p = run(['init', REPO, 'sess-EF']);
+  writeFileSync(`${p}.frozen`, 'C1: old slice\n');
+  run(['end', p]);
+  assert.ok(!existsSync(`${p}.frozen`), 'end removed the copy');
+  writeFileSync(`${p}.frozen`, 'C9: stale copy left by an older version\n');
+  assert.equal(run(['init', REPO, 'sess-EF']), p, 'the new doc takes the same path');
+  assert.ok(!existsSync(`${p}.frozen`), 'init cleared the stale copy, so the old IDs are not charged to the new slice');
+});
+
+test('reattach moves the frozen copy with the doc', () => {
+  const p = run(['init', repo('reattach-frozen'), 'sess-RA']);
+  writeFileSync(`${p}.frozen`, 'C1: a\n');
+  const dest = run(['reattach', p, 'sess-RB', '--steal']);
+  assert.notEqual(dest, p);
+  assert.ok(existsSync(`${dest}.frozen`) && !existsSync(`${p}.frozen`));
+});
+
 test('coverage is listed in the CLI usage', () => {
   assert.match(cli([]).err, /coverage/);
 });

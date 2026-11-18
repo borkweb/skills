@@ -68,7 +68,11 @@
 # (use a new worktree or end the old handoff). A block with no criterion IDs
 # prints one warning line and the dispatch continues. When the freeze or the
 # launch fails the section is put back as it was. The ID and comment rules are a
-# copy of handoff.mjs's; test_dispatch_slice.mjs asserts the two agree.
+# copy of handoff.mjs's; test_dispatch_slice.mjs asserts the two agree. The freeze
+# also writes the frozen section to `<handoff>.frozen` when that file is absent, and
+# `coverage`/`ready` owe a line for every ID in either copy: the builder writes the
+# doc, so a criterion it deletes from Frozen gates stays owed. A failed launch
+# removes the copy this call wrote.
 # Local gates: a block line `L<n>: local: <command>` is frozen the same way, verbatim, beside the
 # criterion lines (comments blanked, CRLF normalized), and `handoff.mjs ready` runs it. A block with local
 # lines and no criterion IDs still freezes them. A malformed local line (an empty command, a second
@@ -386,7 +390,7 @@ launch() {
     echo "dispatch-slice: launch failed (exit $rc); slice stays specced, nothing is running" >&2
     exit "$rc"
   fi
-  FREEZE_DONE=0 # the builder is running: its criteria stay frozen
+  FREEZE_DONE=0; SNAPSHOT_NEW=0 # the builder is running: its criteria, and their copy, stay frozen
   printf '%s\n' "$out"
   pane=$(sidecar pane); frontend=$(sidecar frontend)
   hoff status "$DOC" dispatched >/dev/null
@@ -430,8 +434,9 @@ if (out.length) process.stdout.write(out.join("\n") + "\n");
 JS
 criteria() { node -e "$CRITERIA_JS" "$1"; }
 
-FREEZE_DONE=0; FREEZE_PRIOR=""
+FREEZE_DONE=0; FREEZE_PRIOR=""; SNAPSHOT_NEW=0
 restore_frozen() {
+  if [ "$SNAPSHOT_NEW" -eq 1 ]; then SNAPSHOT_NEW=0; rm -f "$DOC.frozen"; fi
   [ "$FREEZE_DONE" -eq 1 ] || return 0
   FREEZE_DONE=0
   local tmp
@@ -446,6 +451,17 @@ restore_frozen() {
 }
 trap restore_frozen EXIT
 
+# Keep a copy of the frozen section beside the doc, once: the first freeze wins and
+# a later dispatch never rewrites it. coverage reads it so a deleted line stays owed.
+snapshot_frozen() {
+  local snap
+  [ -e "$DOC.frozen" ] && return 0
+  snap=$(hoff section get "$DOC" "Frozen gates") || die "could not read Frozen gates from $DOC for the frozen copy; nothing was launched"
+  printf '%s\n' "$snap" > "$DOC.frozen.tmp.$$" && mv "$DOC.frozen.tmp.$$" "$DOC.frozen" \
+    || { rm -f "$DOC.frozen.tmp.$$"; die "could not write $DOC.frozen; nothing was launched"; }
+  SNAPSHOT_NEW=1
+}
+
 freeze_gates() {
   local cur have want have_l want_l bad tmp
   cur=$(hoff section get "$DOC" "Frozen gates") || die "could not read Frozen gates from $DOC; nothing was launched"
@@ -456,7 +472,7 @@ freeze_gates() {
   have_l=$(printf '%s\n' "$cur" | criteria locals) || die "could not read the local gates in Frozen gates; nothing was launched"
   want_l=$(criteria locals < "$BLOCK") || die "could not read the local gates in $BLOCK; nothing was launched"
   if [ -n "$have$have_l" ]; then
-    [ "$have" = "$want" ] && [ "$have_l" = "$want_l" ] && return 0
+    [ "$have" = "$want" ] && [ "$have_l" = "$want_l" ] && { snapshot_frozen; return 0; }
     die "Frozen gates in $DOC already hold criteria or local gates that this block does not match. Frozen gates are never rewritten: use a new worktree for this slice or end the old handoff (node $HANDOFF_MJS end \"$DOC\"). Nothing was launched."
   fi
   if [ -z "$want$want_l" ]; then
@@ -469,6 +485,7 @@ freeze_gates() {
   FREEZE_DONE=1
   hoff section set "$DOC" "Frozen gates" --file "$tmp" >/dev/null || { rm -f "$tmp"; die "could not freeze the criteria into $DOC; nothing was launched"; }
   rm -f "$tmp"
+  snapshot_frozen
 }
 
 if [ "$CORRECTIVE" -eq 1 ]; then

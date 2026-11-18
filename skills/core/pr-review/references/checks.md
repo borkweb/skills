@@ -13,7 +13,10 @@ when a CI check is still pending.
 1. **List the repo's checks.** Read `package.json` scripts, `composer.json`
    scripts, the `Makefile`, `bin/`, and any `AGENTS.md`, `CLAUDE.md` or
    `CONTRIBUTING.md` for the test, lint, type-check and static-analysis
-   commands.
+   commands. If the PR changes one of those files, read it at `<merge-base>`
+   too (`git show <merge-base>:<path>`). The base commands set the bar: a
+   command the PR removed or weakened still runs, and a new command runs as
+   well. Report each removed or changed command as a gate change.
 2. **Map them to CI.** Read the CI config at `<headRefOid>` (for example
    `.github/workflows/*.yml`) to see which job runs which command. The head
    commit's CI results are already in `pr.json` from Step 0. Check runs and

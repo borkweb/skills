@@ -814,6 +814,30 @@ test('a failed launch restores Frozen gates so a revised block can freeze again'
   assert.match(frozenOf(doc), /^C1: revised$/m);
 });
 
+test('the freeze keeps a copy beside the doc, so a criterion the builder deletes from Frozen gates stays owed', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-copy');
+  run([R, WT, 'feat/fz-copy', blockFile('fz-copy.md', 'Execute.\nC1: one\nC2: two\n')]);
+  const doc = hoff(['path', WT, 'arch']);
+  assert.equal(readFileSync(`${doc}.frozen`, 'utf8'), `${frozenOf(doc)}`.replace(/\n*$/, '\n'), 'the copy is the frozen section');
+  hoff(['section', 'set', doc, 'Frozen gates', '--text', 'C1: one']); // the builder drops C2
+  assert.deepEqual(coverage(doc).ids, ['C1', 'C2'], 'C2 is still owed');
+});
+
+test('a failed launch removes the frozen copy it wrote, and a second dispatch keeps the first copy', () => {
+  const R = repo();
+  const WT = join(BOX, 'wt-freeze-copy-fail');
+  runFail([R, WT, 'feat/fz-cf', blockFile('fz-cf.md', 'Execute.\nC1: one\n')], { HERDR_STUB_MODE: 'fail-create' });
+  const doc = hoff(['path', WT, 'arch']);
+  assert.ok(!existsSync(`${doc}.frozen`), 'no copy survives a failed launch');
+  run([R, WT, 'feat/fz-cf', blockFile('fz-cf2.md', 'Execute.\nC1: revised\n')]);
+  const first = readFileSync(`${doc}.frozen`, 'utf8');
+  assert.match(first, /^C1: revised$/m);
+  hoff(['status', doc, 'specced']);
+  run([R, WT, 'feat/fz-cf', blockFile('fz-cf3.md', 'Execute again.\nC1: same ID, new words\n')]);
+  assert.equal(readFileSync(`${doc}.frozen`, 'utf8'), first, 'a later dispatch never rewrites the copy');
+});
+
 test('a block with no criterion IDs warns once, still launches, and keeps the bridge line last', () => {
   const R = repo();
   const WT = join(BOX, 'wt-freeze-none');

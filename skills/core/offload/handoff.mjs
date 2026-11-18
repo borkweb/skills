@@ -18,7 +18,9 @@
 //                                                             builder calls this before stopping on a mid-slice blocker
 //                                                             so the wait bridge wakes the architect to arbitrate
 //   node handoff.mjs coverage <path>                      -> print the frozen criterion IDs that have no line under
-//                                                             Gate results, one per line; exit 0 when all are covered,
+//                                                             Gate results, one per line (frozen means in Frozen gates
+//                                                             or in the `<path>.frozen` copy dispatch-slice.sh wrote,
+//                                                             so a deleted line stays owed); exit 0 when all are covered,
 //                                                             4 when some are missing. Read-only, needs no session.
 //                                                             `ready` and `status results-ready` run the same check
 //                                                             and refuse with `incomplete:` (exit 4), after ownership
@@ -213,6 +215,9 @@ function ensureDoc(cwd, sessionId, title) {
     b = setField(b, 'status', 'specced');
     b = setField(b, 'created', t);
     b = setField(b, 'updated', t);
+    // A new doc reuses the path of an ended one, so a frozen copy left beside it
+    // belongs to the old slice and would charge its IDs to this one.
+    rmSync(`${p}.frozen`, { force: true });
     writeFileSync(p, b);
   }
   return p;
@@ -281,6 +286,7 @@ function reattach(p, sessionId, steal) {
   writeFileSync(p, b);
   if (dest !== p) {
     renameSync(p, dest);
+    if (existsSync(`${p}.frozen`)) renameSync(`${p}.frozen`, `${dest}.frozen`);
     process.stderr.write(`reattach: ownership ${owner || '(none)'} -> ${sid}; moved to ${dest}\n`);
   }
   process.stdout.write(dest + '\n');
@@ -333,8 +339,9 @@ async function setStatus(p, value, steal) {
   assertOwner(p, expected, steal, `set status=${v} on`);
   // Coverage runs on the same text the write replaces, so the check and the
   // write cannot see different docs. --steal reaches only assertOwner above.
+  const snapshot = frozenSnapshot(p);
   const gateCheck = (b) => {
-    const missing = missingCriteria(b);
+    const missing = missingCriteria(b, snapshot);
     if (missing.length) die(incompleteMessage(missing), 4);
     const stale = staleHead(b);
     if (stale) die(`stale: ${stale}`, 5);
@@ -421,11 +428,21 @@ function sectionText(text, heading) {
   return lines.slice(at + 1, end === -1 ? lines.length : end).join('\n');
 }
 
-// Frozen IDs with no line under Gate results. A parent that has frozen
-// sub-IDs (C1 beside C1a) is covered by them and needs no line of its own.
-function missingCriteria(doc) {
+// The criterion lines dispatch-slice.sh froze, kept beside the doc as `<doc>.frozen`.
+// The builder can edit the doc, so this copy is what keeps a deleted criterion owed.
+// It is '' for a slice frozen before the copy existed. An unreadable copy throws (fail closed).
+function frozenSnapshot(p) {
+  const f = `${p}.frozen`;
+  return existsSync(f) ? readFileSync(f, 'utf8') : '';
+}
+
+// Frozen IDs with no line under Gate results: every ID in the doc's Frozen
+// gates and every ID in `snapshot`, so deleting a frozen line drops no ID. A
+// parent that has frozen sub-IDs (C1 beside C1a) is covered by them and needs
+// no line of its own.
+function missingCriteria(doc, snapshot = '') {
   const text = doc.replace(/\r\n?/g, '\n');
-  const frozen = [...new Set(leadingIds(sectionText(text, 'Frozen gates')))];
+  const frozen = [...new Set([...leadingIds(sectionText(text, 'Frozen gates')), ...leadingIds(snapshot)])];
   const have = new Set(leadingIds(sectionText(text, 'Gate results')));
   const leaf = (id) => !frozen.some((o) => o !== id && /^C\d+[a-z]$/.test(o) && o.slice(0, -1) === id);
   return frozen.filter((id) => leaf(id) && !have.has(id));
@@ -439,7 +456,7 @@ const incompleteMessage = (missing) =>
 function coverage(p) {
   requireDoc(p);
   const doc = readFileSync(p, 'utf8');
-  const missing = missingCriteria(doc);
+  const missing = missingCriteria(doc, frozenSnapshot(p));
   if (missing.length) {
     process.stdout.write(`${missing.join('\n')}\n`);
     die(incompleteMessage(missing), 4);
@@ -762,7 +779,7 @@ function staleHead(doc) {
 // --- sections -------------------------------------------------------------
 // A section is `## <heading>` through the line before the next `## ` (or EOF).
 
-const SIDECAR_SUFFIXES = ['.builder', '.activity', '.turn-ended', '.gates'];
+const SIDECAR_SUFFIXES = ['.builder', '.activity', '.turn-ended', '.gates', '.frozen'];
 
 const reEscape = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
 
@@ -934,7 +951,10 @@ function ledgerCmd(rest) {
   }
 }
 
-function end(p) { rmSync(p, { force: true }); }
+function end(p) {
+  rmSync(p, { force: true });
+  rmSync(`${p}.frozen`, { force: true });
+}
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, ...rest] = process.argv.slice(2);

@@ -734,10 +734,11 @@
       "The reviewed diff range starts at the commit of the earlier /pr-review review, not the merge-base",
       "The summary Scope row says INCREMENTAL",
       "The earlier CRITICAL comment is reported as resolved, still present or outdated",
+      "The teammate's inline comment is not counted as an earlier CRITICAL comment",
       "No finding that matches an existing PR comment is in the posted payload"
     ],
     "fixture": {
-      "pr": "an earlier COMMENT review by the same user with body starting '<!-- pr-review sha=<old> -->' and one inline CRITICAL comment; two new non-merge commits since <old>; <old> is an ancestor of the head (no rebase or force-push) and no merge commit is in <old>..head"
+      "pr": "an earlier COMMENT review by the same user with body starting '<!-- review sha=<old> -->\\n🤖' and one inline comment by the same user whose body starts '🤖 **CRITICAL — '; one inline comment by a teammate whose body starts '**CRITICAL — '; two new non-merge commits since <old>; <old> is an ancestor of the head (no rebase or force-push) and no merge commit is in <old>..head"
     }
   },
   {

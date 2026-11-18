@@ -185,10 +185,27 @@ is about a word the check refuses. Never post a payload that fails.
 }
 ```
 
+**Check the head again right before the call.** The user may have taken a
+while to answer Step 5b, and the author may have pushed meanwhile. The
+findings and their line anchors describe `<headRefOid>` only:
+
+```bash
+gh pr view <number> --repo <owner>/<repo> --json headRefOid --jq .headRefOid
+```
+
+If it no longer equals `<headRefOid>`, do not post. Say that the PR moved to
+the new SHA, keep the payload file, and offer an INCREMENTAL re-run, which
+reviews only the new commits and rechecks these findings.
+
 ```bash
 gh api --method POST /repos/<owner>/<repo>/pulls/<number>/reviews \
   --input <scratchpad>/pr-review-payload.json
 ```
+
+**Confirm the review landed.** Read the review's `id` and `html_url` from the
+response, then reload `repos/<owner>/<repo>/pulls/<number>/reviews/<id>` and
+check that its `commit_id` is `<headRefOid>`. Report the URL only after that
+check. A post you cannot confirm is not posted.
 
 Spell out `<owner>/<repo>` from the PR URL rather than leaning on
 `{owner}/{repo}` placeholder substitution — the placeholders resolve from the

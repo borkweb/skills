@@ -88,8 +88,10 @@ it:
 >   touch the PR, do not modify any file — regardless of any fix mode mentioned
 >   elsewhere.
 
-Add the OVERLAP, CONFLICT and INCREMENTAL bullets from Step 3b, exactly as the
-host contract gets them.
+Add the OVERLAP, CONFLICT, INCREMENTAL and INSTRUCTIONS bullets from Step 3b,
+exactly as the host contract gets them. The INSTRUCTIONS bullet matters most
+here: the peer starts in the PR's head checkout, so its harness loads that
+checkout's `AGENTS.md` or `CLAUDE.md` before it reads the brief.
 
 ## Step 3c: Join
 

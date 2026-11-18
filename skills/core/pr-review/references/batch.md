@@ -40,7 +40,7 @@ All in `<dir>`:
   it exactly as Step 5c describes, with the marker, `commit_id` and
   `"event": "COMMENT"`. Don't post it.
 - `informational.json`: the INFORMATIONAL findings, numbered as Step 5b would
-  number them, each body already in Step 5c's `**INFORMATIONAL — <title>**`
+  number them, each body already in Step 5c's `🤖 **INFORMATIONAL — <title>**`
   form:
 
   ```json
