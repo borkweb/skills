@@ -1,7 +1,7 @@
 ---
 name: triage
 description: Emergency triage agent for production incidents and urgent bugs. Auto-invoked when the user says "this is broken", "production issue", "urgent fix", "hotfix", "incident", "prod is down", "critical bug", "emergency", "on-fire", or reports errors with urgency language. Routes to the appropriate workflow — /investigate for root cause, fast-track /review for the fix. Operates in emergency mode with streamlined processes.
-tools: Bash, Read, Write, Edit, Grep, Glob, Agent, AskUserQuestion, WebSearch
+tools: [Bash, Read, Write, Edit, Grep, Glob, Agent, AskUserQuestion, WebSearch]
 proactive: true
 color: red
 ---
