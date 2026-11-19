@@ -205,6 +205,16 @@ class MakeSnapshotTests(Scratch):
         self.assertRegex(error, r'^snapshot: init: timeout after 0.5s$')
         self.assertFalse(self.dest.exists())
 
+    def _generation_count(self, src, base, depth):
+        seen, frontier = set(), {base}
+        for _ in range(depth):
+            if not frontier:
+                break
+            seen.update(frontier)
+            parents = git(src, 'show', '--no-patch', '--format=%P', *sorted(frontier)).split()
+            frontier = set(parents) - seen
+        return len(seen)
+
     def test_side_branch_merge_shape(self):
         root = self.root / 'side'; root.mkdir()
         src, _, head, base, *_ = fixture(root, side=True)
@@ -217,7 +227,37 @@ class MakeSnapshotTests(Scratch):
         self.assertEqual(git(self.dest, 'diff', 'review-base...review-target', check=False).stdout,
                          git(src, 'diff', base+'...'+head, check=False).stdout)
         self.assertEqual(int(git(self.dest, 'rev-list', '--count', 'review-base..review-target')), count)
-        self.assertLessEqual(int(git(self.dest, 'rev-list', '--all', '--count')), depth+count+1)
+        self.assertLessEqual(int(git(self.dest, 'rev-list', '--all', '--count')),
+                             self._generation_count(src, base, depth) + count)
+
+    def test_base_history_merges_obey_the_generation_bound(self):
+        src = init(self.root/'merged-base-source')
+        history = [commit(src, f'Z{i}') for i in range(10)]
+        fork = history[-1]
+        git(src, 'checkout', '-qb', 'prelude', history[1])
+        commit(src, 'PRELUDE')
+        git(src, 'checkout', '-q', 'main')
+        commit(src, 'MAIN')
+        git(src, 'merge', '-q', '--no-ff', 'prelude', '-m', 'merge-prelude')
+        base = git(src, 'rev-parse', 'HEAD')
+        git(src, 'checkout', '-qb', 'review', fork)
+        commit(src, 'REVIEW')
+        git(src, 'checkout', '-qb', 'review-target', base)
+        git(src, 'merge', '-q', '--no-ff', 'review', '-m', 'merge-review')
+        head = git(src, 'rev-parse', 'HEAD')
+        boundary = [s[1:] for s in git(src, 'rev-list', '--boundary', head, '^'+base).splitlines()
+                    if s.startswith('-')]
+        depth = 1 + max(int(git(src, 'rev-list', '--count', s+'..'+base)) for s in boundary)
+        count = int(git(src, 'rev-list', '--count', base+'..'+head))
+        self.assertEqual((depth, count), (4, 2))
+        base_generations = self._generation_count(src, base, depth)
+        self.assertEqual(base_generations, 7)
+        self.assertEqual(snapshot.make_snapshot(src, base, head, self.dest, 10), (base, None))
+        self.assertEqual(git(self.dest, 'merge-base', 'review-base', 'review-target'), base)
+        self.assertEqual(int(git(self.dest, 'rev-list', '--count', 'review-base..review-target')), count)
+        actual = int(git(self.dest, 'rev-list', '--all', '--count'))
+        self.assertLessEqual(actual, base_generations + count)
+        self.assertGreater(actual, depth + count + 1, 'fixture must expose the old linear-history bound')
 
     def test_failure_leaves_no_dest(self):
         self.test_missing_commit_is_a_snapshot_error()
