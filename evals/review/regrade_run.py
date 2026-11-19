@@ -88,8 +88,8 @@ def main(argv=None):
             runner.write_json(dest / 'run.json', manifest)
             ledger = runner.Ledger(dest / 'trials.jsonl', ctx.secrets)
             try:
-                # Retain every source review attempt. The new grading attempts start
-                # after the source's maxima, without retaining stale match rulings.
+                # Retain source reviews, but start this run's independent grade
+                # history at attempt 1 without importing the source's rulings.
                 for record in state.records:
                     if record['type'] == 'review':
                         fields = {k: v for k, v in record.items() if k not in runner.results.COMMON_FIELDS}
@@ -103,16 +103,9 @@ def main(argv=None):
                             raise runner.harnesses.Refusal('unsafe source trial file')
                         if path.exists():
                             shutil.copyfile(path, out / name)
-                for record in state.records:
-                    if record['type'] != 'review':
-                        key = record['type'], record['key']
-                        ledger.attempts[key] = max(ledger.attempts.get(key, 0), record['attempt'])
             finally:
                 ledger.close()
             engine = runner.Engine(dest, manifest, m, ctx, args.jobs)
-            engine.attempt_floor = {key: value for key, value in ledger.attempts.items() if key[0] != 'review'}
-            # Seed only the attempt counters of source grades; do not write their
-            # claims or rulings into the new ledger.
             engine.run(cases, regrade=True)
             runner.finish(dest)
         return 0

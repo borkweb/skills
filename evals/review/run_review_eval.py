@@ -558,7 +558,6 @@ class Engine:
             clean(self.work, self.work.parent, self.ctx)
         self.work.mkdir(mode=0o700, parents=True)
         self.ledger = Ledger(self.run_dir / 'trials.jsonl', self.ctx.secrets)
-        self.ledger.attempts.update(getattr(self, 'attempt_floor', {}))
         budget = Budget(self.m.budget_usd, [] if regrade else results.read_records(self.ledger.path).records,
                         self.m.configs, self.m.grader['model'])
         handlers = {}

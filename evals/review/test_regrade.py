@@ -101,10 +101,11 @@ class RegradeTests(RegradeCase):
 
     def test_ledger_invariants_and_blinding(self):
         self.source_run(); self.assert_ok(self.regrade()); earlier = set(); source = self.state()
+        attempts = {}
         for r in self.state(self.dest).records:
-            if r['type'] != 'review':
-                prev = max(x['attempt'] for x in source.records if x['type'] == r['type'] and x['key'] == r['key'])
-                self.assertGreater(r['attempt'], prev)
+            key = r['type'], r['key']
+            self.assertEqual(r['attempt'], attempts.get(key, 0) + 1)
+            attempts[key] = r['attempt']
             if r['type'] == 'extras':
                 for token, attempts in r['covers'].items():
                     self.assertIn(('review', token, attempts['review_attempt']), earlier)
