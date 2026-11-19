@@ -1,0 +1,38 @@
+{
+  "models": {
+    "claude-opus-5-5": {
+      "input": 4,
+      "cached_input": 0.2,
+      "output": 20,
+      "source": "https://claude.com/pricing",
+      "as_of": "2026-11-19"
+    },
+    "claude-sonnet-5-5": {
+      "input": 2,
+      "cached_input": 0.1,
+      "output": 10,
+      "source": "https://claude.com/pricing",
+      "as_of": "2026-11-19"
+    }
+  },
+  "estimates": {
+    "review": {
+      "input_tokens": 30000,
+      "cached_input_tokens": 0,
+      "output_tokens": 4000,
+      "basis": "Planning assumption: diff, skill and repository context plus a detailed review."
+    },
+    "match": {
+      "input_tokens": 10000,
+      "cached_input_tokens": 0,
+      "output_tokens": 2000,
+      "basis": "Planning assumption: expected findings and review text plus structured matches."
+    },
+    "extras": {
+      "input_tokens": 20000,
+      "cached_input_tokens": 0,
+      "output_tokens": 3000,
+      "basis": "Planning assumption: pooled extra findings and head context plus group rulings."
+    }
+  }
+}
