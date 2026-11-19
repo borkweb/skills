@@ -73,9 +73,24 @@ def read_records(path):
             raise ResultsError(f'line {i}: missing fields: {", ".join(sorted(missing))}')
         if record['type'] in ('match', 'extras'):
             cost = record['grader_cost_usd']
-            finite = type(cost) is int or (type(cost) is float and math.isfinite(cost))
-            if cost is not None and not finite:
-                raise ResultsError(f'line {i}: grader_cost_usd must be a finite non-bool number or null')
+            if cost is not None:
+                try:
+                    valid_cost = type(cost) in (int, float) and math.isfinite(float(cost)) and cost >= 0
+                except OverflowError:
+                    valid_cost = False
+                if not valid_cost:
+                    raise ResultsError(f'line {i}: grader_cost_usd must be a finite non-negative non-bool number or null')
+        if record['type'] == 'extras' and 'covers' in record:
+            covers, tokens = record['covers'], record['tokens']
+            attempts = {'review_attempt', 'match_attempt'}
+            valid_covers = (isinstance(covers, dict) and isinstance(tokens, list)
+                            and all(isinstance(t, str) and t for t in tokens) and set(covers) == set(tokens))
+            if valid_covers:
+                valid_covers = all(isinstance(c, dict) and set(c) == attempts
+                                   and all(type(c[k]) is int and c[k] >= 1 for k in attempts)
+                                   for c in covers.values())
+            if not valid_covers:
+                raise ResultsError(f'line {i}: covers must map every token to positive review_attempt and match_attempt integers')
         records.append(record)
         key = record['type'], record['key']
         if key not in winners or record['attempt'] >= winners[key]['attempt']:
@@ -88,7 +103,10 @@ def read_records(path):
         if review['outcome'] == 'ok':
             terminal.setdefault(review['case_id'], []).append(token)
     extras = {key: r for (kind, key), r in winners.items() if kind == 'extras'
-              and r.get('tokens') == sorted(terminal.get(key, []))}
+              and r.get('tokens') == sorted(terminal.get(key, []))
+              and 'covers' in r
+              and all(token in matches and r['covers'][token]['review_attempt'] == reviews[token]['attempt']
+                      and r['covers'][token]['match_attempt'] == matches[token]['attempt'] for token in r['tokens'])}
     return State(records, reviews, matches, extras)
 
 

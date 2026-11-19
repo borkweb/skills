@@ -85,7 +85,7 @@ class RecordsTests(RunTest):
 
     def test_each_missing_record_field_names_its_line(self):
         for original in self.records:
-            for field in original:
+            for field in original.keys() - {'covers'}:
                 record = dict(original)
                 del record[field]
                 with self.subTest(kind=original['type'], field=field):
@@ -97,7 +97,7 @@ class RecordsTests(RunTest):
     def test_grader_cost_must_be_finite_nonbool_number_or_null(self):
         for kind in ('match', 'extras'):
             original = self.match if kind == 'match' else self.extra
-            for cost in ('"x"', '{}', 'true', 'false', '1e999', '-1e999'):
+            for cost in ('"x"', '{}', 'true', 'false', '1e999', '-1e999', '9' * 400, '-0.01'):
                 with self.subTest(kind=kind, cost=cost):
                     record = dict(original, grader_cost_usd=0.02)
                     path = self.root / 'trials.jsonl'
@@ -105,6 +105,46 @@ class RecordsTests(RunTest):
                     path.write_text(json.dumps(self.review) + '\n' + text + '\n')
                     with self.assertRaisesRegex(results.ResultsError, 'line 2:.*grader_cost_usd'):
                         results.read_records(path)
+
+    def test_covers_shape_names_its_line(self):
+        token = self.review['key']
+        valid = {'review_attempt': 1, 'match_attempt': 1}
+        invalid = [None, [], 'invalid', 1, {}, {'other-token': valid}, {token: None}, {token: []},
+                   {token: {}}, {token: {'review_attempt': 1}}, {token: {'match_attempt': 1}},
+                   {token: dict(valid, unexpected=1)}]
+        for key in ('review_attempt', 'match_attempt'):
+            invalid.extend({token: dict(valid, **{key: value})} for value in (None, True, False, 0, -1, 1.0, '1', [], {}))
+        for covers in invalid:
+            with self.subTest(covers=covers):
+                self.extra['covers'] = covers
+                self.save()
+                with self.assertRaisesRegex(results.ResultsError, 'line 3:.*covers'):
+                    results.read_records(self.root / 'trials.jsonl')
+        for tokens in (None, token, [None], [[]], [{}], [True]):
+            with self.subTest(tokens=tokens):
+                self.extra.update(tokens=tokens, covers={token: valid})
+                self.save()
+                with self.assertRaisesRegex(results.ResultsError, 'line 3:.*covers'):
+                    results.read_records(self.root / 'trials.jsonl')
+
+    def test_missing_covers_is_stale_without_losing_call_cost(self):
+        del self.extra['covers']
+        state = self.state()
+        self.assertNotIn(self.case['id'], state.extras)
+        self.assertEqual(len(state.records), 3)
+        trial = self.build()['trials'][0]
+        self.assertEqual([item['id'] for item in trial['items']], ['F1', 'F2'])
+        self.assertIsNone(trial['metrics']['precision'])
+        self.assertEqual(self.build()['run']['grader']['calls'], 2)
+        self.assertAlmostEqual(self.build()['run']['grader']['cost_usd'], .05)
+
+    def test_covers_require_a_current_match(self):
+        for mode in ('missing', 'other-review-attempt'):
+            with self.subTest(mode=mode):
+                self.records = [self.review, self.extra]
+                if mode == 'other-review-attempt':
+                    self.records.insert(1, dict(self.match, review_attempt=2))
+                self.assertNotIn(self.case['id'], self.state().extras)
 
     def state(self):
         self.save()
@@ -127,6 +167,7 @@ class RecordsTests(RunTest):
         r2, _ = self.second()
         self.extra['tokens'].append(r2['key'])
         self.extra['tokens'].sort()
+        self.extra['covers'][r2['key']] = {'review_attempt': 1, 'match_attempt': 1}
         self.assertIn(self.case['id'], self.state().extras)
         r3, _ = self.second(outcome='error', trial=3)
         self.assertIn(self.case['id'], self.state().extras)
@@ -156,6 +197,47 @@ class RecordsTests(RunTest):
 
 
 class BuildTests(RunTest):
+    def test_new_attempts_invalidate_even_unchanged_extra_numbers(self):
+        review, match, extra = deepcopy(self.records)
+        token = review['key']
+        for variant in ('match', 'review'):
+            with self.subTest(variant=variant):
+                newer = deepcopy(match)
+                newer['reported'][1] = dict(newer['reported'][1], file='other.py', lines='300',
+                                            summary='A different defect the old ruling never saw.')
+                if variant == 'match':
+                    newer['attempt'] = 2
+                    self.records = [review, match, extra, newer, deepcopy(match)]
+                    coverage = {'review_attempt': 1, 'match_attempt': 2}
+                else:
+                    review2 = dict(review, attempt=2)
+                    newer['review_attempt'] = 2
+                    newer['reported'][1].update(file='new.py', lines='9', summary='New review, new extra claim.')
+                    self.records = [review, match, extra, review2, newer, deepcopy(review)]
+                    coverage = {'review_attempt': 2, 'match_attempt': 1}
+                doc = self.build()
+                trial = doc['trials'][0]
+                self.assertEqual(trial['outcome'], 'graded')
+                self.assertEqual([item['id'] for item in trial['items']], ['F1', 'F2'])
+                self.assertIsNone(trial['metrics']['precision'])
+                # A later extras grade covering the actual winners restores the current claim, not the old one.
+                fresh = deepcopy(extra)
+                fresh.update(attempt=2, covers={token: coverage})
+                fresh['groups'][0]['ruling'] = 'real'
+                self.records.append(fresh)
+                trial = self.build()['trials'][0]
+                self.assertEqual(trial['metrics']['precision'], 1)
+                self.assertEqual(trial['items'][-1], {'id': 'extra:g1', 'label': newer['reported'][1]['summary'],
+                                                     'status': 'extra-real'})
+
+    def test_incompatible_group_members_cannot_emit_extra_items(self):
+        for n in (1, 99):
+            with self.subTest(member_n=n):
+                self.extra['groups'][0]['members'] = [[self.review['key'], n]]
+                trial = self.build()['trials'][0]
+                self.assertEqual([item['id'] for item in trial['items']], ['F1', 'F2'])
+                self.assertIsNone(trial['metrics']['precision'])
+
     def test_new_match_cannot_reuse_incompatible_extra_items(self):
         baseline = deepcopy(self.match)
         for variant in ('dropped-extra', 'renumbered'):
@@ -172,7 +254,7 @@ class BuildTests(RunTest):
                 trial = doc['trials'][0]
                 self.assertEqual(trial['outcome'], 'graded')
                 self.assertEqual([i['id'] for i in trial['items']], ['F1', 'F2'])
-                self.assertIsNone(trial['metrics']['precision'])
+                self.assertEqual(trial['metrics']['precision'], 1 if variant == 'dropped-extra' else None)
                 self.save()
                 results.write(self.root)
                 check_results.load(self.root)
@@ -247,6 +329,7 @@ class BuildTests(RunTest):
     def test_extras_group_item_id_is_stable_across_trials(self):
         r2, _ = self.second()
         self.extra['tokens'].append(r2['key'])
+        self.extra['covers'][r2['key']] = {'review_attempt': 1, 'match_attempt': 1}
         self.extra['groups'][0]['members'].append([r2['key'], 2])
         doc = self.build()
         ids = [[i['id'] for i in t['items'] if i['status'].startswith('extra-')] for t in doc['trials']]
@@ -440,6 +523,8 @@ class MetricTests(RunTest):
                     self.extra.update(tokens=[self.review['key'], r2['key']], outcome='graded')
                     if mode == 'stale':
                         self.extra['tokens'] = [self.review['key']]
+                    self.extra['covers'] = {t: {'review_attempt': 1, 'match_attempt': 1}
+                                            for t in self.extra['tokens']}
                     if mode == 'ungraded':
                         self.extra['outcome'] = 'ungraded'
                     if mode != 'missing':
