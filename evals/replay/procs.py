@@ -7,6 +7,42 @@ import threading
 import time
 
 GRACE = 3.0
+_registry_lock = threading.RLock()
+_groups = set()
+_stopping = False
+
+
+def reset_registry():
+    """Begin a new run only after every previous child has been reaped."""
+    global _stopping
+    with _registry_lock:
+        if _groups:
+            raise RuntimeError('process groups still active')
+        _stopping = False
+
+
+def kill_all(grace=GRACE):
+    """Close admission atomically, then stop all groups with one shared grace period."""
+    global _stopping
+    with _registry_lock:
+        _stopping = True
+        groups = tuple(_groups)
+    for proc in groups:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + grace
+    for proc in groups:
+        try:
+            proc.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+    for proc in groups:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
 
 
 def kill_group(proc, grace=GRACE):
@@ -132,14 +168,40 @@ def run_group(command, input=None, env=None, cwd=None, timeout=None, merge_stder
     returning False from the callback kills the process group immediately and returns a CompletedProcess
     with the partial stdout, stderr read so far, and returncode.
     """
-    proc = subprocess.Popen(command, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
-                            text=True, errors='replace', env=env, cwd=cwd, start_new_session=True)
+    proc = None
     try:
+        with _registry_lock:
+            if _stopping:
+                raise RuntimeError('process registry is stopping')
+            # Defer main-thread handlers until the child is registered. Unlike a
+            # blocked signal mask, caught handlers reset at exec and do not stop
+            # the child from receiving TERM. Workers use the registry lock.
+            handlers, pending = {}, []
+            if threading.current_thread() is threading.main_thread():
+                for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                    handlers[sig] = signal.signal(sig, lambda signum, frame: pending.append((signum, frame)))
+            try:
+                proc = subprocess.Popen(command, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT if merge_stderr else subprocess.PIPE,
+                                        text=True, errors='replace', env=env, cwd=cwd, start_new_session=True)
+                _groups.add(proc)
+            finally:
+                for sig, handler in handlers.items():
+                    signal.signal(sig, handler)
+                for sig, frame in pending:
+                    handler = handlers[sig]
+                    if callable(handler):
+                        handler(sig, frame)
+                    elif handler == signal.SIG_DFL:
+                        os.kill(os.getpid(), sig)
         if on_stdout_line is None:
             out, err = proc.communicate(input, timeout=timeout)
             return subprocess.CompletedProcess(command, proc.returncode, out, err)
         return _run_group_streaming(proc, command, input, timeout, merge_stderr, grace, on_stdout_line)
     except BaseException:
-        kill_group(proc, grace)
+        if proc is not None:
+            kill_group(proc, grace)
         raise
+    finally:
+        with _registry_lock:
+            _groups.discard(proc)

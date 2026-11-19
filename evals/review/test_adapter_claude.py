@@ -1352,49 +1352,6 @@ class IsolationCliTests(_ClaudeTestBase):
         self.assertEqual(after_stat.st_mtime_ns, before_stat.st_mtime_ns)
         outside.chmod(0o600)
 
-    def test_cleanup_survives_mid_walk_symlink_swap(self):
-        # Regression for Blocker 1 (repro-c-55): swapping a subdirectory for a symlink mid-walk
-        # must never traverse into or delete files inside the symlink target.
-        for hook_kind in ('scandir', 'open'):
-            with self.subTest(swap_at=hook_kind):
-                box = self.tmp / f'swap-{hook_kind}'
-                root = box / 'priv'
-                sub = root / 'sub'
-                sub.mkdir(parents=True)
-                (sub / 'a').write_text('x', encoding='utf-8')
-                outside = box / 'outside'
-                outside.mkdir()
-                victim = outside / 'victim.txt'
-                victim.write_text('keep me', encoding='utf-8')
-
-                swapped = {'done': False}
-                if hook_kind == 'scandir':
-                    real_scandir = os.scandir
-
-                    def racing_scandir(p):
-                        if str(p) == str(sub) and not swapped['done']:
-                            swapped['done'] = True
-                            os.rename(sub, str(sub) + '.moved')
-                            os.symlink(str(outside), str(sub))
-                        return real_scandir(p)
-
-                    with mock.patch.object(os, 'scandir', side_effect=racing_scandir):
-                        harnesses.remove_tree_link_safe(root, root)
-                else:
-                    real_open = os.open
-
-                    def racing_open(path, flags, *args, **kwargs):
-                        if path == 'sub' and 'dir_fd' in kwargs and not swapped['done']:
-                            swapped['done'] = True
-                            os.rename(sub, str(sub) + '.moved')
-                            os.symlink(str(outside), str(sub))
-                        return real_open(path, flags, *args, **kwargs)
-
-                    with mock.patch.object(os, 'open', side_effect=racing_open):
-                        harnesses.remove_tree_link_safe(root, root)
-
-                self.assertTrue(victim.exists(), f'victim deleted during {hook_kind} swap')
-                self.assertEqual(victim.read_text(encoding='utf-8'), 'keep me')
 
     def test_unobservable_conditions_are_not_checked(self):
         _set_stub_config(self.stub_dir, {

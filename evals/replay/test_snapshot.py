@@ -590,6 +590,147 @@ class RemoveTreeTests(Scratch):
         self.assertFalse(dest.exists())
         self.assertEqual(sorted(parent.iterdir()), before)
 
+    def _deep_removal(self, hold):
+        script = '''
+import os,resource,sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import snapshot
+root = Path(sys.argv[2])
+tree = root / 'deep'
+tree.mkdir()
+fd = os.open(tree, os.O_RDONLY | os.O_DIRECTORY)
+for _ in range(2000):
+    os.mkdir('d', dir_fd=fd)
+    child = os.open('d', os.O_RDONLY | os.O_DIRECTORY, dir_fd=fd)
+    os.close(fd)
+    fd = child
+os.close(fd)
+resource.setrlimit(resource.RLIMIT_NOFILE, (256, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))
+held = []
+if sys.argv[3] == 'hold':
+    while len(os.listdir('/dev/fd')) < 224:
+        held.append(os.open('/dev/null', os.O_RDONLY))
+snapshot.remove_tree(tree, root)
+assert not tree.exists()
+for fd in held:
+    os.close(fd)
+'''
+        done = subprocess.run([sys.executable, '-c', script, str(Path(snapshot.__file__).parent), str(self.root),
+                               'hold' if hold else 'free'], capture_output=True, timeout=50,
+                              env={**caselib.scrubbed_env(), 'HOME': str(self.root)})
+        self.assertEqual(done.returncode, 0, done.stderr.decode())
+        self.assertFalse((self.root / 'deep').exists())
+
+    def test_deep_tree_under_low_fd_limit(self):
+        self._deep_removal(False)
+
+    def test_deep_tree_with_few_free_descriptors(self):
+        self._deep_removal(True)
+
+    def test_no_descriptor_leak(self):
+        before = len(os.listdir('/dev/fd'))
+        for i in range(50):
+            tree = self.root / f't{i}'; tree.mkdir(); (tree / 'd').mkdir()
+            snapshot.remove_tree(tree, self.root)
+            with self.assertRaises(snapshot.SnapshotError):
+                snapshot.remove_tree(self.root, self.root)
+        self.assertEqual(len(os.listdir('/dev/fd')), before)
+
+    def test_unreadable_directories_removed(self):
+        for mode in (0o000, 0o300, 0o100):
+            with self.subTest(mode=oct(mode)):
+                tree = self.root / f't{mode}'; tree.mkdir()
+                current = tree
+                dirs = [tree]
+                for _ in range(3):
+                    (current / 'f').write_text('owned')
+                    current = current / 'd'; current.mkdir(); dirs.append(current)
+                for directory in reversed(dirs):
+                    directory.chmod(mode)
+                snapshot.remove_tree(tree, self.root)
+                self.assertFalse(tree.exists())
+
+    def test_unreadable_directory_hard_link_keeps_mode(self):
+        outside = self.root / 'outside'; outside.write_bytes(b'outside'); outside.chmod(0o444)
+        tree = self.root / 'tree'; tree.mkdir(); os.link(outside, tree / 'hard'); tree.chmod(0)
+        snapshot.remove_tree(tree, self.root)
+        self.assertFalse(tree.exists())
+        self.assertEqual(outside.read_bytes(), b'outside')
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o444)
+
+
+class RemoveTreeRaceTests(Scratch):
+    def test_exchange_during_removal_keeps_outside(self):
+        # A helper process exchanges a directory for a link during removal.
+        import time
+        try:
+            ctypes.CDLL(None).renamex_np
+        except AttributeError:
+            self.skipTest('renamex_np is unavailable')
+        helper = '''
+import ctypes,json,os,sys,time
+from pathlib import Path
+rename = ctypes.CDLL(None, use_errno=True).renamex_np
+rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+rename.restype = ctypes.c_int
+first,second,ready,stop,report = map(Path,sys.argv[1:])
+exchanges = []
+fd = os.open(first, os.O_RDONLY | os.O_DIRECTORY)
+initial = len(os.listdir(fd))
+ready.touch()
+while not stop.exists() and len(os.listdir(fd)) == initial:
+    pass
+while not stop.exists():
+    if rename(os.fsencode(first),os.fsencode(second),2) == 0:
+        exchanges.append(time.monotonic())
+report.write_text(json.dumps(exchanges))
+os.close(fd)
+'''
+        outside = self.root / 'outside'; outside.mkdir(mode=0o755)
+        for i in range(1500):
+            p = outside / f'keep{i}'; p.write_bytes(f'outside {i}'.encode()); p.chmod(0o644)
+        expected = {p.name: (p.read_bytes(), stat.S_IMODE(p.stat().st_mode)) for p in outside.iterdir()}
+        landed = False
+        for attempt in range(20):
+            owned = self.root / f'owned{attempt}'; owned.mkdir()
+            tree = owned / 'tree'; tree.mkdir()
+            for i in range(5):
+                d = tree / f'd{i}'; d.mkdir()
+                for j in range(1500 if i == 0 else 20):
+                    (d / f'keep{j}').write_bytes(b'owned')
+            link = owned / 'link'; link.symlink_to(outside)
+            ready, stop, report = (owned / name for name in ('ready', 'stop', 'report'))
+            proc = subprocess.Popen([sys.executable, '-c', helper, str(tree / 'd0'), str(link),
+                                     str(ready), str(stop), str(report)],
+                                    env={**caselib.scrubbed_env(), 'HOME': str(self.root)})
+            try:
+                deadline = time.monotonic() + 2
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.001)
+                self.assertTrue(ready.exists(), 'helper did not start')
+                started = time.monotonic()
+                try:
+                    try:
+                        snapshot.remove_tree(tree, owned)
+                    except snapshot.SnapshotError:
+                        pass
+                finally:
+                    ended = time.monotonic()
+                    stop.touch()
+                proc.wait(timeout=3)
+                self.assertEqual(proc.returncode, 0)
+                landed = any(started <= t <= ended for t in json.loads(report.read_text()))
+                actual = {p.name: (p.read_bytes(), stat.S_IMODE(p.stat().st_mode)) for p in outside.iterdir()}
+                self.assertEqual(actual, expected, 'outside listing or bytes or modes changed')
+                self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o755)
+                if landed:
+                    break
+            finally:
+                if proc.poll() is None:
+                    proc.kill(); proc.wait()
+        self.assertTrue(landed, 'no exchange landed during removal within 20 attempts')
+
 
 class SnapshotEnvTests(Scratch):
     def hostile(self, src):

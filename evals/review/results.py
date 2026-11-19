@@ -180,6 +180,8 @@ def build(run_dir):
                           calls=len(calls), cost_complete=all(r.get('grader_cost_usd') is not None for r in calls))}
     if 'regraded_from' in manifest:
         run['regraded_from'] = manifest['regraded_from']
+    if manifest.get('notes'):
+        run['notes'] = '\n'.join(manifest['notes'])
     trials = []
     for case_id, case in by_id.items():
         reviews = [r for r in state.reviews.values() if r['case_id'] == case_id]
@@ -224,7 +226,9 @@ def build(run_dir):
            'bands': [{'key': 'bug', 'label': 'Bug', 'band_metric': 'recall'},
                      {'key': 'clean', 'label': 'Clean', 'band_metric': 'clean_false_alarm'}],
            'item_statuses': [{'key': k, 'label': k, 'color': v} for k, v in STATUS_COLORS.items()],
-           'cases': [{'id': c['id'], 'title': c['title'], 'band': c['kind'], 'tags': c.get('tags', [])} for c in cases],
+           'cases': [{'id': c['id'], 'title': c['title'], 'band': c['kind'],
+                      'tags': sorted(set(c.get('tags', []) + manifest.get('derived_tags', {}).get(c['id'], [])))}
+                     for c in cases],
            'trials': trials}
     errors = check_results.check(doc)
     if errors:

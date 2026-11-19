@@ -41,49 +41,84 @@ def remove_tree(path, root):
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
     def open_directory(name, parent_fd, info):
+        if not stat.S_ISDIR(info.st_mode):
+            raise SnapshotError('remove: expected a directory')
+        if info.st_mode & 0o500 != 0o500:
+            os.chmod(name, stat.S_IMODE(info.st_mode) | 0o700,
+                     dir_fd=parent_fd, follow_symlinks=False)
         fd = os.open(name, flags, dir_fd=parent_fd)
         try:
             if not os.path.samestat(info, os.fstat(fd)):
                 raise SnapshotError('remove: directory changed while opening')
+            os.fchmod(fd, stat.S_IMODE(info.st_mode) | 0o700)
         except BaseException:
             os.close(fd)
             raise
         return fd
 
-    def remove(name, parent_fd, top=False):
-        try:
-            info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            return
-        if top and stat.S_ISLNK(info.st_mode):
-            raise SnapshotError('remove: tree became a symlink')
-        if stat.S_ISDIR(info.st_mode):
-            fd = open_directory(name, parent_fd, info)
-            try:
-                os.fchmod(fd, info.st_mode | stat.S_IRWXU)
-                with os.scandir(fd) as entries:
-                    for entry in entries:
-                        remove(entry.name, fd)
-            finally:
-                os.close(fd)
-            os.rmdir(name, dir_fd=parent_fd)
-        else:
-            os.unlink(name, dir_fd=parent_fd)
-
-    descriptors = []
+    fd = current = None
     try:
         fd = os.open(root, flags)
-        descriptors.append(fd)
         parts = path.relative_to(root).parts
         for name in parts[:-1]:
             info = os.stat(name, dir_fd=fd, follow_symlinks=False)
-            fd = open_directory(name, fd, info)
-            descriptors.append(fd)
-        remove(parts[-1], fd, top=True)
+            child = open_directory(name, fd, info)
+            os.close(fd)
+            fd = child
+        try:
+            info = os.stat(parts[-1], dir_fd=fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(info.st_mode):
+            raise SnapshotError('remove: tree became a symlink')
+        if not stat.S_ISDIR(info.st_mode):
+            os.unlink(parts[-1], dir_fd=fd)
+            return
+        device = info.st_dev
+        current = open_directory(parts[-1], fd, info)
+        # Frames hold names and identities, never descriptors. Ascend through the
+        # pinned child, checking the parent identity before touching its entries.
+        frames = [(parts[-1], info, os.fstat(fd), iter(os.listdir(current)))]
+        while frames:
+            name, identity, parent_identity, entries = frames[-1]
+            entry = next(entries, None)
+            if entry is not None:
+                try:
+                    child_info = os.stat(entry, dir_fd=current, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISDIR(child_info.st_mode):
+                    if child_info.st_dev != device:
+                        raise SnapshotError('remove: refusing another device')
+                    child = open_directory(entry, current, child_info)
+                    parent_info = os.fstat(current)
+                    os.close(current)
+                    current = child
+                    frames.append((entry, child_info, parent_info, iter(os.listdir(current))))
+                else:
+                    # Unlinking a hard link never changes the outside inode's mode.
+                    os.unlink(entry, dir_fd=current)
+                continue
+            parent = os.open('..', flags, dir_fd=current)
+            try:
+                if not os.path.samestat(parent_identity, os.fstat(parent)):
+                    raise SnapshotError('remove: directory parent changed')
+                now = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if not os.path.samestat(identity, now):
+                    raise SnapshotError('remove: directory changed before removal')
+                os.rmdir(name, dir_fd=parent)
+            except BaseException:
+                os.close(parent)
+                raise
+            os.close(current)
+            current = parent
+            frames.pop()
     except (OSError, RuntimeError) as exc:
         raise SnapshotError(f'remove: {" ".join(str(exc).splitlines())}') from exc
     finally:
-        for fd in reversed(descriptors):
+        if current is not None:
+            os.close(current)
+        if fd is not None:
             os.close(fd)
 
 
