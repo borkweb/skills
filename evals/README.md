@@ -21,6 +21,24 @@ Start with the core preservation and authorization cases. Expand each pilot skil
 
 The builder replay eval has its own format, case builder and runner: see [replay/README.md](replay/README.md). Record the source revision of each arm in a replay result as a full SHA, not a ref name.
 
+## Eval report
+
+Any eval can write `results.json` in the `bork-eval-results/1` format (`report/check_results.py` checks it) and get a self-contained local HTML report. The report has no network loads, and it writes each page with mode 600, because run output can hold private code:
+
+```sh
+python3 evals/report/check_results.py <run dir>
+python3 evals/report/build_report.py <run dir> [--index <runs root>]
+```
+
+To try the report without a run, write the synthetic runs somewhere outside the repo and build them:
+
+```sh
+python3 evals/report/fixtures/make_synthetic.py --materialize "$DIR/runs"
+python3 evals/report/build_report.py "$DIR"/runs/*/ --index "$DIR/runs"
+```
+
+Rerun `make_synthetic.py` with no arguments after you change it. A test fails when `synthetic-results.json` drifts from the generator.
+
 ## Real builder replay run (paid)
 
 The replay runner can drive a real builder and a real grader, `claude` or `codex`, headless. **Every real call is a paid model call.** No real run was made in the slice that added these adapters; the commands below have only been exercised against stub executables. Each real call needs an API key in the environment (`ANTHROPIC_API_KEY` for `claude`; `OPENAI_API_KEY` or `CODEX_API_KEY` for `codex`), because the model process gets a temp HOME and no keychain, config or auth file is copied. Without `--spend` the runner prints the planned call counts and stops.
