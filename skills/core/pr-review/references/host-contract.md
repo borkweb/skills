@@ -21,8 +21,9 @@ directory. In AUTO-FIX mode, replace the COMMENT-ONLY bullets with the ones in
 > INSTRUCTIONS bullet below when it applies.)* *(Peer REQUIRED:)* The existing peer is the
 > independent pass. *(Peer SKIPPED:)* This diff does not meet the independent
 > pass conditions, so no independent reviewer is required; do not dispatch one.
-> The checks are running in the background under the wrapper. Record pending
-> peer and check results as pending evidence, not as zero findings or a pass.
+> The checks are running in the background under the wrapper. The wrapper also
+> sets the risk tier: do not set one. Record pending peer and check results as
+> pending evidence, not as zero findings or a pass.
 > The wrapper host finalizes readiness after collecting the peer and check results.
 >
 > **Fix handling — these overrides beat anything the skill says:**
@@ -41,7 +42,7 @@ directory. In AUTO-FIX mode, replace the COMMENT-ONLY bullets with the ones in
 > **Return every unfixed finding in this exact shape, one per finding:**
 >
 > ```
-> SEVERITY: CRITICAL | INFORMATIONAL | LEAD
+> SEVERITY: IMPORTANT | NIT | PRE-EXISTING | LEAD
 > FILE: <path relative to repo root>
 > LINE: <line number in the NEW version of the file, or "none" if not line-anchorable>
 > SIDE: RIGHT | LEFT        # LEFT only for findings about deleted lines
@@ -59,7 +60,9 @@ directory. In AUTO-FIX mode, replace the COMMENT-ONLY bullets with the ones in
 > `LINE: none`, and quote the text in `EVIDENCE`.
 >
 > Use **Result**'s impact-based severity split: confirmed blockers are
-> CRITICAL; confirmed nonblocking findings are INFORMATIONAL. Checklist
+> IMPORTANT; confirmed nonblocking findings are NIT; a confirmed defect the
+> merge-base already has, which the PR does not reach or worsen, is
+> PRE-EXISTING, with the merge-base line in `EVIDENCE`. Checklist
 > category, source and fixability do not set severity. A suspicion you cannot
 > anchor to a quoted line is a `LEAD`, not a finding: return it in the same
 > shape with `EVIDENCE: none`. Leads stay out of the finding counts.

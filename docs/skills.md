@@ -20,7 +20,7 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 | Command | What it does |
 |---------|-------------|
 | [`/status`](#status) | Read-only progress report. Where you are, what's done, what's next. |
-| [`/pre-push`](#pre-push) | Critical-only review of the diff a push would send. Runs on request and reports; it never stops a push. |
+| [`/pre-push`](#pre-push) | Important-only review of the diff a push would send. Runs on request and reports; it never stops a push. |
 
 ### Agents
 
@@ -328,7 +328,7 @@ Claude: STATUS REPORT
 
 Emergency incident response. Activates when you say "production is broken," "urgent fix," or "hotfix."
 
-Runs a structured triage: severity classification, blast radius assessment, timeline check. Then fast-tracks root cause investigation (checking recent deploys first — that's the cause 80% of the time). Creates the minimal fix on a hotfix branch, runs critical-only review, ships via emergency PR.
+Runs a structured triage: severity classification, blast radius assessment, timeline check. Then fast-tracks root cause investigation (checking recent deploys first — that's the cause 80% of the time). Creates the minimal fix on a hotfix branch, runs important-only review, ships via emergency PR.
 
 After the fix lands, outputs a monitoring checklist and recommends follow-up actions to prevent recurrence.
 
@@ -336,6 +336,6 @@ After the fix lands, outputs a monitoring checklist and recommends follow-up act
 
 ## `/pre-push`
 
-A manual safety net. Run it when you are about to push. It applies the critical-only `review` checklist to the diff the push would send — SQL injection, auth bypasses, race conditions, API contract breaks, weakened gates. Under 30 seconds.
+A manual safety net. Run it when you are about to push. It applies the important-only `review` checklist to the diff the push would send — SQL injection, auth bypasses, race conditions, API contract breaks, weakened gates. Under 30 seconds.
 
 It classifies each changed file by what it does at runtime, not by its extension, so a skill or command file gets the same review as code. It only reports: nothing is stopped or changed. One line of output when clean. When it cannot find a base or load the checklist, it says so and never reports a clean result.

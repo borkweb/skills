@@ -78,9 +78,13 @@ Record the reviewer ID and designated report path. After completion, read the en
 
 ## Findings and authorized fixes
 
-Each finding states severity, file/line, concrete failing scenario, evidence and a proposed correction. Quote the motivating line verbatim; for a framework-generated symbol, quote the metaclass, descriptor, ORM Meta block, migration, decorator or schema that generates it, because missing literal names in grep results do not prove absence. A finding you cannot anchor to a quoted line is an investigation lead, not a finding. Name the evidence kind behind every safety claim (static read, unit test, fixture or replay, live run, production) and never pass one off as another; a mock is not a live check. Distinguish confirmed defects from investigation leads and risk acceptance. Do not invent findings to satisfy a quota. Drop a finding, your own or a reviewer's, only when a quoted line of the diff contradicts its central claim with no chain of reasoning; one you cannot confirm becomes an investigation lead with what would confirm it, never a deletion. A finding about memory or bounds safety, concurrency, declaration or linkage consistency, a behavior or compatibility change (a message, field, status, default or error path the old code produced and the new code does not), an unused parameter, or a forced-CRITICAL class from the sideways sweep is never dropped: keep it, or demote it to a lead and quote the contradicting line.
+Each finding states severity, file/line, concrete failing scenario, evidence and a proposed correction. Quote the motivating line verbatim; for a framework-generated symbol, quote the metaclass, descriptor, ORM Meta block, migration, decorator or schema that generates it, because missing literal names in grep results do not prove absence. A finding you cannot anchor to a quoted line is an investigation lead, not a finding. Name the evidence kind behind every safety claim (static read, unit test, fixture or replay, live run, production) and never pass one off as another; a mock is not a live check. Distinguish confirmed defects from investigation leads and risk acceptance. Do not invent findings to satisfy a quota. Drop a finding, your own or a reviewer's, only when a quoted line of the diff contradicts its central claim with no chain of reasoning; one you cannot confirm becomes an investigation lead with what would confirm it, never a deletion. A finding about memory or bounds safety, concurrency, declaration or linkage consistency, a behavior or compatibility change (a message, field, status, default or error path the old code produced and the new code does not), an unused parameter, or a forced-IMPORTANT class from the sideways sweep is never dropped: keep it, or demote it to a lead and quote the contradicting line.
 
 In report-only mode, stop at findings, background check results and verdict. In fix mode, apply scoped corrections under existing authorization, batch genuine design/scope decisions, and keep unrelated changes out. After changes, rerun on the final files every check the fixes could affect; background results stand only for the rest. Preserve failed regression tests that expose a real bug. Re-review changed scope, including independent review when required. Flag documentation only when a specific statement became false.
+
+## Risk tier
+
+LOW, MEDIUM or HIGH: how many people must approve the change, apart from the verdict. The primary review owner sets it as [risk-tier.md](risk-tier.md) says; an assigned reviewer does not. An agent's review is never a person's approval.
 
 ## Result
 
@@ -88,12 +92,14 @@ Write finding prose and the verdict reason to the ASD-STE100 rules in [ste100.md
 
 Use this readable output contract for the human-facing report. An explicit caller schema may replace the presentation for a machine-consumed pass; the primary owner still reports the evidence and verdict.
 
-Start with `Pre-Landing Review: N issues (X critical, Y informational)`. Count distinct confirmed findings, including ones fixed during this review. Classify by demonstrated impact: **CRITICAL** findings block landing while unresolved; **INFORMATIONAL** findings are nonblocking. Checklist category, source and whether a fix is mechanical do not determine severity. Keep unconfirmed investigation leads separate and out of the counts.
+Start with `Pre-Landing Review: N issues (X important, Y nit, Z pre-existing)`. Count distinct confirmed findings, including ones fixed during this review. Classify by demonstrated impact: **IMPORTANT** findings block landing while unresolved; **NIT** findings are minor and nonblocking. Checklist category, source and whether a fix is mechanical do not determine severity. Keep unconfirmed investigation leads separate and out of the counts.
 
-Show both sections, critical first, with `None.` for an empty section. Keep each finding brief but concrete:
+**PRE-EXISTING** is a confirmed defect that the merge-base already has and the change does not reach or worsen. It never blocks; [checklist.md](checklist.md) holds its rule.
+
+Show all three sections, important first, with `None.` for an empty section. PRE-EXISTING findings use the same form with status NOT FROM THIS CHANGE. Keep each finding brief but concrete:
 
 ```markdown
-### CRITICAL — X findings
+### IMPORTANT — X findings
 
 1. **file:line — Problem title** — UNRESOLVED / FIXED / RISK ACCEPTED
 
@@ -101,7 +107,7 @@ Show both sections, critical first, with `None.` for an empty section. Keep each
 
    Fix: proposed correction, or the correction applied and its verification status.
 
-### INFORMATIONAL — Y findings
+### NIT — Y findings
 
 2. **file:line — Problem title** — UNRESOLVED / FIXED / RISK ACCEPTED
 
@@ -118,16 +124,18 @@ Then show a compact Markdown completion table. Fill it with actual results; use 
 | Diff size | Files changed, insertions and deletions |
 | Coverage | M/N files in scope read; each skipped file with its reason, or `N/N` |
 | Scope check | CLEAN / DRIFT DETECTED / REQUIREMENTS MISSING, with details |
-| CRITICAL findings | X total; fixed and unresolved counts; accepted risks noted separately |
-| INFORMATIONAL findings | Y total; fixed and unresolved counts; accepted risks noted separately |
+| IMPORTANT findings | X total; fixed and unresolved counts; accepted risks noted separately |
+| NIT findings | Y total; fixed and unresolved counts; accepted risks noted separately |
+| PRE-EXISTING findings | Z total, for a follow-up |
 | Fixes | Applied corrections, or report-only |
 | Checks | Commands and PASS / FAIL / NOT RUN results, including affected post-fix checks |
 | Independent review | Completed result / SKIPPED / NO RESPONSE / unavailable, with scope and reason |
+| Risk tier | LOW / MEDIUM / HIGH and why |
 | Gate edits | Test, CI, snapshot or threshold hunks read under Gate Integrity and the human's decision on each, or None |
 | Unresolved items | Finding references, decisions and missing required evidence, or None |
 | Delivery state | Report-only / uncommitted fixes / other explicitly authorized delivery |
 
-For zero findings, use `Pre-Landing Review: 0 issues (0 critical, 0 informational)`, `None.` in both sections, and the same table. Zero findings does not imply completed verification.
+For zero findings, use `Pre-Landing Review: 0 issues (0 important, 0 nit, 0 pre-existing)`, `None.` in all three sections, and the same table. Zero findings does not imply completed verification.
 
 Finish with a bold landing verdict and a short reason, using the existing gates below:
 
@@ -135,6 +143,8 @@ Finish with a bold landing verdict and a short reason, using the existing gates 
 - **LAND WITH CAUTION:** no unresolved blockers and all required gates complete, with explicitly nonblocking caveats or optional coverage gaps.
 - **DO NOT LAND:** a confirmed blocker, a regression, or missing required evidence. Distinguish “defect found” from “readiness unverified.”
 
-A DO NOT LAND blocker carries a red command, or quotes a shipped line (doc, description, error text) that the change made false. A finding with neither is LAND WITH CAUTION plus a follow-up: rate it INFORMATIONAL or a lead, never an unresolved CRITICAL. Class 12 and class 13 cases stay blockable through the quoted line. These stay blockers without a red command: missing required evidence (including a missing independent review), a frozen criterion the review finds unmet, a merge conflict onto the base, security findings (secrets, auth, injection, trust boundaries), data loss and uncapped spend. The independent reviewer may name a command it did not run; the primary review owner runs it before the verdict, and one that does not go red demotes its finding the same way, except for those classes.
+A DO NOT LAND blocker carries a red command, or quotes a shipped line (doc, description, error text) that the change made false. A finding with neither is LAND WITH CAUTION plus a follow-up: rate it NIT or a lead, never an unresolved IMPORTANT. Class 12 and class 13 cases stay blockable through the quoted line. These stay blockers without a red command: missing required evidence (including a missing independent review), a frozen criterion the review finds unmet, a merge conflict onto the base, security findings (secrets, auth, injection, trust boundaries), data loss and uncapped spend. The independent reviewer may name a command it did not run; the primary review owner runs it before the verdict, and one that does not go red demotes its finding the same way, except for those classes.
 
-A skipped critical finding remains unresolved and yields DO NOT LAND. User acceptance of risk is recorded separately; it does not change finding severity or verification status. A required reviewer returning no response is missing evidence, not zero findings. The verdict does not authorize a merge.
+A skipped important finding remains unresolved and yields DO NOT LAND. User acceptance of risk is recorded separately; it does not change finding severity or verification status. A required reviewer returning no response is missing evidence, not zero findings. The verdict does not authorize a merge.
+
+Close with `Human approval (<TIER>) at <head SHA>: none needed | one person | two people`.

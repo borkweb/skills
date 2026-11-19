@@ -219,4 +219,4 @@ Record findings, verification coverage and user risk acceptance separately. A sk
 - `/review` is the **workflow** for every pre-landing check — scope drift, structural issues, design, adversarial, landing verdict. It calls into this skill's pattern files when a diff touches a security-sensitive surface area.
 - `/review-security` (this skill) is the **reference library + deep audit workflow**. Use it standalone for security audits, or let `/review` pull the relevant pattern files inline.
 
-The two skills are complements, not replacements.
+The two skills are complements, not replacements. `/full-review` runs both, plus the harness's own code review, as independent passes.

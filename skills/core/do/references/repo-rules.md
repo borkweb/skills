@@ -8,6 +8,8 @@ Lessons that hold for one repo, kept where every run and review of that repo can
 
 Durability is the user's choice: keep a backup of the store, or make it a private git repo. Nothing here syncs it.
 
+The directory may also hold `risk-paths.txt`, the user's list of paths that set a change's risk tier ([review](../../../gstack/review/SKILL.md), **Risk tier**). It is not a rule file: only `scripts/change-class.py` reads it, a run never writes it, and it is not copied into a frozen `repo-rules-<slice>/`.
+
 Only two things are rule sources: the store, and the `AGENTS.md` and `CLAUDE.md` files `review` already reads. A rule a team should share goes into the repo's `AGENTS.md` by a normal PR, not into the store.
 
 Only the user, or an approved row in [dreaming.md](dreaming.md), adds a rule. An approved check row may also set `retire_when` and `enforced_by` on an existing rule, and no other key and not the body. Runs never write rules: not the architect, the builder, the reviewer or the spec reviewer. They read, or copy a matched rule into the run directory.

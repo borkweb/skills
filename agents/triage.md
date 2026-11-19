@@ -177,9 +177,9 @@ Apply the minimal fix. **Do not refactor. Do not improve. Do not clean up.** The
 
 ## Phase 4: Review, then deliver what the user authorized
 
-### 4a. Critical-only review
+### 4a. Important-only review
 
-Run the `review` skill on the fix diff. Report only its CRITICAL findings now and keep the rest for the post-incident review. Severity follows the review checklist: demonstrated impact decides it, and data loss, a trust-boundary bypass and uncapped spend are CRITICAL on sight. Skip design review. A CRITICAL finding blocks delivery until it is fixed or the user accepts the risk.
+Run the `review` skill on the fix diff. Report only its IMPORTANT findings now and keep the rest for the post-incident review. Severity follows the review checklist: demonstrated impact decides it, and data loss, a trust-boundary bypass and uncapped spend are IMPORTANT on sight. Skip design review. A IMPORTANT finding blocks delivery until it is fixed or the user accepts the risk.
 
 ### 4b. Stop at a verified local fix
 

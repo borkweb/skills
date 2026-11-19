@@ -31,7 +31,7 @@ contract** in place of the COMMENT-ONLY bullets:
 >   `[AUTO-FIXED] file:line problem → what you did`. A mechanical correction
 >   requires no design, security or user-visible behavior decision.
 > - Do not ask the user anything. Every judgment call (ASK), including every
->   CRITICAL finding, is returned unfixed. The user already chose the fix policy.
+>   IMPORTANT finding, is returned unfixed. The user already chose the fix policy.
 > - The wrapper host reruns every check affected by a fix on the final files.
 >   Report `git diff --stat`; retain failed regression tests and re-review the
 >   changed scope, including the existing peer when required.

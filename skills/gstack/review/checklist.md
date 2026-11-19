@@ -107,7 +107,7 @@ A gate is anything that would have made this change fail: a test, an assertion, 
 - A new or changed test earns its place only when it can say what behavior or contract it protects, what credible regression fails it, why existing coverage does not already catch that (prefer a row in an existing table-driven test over a near-duplicate), and whether it needs a production seam no caller needs (if so, test at the real boundary)
 - A new assertion that something is absent records a behavior removal, not coverage; cite the spec line or plan item that authorizes the removal
 - For each identifier, flag, heading or string the diff renames or deletes, grep the test suite for negative assertions naming the old value; each one now passes forever and guards nothing
-- A test named as a regression test with no record of failing before the fix proves the mock, not the fix; ask for the fails-before, passes-after evidence (INFORMATIONAL)
+- A test named as a regression test with no record of failing before the fix proves the mock, not the fix; ask for the fails-before, passes-after evidence (NIT)
 
 #### Crypto & Entropy
 - Truncation of data instead of hashing — less entropy, easier collisions
@@ -149,7 +149,8 @@ A gate is anything that would have made this change fail: a test, an assertion, 
 
 A finding is a defect class, not a line. Before rating any finding:
 - **Siblings.** Grep the same pattern at every other ingress, command and call site (routes, CLI subcommands, workers, webhooks, cron, hooks) and read each match. Rate severity on the worst sibling and list the siblings under the finding as one decision.
-- **Forced-CRITICAL.** Data loss, a trust-boundary bypass (auth, tenancy, sandbox, signature, redaction or consent skipped) and uncapped spend (a paid call, retry or loop with no cap) are CRITICAL on sight, whichever category found them; no dedup step or prior skip downgrades them.
+- **PRE-EXISTING** is a confirmed defect that this change did not introduce: `git show <merge-base>:<path>` shows the same defect, and the change does not newly reach it or make it worse. Quote the merge-base line as its evidence. It is nonblocking, has no effect on the verdict and stays out of fix mode unless the user asks for it. A defect that the base already had and that the change newly reaches, widens or depends on is IMPORTANT or NIT by its impact, never PRE-EXISTING. Without the merge-base evidence, classify the finding as if the change introduced it.
+- **Forced-IMPORTANT.** Data loss, a trust-boundary bypass (auth, tenancy, sandbox, signature, redaction or consent skipped) and uncapped spend (a paid call, retry or loop with no cap) are IMPORTANT on sight, whichever category found them; no dedup step or prior skip downgrades them.
 - **A new cache in front of a guarded or metered call.** Name every policy check a hit skips (auth, quota, consent, rate limit, freshness); a hit that skips one is a trust-boundary bypass.
 - **Imports moved from static to dynamic.** List the top-level side effects no longer loaded (registrations, schema setup, env validation, route tables) and who reads each registry; a reader that now sees an empty registry is the finding.
 - **A changed function with parity claims.** Find modules that claim parity with it (docstrings, parity tests, mirrored helpers, a shell twin of a TypeScript module) and flag each one left unchanged.

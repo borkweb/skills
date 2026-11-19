@@ -27,25 +27,25 @@ Checks, staleness and the verdict always cover the whole PR, whatever the scope.
 >   new commits cause in older code. Use `git diff <merge-base> <headRefOid>`
 >   for context only.
 
-## Step 3b: Recheck the earlier CRITICAL comments
+## Step 3b: Recheck the earlier IMPORTANT comments
 
 Do this yourself while the host pass runs. The incremental reviewers look only
 at new commits, so they won't find an old problem again. Recheck two sources:
 
 - each inline comment in `existing-comments.jsonl` whose `user` is `<me>` and
-  whose title starts with `🤖 **CRITICAL —` or, for a review posted with
-  `--no-robot` or before the 🤖 label, `**CRITICAL —`. Select them with a
+  whose title starts with `🤖 **IMPORTANT —` or, for a review posted with
+  `--no-robot` or before the 🤖 label, `**IMPORTANT —`. Select them with a
   command, not by eye:
 
   ```bash
   jq -c --arg me "<me>" 'select(.user == $me)
-        | select(.title | ltrimstr("🤖 ") | startswith("**CRITICAL —"))' \
+        | select(.title | ltrimstr("🤖 ") | startswith("**IMPORTANT —"))' \
     <scratchpad>/existing-comments.jsonl
   ```
 
   A comment from anyone else is never one of yours to recheck, even when it
   uses the same label;
-- each CRITICAL finding in the bodies in `earlier-reviews.jsonl`. These are the
+- each IMPORTANT finding in the bodies in `earlier-reviews.jsonl`. These are the
   findings that couldn't go inline: lines outside the diff, and `FILE: none`
   check findings. Recheck a check finding against the current check result.
 
@@ -53,8 +53,8 @@ Read that code at `<headRefOid>` and mark each one:
 
 - **RESOLVED** — the problem is gone.
 - **STILL PRESENT** — the problem is still there. It counts as an unresolved
-  CRITICAL finding for the verdict. Don't post it again.
+  IMPORTANT finding for the verdict. Don't post it again.
 - **OUTDATED** — the code it pointed at is gone. Check whether the problem moved
   with the code before you mark it.
 
-Report the counts in Step 7's **Earlier CRITICAL** row.
+Report the counts in Step 7's **Earlier IMPORTANT** row.

@@ -1,5 +1,5 @@
 ---
-description: Critical-only safety review of the diff a push would send. Runs on request, loads the review checklist and reports only CRITICAL findings (SQL injection, auth gaps, race conditions, API contract breaks, weakened gates). It reports and never changes or stops a push.
+description: Important-only safety review of the diff a push would send. Runs on request, loads the review checklist and reports only IMPORTANT findings (SQL injection, auth gaps, race conditions, API contract breaks, weakened gates). It reports and never changes or stops a push.
 allowed-tools:
   - Bash
   - Read
@@ -10,7 +10,7 @@ allowed-tools:
 
 # Pre-Push Safety Net
 
-You are running the `/pre-push` command. It runs on request, before you push. It reads the diff a push would send, applies the CRITICAL pass of the `review` checklist, and reports only CRITICAL findings that could cause catastrophic remote failures. It reports. The developer decides what to do.
+You are running the `/pre-push` command. It runs on request, before you push. It reads the diff a push would send, applies the IMPORTANT pass of the `review` checklist, and reports only IMPORTANT findings that could cause catastrophic remote failures. It reports. The developer decides what to do.
 
 **Design goal:** Fast enough to run every time. Under 30 seconds for typical diffs.
 
@@ -54,11 +54,11 @@ git diff "$FROM" HEAD --name-only
 git diff "$FROM" HEAD
 ```
 
-Classify each changed file by what it does at runtime, not by its extension. Code, configuration, migrations, CI files and tests are in scope. So is Markdown that is loaded as instructions: a skill, command, agent or prompt file steers a model at runtime and gets the same review as code. Prose that only people read, such as a README or a changelog, cannot trigger a CRITICAL category, so skim it. Review every other changed file, whatever its name or extension.
+Classify each changed file by what it does at runtime, not by its extension. Code, configuration, migrations, CI files and tests are in scope. So is Markdown that is loaded as instructions: a skill, command, agent or prompt file steers a model at runtime and gets the same review as code. Prose that only people read, such as a README or a changelog, cannot trigger a IMPORTANT category, so skim it. Review every other changed file, whatever its name or extension.
 
 ---
 
-## Step 3: Load the checklist, classify, report CRITICAL only
+## Step 3: Load the checklist, classify, report IMPORTANT only
 
 Invoke `bork:review` with the Skill tool, unless it is already loaded in this turn. Then read `checklist.md` in the base directory the loaded skill reports. Do not search the repo for it and do not use a path inside the repo.
 
@@ -66,7 +66,7 @@ Use only that checklist. Do not run the `review` workflow: no scope pinning, ver
 
 If the `review` skill or its `checklist.md` cannot be loaded, print `pre-push: review checklist unavailable. Nothing was reviewed.` and stop. Never print the clean line in that case.
 
-Run all CRITICAL and INFORMATIONAL checklist categories against the diff, assigning confidence and severity before filtering. These eight CRITICAL categories are the ones this command reports:
+Run all IMPORTANT and NIT checklist categories against the diff, assigning confidence and severity before filtering. These eight IMPORTANT categories are the ones this command reports:
 
 1. **SQL & Data Safety** — Raw SQL without parameterization, missing WHERE on UPDATE/DELETE, SQL injection vectors
 2. **Migration & Schema Safety** — Destructive migrations without reversibility, data-loss operations
@@ -83,14 +83,14 @@ Run all CRITICAL and INFORMATIONAL checklist categories against the diff, assign
 
 ## Step 4: Report
 
-**If no critical issues found:**
+**If no important issues found:**
 ```
-pre-push ✓ Critical review clean ($DIFF_STAT)
+pre-push ✓ Important review clean ($DIFF_STAT)
 ```
 
-**If critical issues found:**
+**If important issues found:**
 ```
-pre-push ✗ N critical issue(s) found
+pre-push ✗ N important issue(s) found
 
 1. [file:line] SQL injection — raw user input in query string
 2. [file:line] Auth gap — new endpoint /api/admin/users has no auth middleware
@@ -105,7 +105,7 @@ Then stop. Do not touch the push.
 ## Important Rules
 
 - **Speed is everything.** This command must complete in under 30 seconds. If it is slow, developers will skip it.
-- **Critical output only.** After classification, report only CRITICAL findings. Suppress informational, design, and style findings.
+- **Important output only.** After classification, report only IMPORTANT findings. Suppress nit, pre-existing, design, and style findings.
 - **No auto-fixing.** This is a report, not a fixer. The developer fixes.
 - **Quiet when clean.** One line of output when everything is fine.
 - **Never read clean from a failure.** A missing base, a missing upstream or an unavailable checklist is reported as such, never as a clean result.

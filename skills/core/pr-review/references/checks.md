@@ -73,7 +73,7 @@ commit has no statuses at all, so read the `statuses` list, not the combined
 state. Then:
 
 - **Base passed** → the PR caused the failure. It is a regression, and it is
-  CRITICAL.
+  IMPORTANT.
 - **Base failed too** → compare the failing test names. For GitHub Actions,
   `gh run view --job <job-id> --log-failed` gives them for both commits. The
   job ID is the number after `/job/` in the head check's `detailsUrl`, and the
@@ -162,7 +162,7 @@ git worktree add --detach <scratchpad>/pr-review-<number>-base <merge-base>
 
 - A test that fails at both commits is a baseline failure: `FAIL (baseline)`.
 - A test that passes at the merge-base and fails at the head is a regression.
-  It is CRITICAL.
+  It is IMPORTANT.
 
 Remove the base worktree when done, under the artifact rules below.
 

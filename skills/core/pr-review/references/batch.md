@@ -36,11 +36,11 @@ pushed. A lane stops, and says so in `result.md`.
 
 All in `<dir>`:
 
-- `payload.json`: the Step 5c payload with the critical comments only. Build
+- `payload.json`: the Step 5c payload with the important comments only. Build
   it exactly as Step 5c describes, with the marker, `commit_id` and
   `"event": "COMMENT"`. Don't post it.
-- `informational.json`: the INFORMATIONAL findings, numbered as Step 5b would
-  number them, each body already in Step 5c's `🤖 **INFORMATIONAL — <title>**`
+- `nits.json`: the NIT findings, numbered as Step 5b would
+  number them, each body already in Step 5c's `🤖 **NIT — <title>**`
   form:
 
   ```json
@@ -53,14 +53,14 @@ All in `<dir>`:
   }
   ```
 
-- `preview.md`: exactly what Step 5b would print, critical comments,
-  out-of-diff findings, staleness note and informational list, followed by
-  one line naming the recommended informational findings and why.
+- `preview.md`: exactly what Step 5b would print, important comments,
+  out-of-diff findings, staleness note and nit list, followed by
+  one line naming the recommended nit findings and why.
 - `result.md`: the Step 6 report, the Step 7 box, **Checks pending** (or
   `None.`), the worktree path and the patch path (or `none`).
 
 Then return one line:
 
 ```
-<PR URL> — <verdict>[ provisional] — <n> critical, <m> informational, <k> checks pending — <dir>
+<PR URL> — <verdict>[ provisional] — <n> important, <m> nit, <k> checks pending — <dir>
 ```

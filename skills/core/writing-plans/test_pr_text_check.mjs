@@ -87,7 +87,7 @@ test('a hidden HTML marker is ignored', () => {
 
 test('a suggestion block is not visible text', () => {
   const code = Array.from({ length: 60 }, (_, i) => `$a${i} = foo( \`x\`, 'y' ); // 1/2 tests pass. Done. Again. More. Yes.`).join('\n');
-  const r = run(file(`🤖 **CRITICAL — Wrong default**\n\nThe default turns sharing on for every site.\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`));
+  const r = run(file(`🤖 **IMPORTANT — Wrong default**\n\nThe default turns sharing on for every site.\n\n\`\`\`suggestion\n${code}\n\`\`\`\n`));
   assert.strictEqual(r.code, 0, r.out + r.err);
 });
 
@@ -138,7 +138,7 @@ test('a payload checks the review body and every inline comment, with their loca
     event: 'COMMENT',
     body: '🤖 Two problems block landing.',
     comments: [
-      { path: 'a.php', line: 3, side: 'RIGHT', body: '🤖 **CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
+      { path: 'a.php', line: 3, side: 'RIGHT', body: '🤖 **IMPORTANT — Wrong default**\n\nSharing turns on for every site.' },
       { path: 'b.php', line: 9, side: 'RIGHT', body: '🤖 Uses `a`, `b` and `c` in `d`.' },
     ],
   };
@@ -179,8 +179,8 @@ test('a payload needs the robot prefix on the review body and on every inline co
   const payload = {
     body: 'One problem blocks landing.',
     comments: [
-      { path: 'a.php', line: 3, body: '🤖 **CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
-      { path: 'b.php', line: 9, body: '**CRITICAL — Wrong default**\n\nSharing turns on for every site.' },
+      { path: 'a.php', line: 3, body: '🤖 **IMPORTANT — Wrong default**\n\nSharing turns on for every site.' },
+      { path: 'b.php', line: 9, body: '**IMPORTANT — Wrong default**\n\nSharing turns on for every site.' },
     ],
   };
   const path = file(JSON.stringify(payload), 'json');

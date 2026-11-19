@@ -1,8 +1,8 @@
 ---
 name: pr-review
 description: >
-  Review a GitHub PR and post its CRITICAL findings as line-anchored inline
-  comments with suggestion blocks after you confirm; INFORMATIONAL findings
+  Review a GitHub PR and post its IMPORTANT findings as line-anchored inline
+  comments with suggestion blocks after you confirm; NIT findings
   stay in chat. Adds a second pass from the other harness when the diff needs
   one, reuses CI results, and reviews only new commits on a re-run. Invoke
   only when the user explicitly asks for /pr-review or for a PR review that
@@ -59,7 +59,7 @@ This file covers the common path. Some cases have their own file in
 - **Never wait on a question.** Fetching and reading CI start before Step 1
   asks anything.
 - **Nothing reaches the PR unseen.** Every comment is shown in full and confirmed
-  before posting, critical ones included.
+  before posting, important ones included.
 - **Comments only.** Never commit, push, approve or request changes. The only
   write to the PR is one COMMENT review the user confirmed.
 - **Two reviewers when the diff needs them, one reporter.** The peer finds; the
@@ -70,13 +70,13 @@ This file covers the common path. Some cases have their own file in
 - **CI before local.** A check CI already answered for this commit is not run
   again here.
 - **Review what's new.** On a re-run, review the new commits and recheck the
-  earlier CRITICAL findings. Never post a finding that is already on the PR.
+  earlier IMPORTANT findings. Never post a finding that is already on the PR.
 - **Quoted evidence or it's a lead.** Only findings with a verified `EVIDENCE`
   line reach the PR.
 - **Precision over volume.** Findings that are wrong, or right but trivial, train
   the author to ignore the ones that matter.
-- **One review, not a swarm of comments.** Batch the critical and chosen
-  informational findings into a single COMMENT review.
+- **One review, not a swarm of comments.** Batch the important and chosen
+  nit findings into a single COMMENT review.
 - **Review the tree that lands.** Check staleness against a freshly fetched base
   before the review starts, not after the verdict.
 - **Plain English on the PR, only the work.** Follow
@@ -127,7 +127,7 @@ ready" goes to `bork:do` (its **land** pipeline), "commit those fixes" to
 
 | You decide alone | You stop and confirm |
 |---|---|
-| Which findings are CRITICAL vs INFORMATIONAL | Posting anything to the PR |
+| Which findings are IMPORTANT vs NIT | Posting anything to the PR |
 | Which fixable findings are mechanical enough to auto-fix | Anything in the out-of-scope list |
 | How to word a comment, and whether a suggestion block is safe | Removing a worktree that has uncommitted fixes in it |
 | Which anchor line a finding belongs on | Falling back to a summary comment when inline anchoring fails |
@@ -176,7 +176,7 @@ do for `--auto-fix --worktree`.
 
 > **What should happen to the fixable findings?**
 > - **Comment only** — no source file changes. Every finding, fixable or not, becomes a PR comment or a chat report.
-> - **Auto-fix the mechanical ones, comment the rest** — scoped mechanical corrections get applied to the working tree (uncommitted, unpushed). Judgment calls and CRITICAL findings still become PR comments.
+> - **Auto-fix the mechanical ones, comment the rest** — scoped mechanical corrections get applied to the working tree (uncommitted, unpushed). Judgment calls and IMPORTANT findings still become PR comments.
 
 Record the answer as **COMMENT-ONLY** or **AUTO-FIX**. Every later step branches
 on it. Don't ask again — not before applying a fix, not before posting.
@@ -312,7 +312,7 @@ reviewers. The wrapper host started the checks in 3a and joins their results in
 It holds the contract to give the subagent, and the bullets to add for OVERLAP,
 CONFLICT, INCREMENTAL and AUTO-FIX.
 
-In INCREMENTAL scope, recheck the earlier CRITICAL comments while the host pass
+In INCREMENTAL scope, recheck the earlier IMPORTANT comments while the host pass
 runs, as [incremental.md](references/incremental.md) describes.
 
 ### Step 3c: Join — peer, checks, host
@@ -329,7 +329,7 @@ Record each check as `PASS (CI)`, `PASS (local)`, `FAIL (CI)`, `FAIL (local)`,
 `PENDING (CI)` or `NOT RUN` with its reason, and carry the results into Step 7's
 Verification row.
 
-Turn each regression into a CRITICAL finding with `SOURCE: check`. If you have
+Turn each regression into an IMPORTANT finding with `SOURCE: check`. If you have
 the failing assertion, set `FILE` and `LINE` to it in the test file and quote it
 as `EVIDENCE`. Otherwise use `FILE: none`, put the check name and its CI or log
 URL in `EVIDENCE`, and put the finding in the review summary body.
@@ -376,8 +376,8 @@ worth nothing.
 
 ### 5a: Triage and anchor
 
-Split the merged findings into CRITICAL and INFORMATIONAL. Auto-fixed items are
-neither — they go in the summary, not on the PR.
+Split the merged findings into IMPORTANT, NIT and PRE-EXISTING (never
+posted). Auto-fixed items go in the summary, not on the PR.
 
 **Read [posting.md](references/posting.md) now** when the merged list has a
 finding in it. Its Step 5a sections cover dropping on proof, checking each
@@ -395,7 +395,7 @@ matching rule in posting.md. If an earlier `/pr-review` comment matches, don't
 post the finding again; note the existing URL. If another
 reviewer already raised it, don't post it either; list it in chat as already
 raised, with the URL. **A duplicate stays in the findings list.** Not posting it
-doesn't resolve it: a duplicate CRITICAL finding still counts as unresolved in
+doesn't resolve it: a duplicate IMPORTANT finding still counts as unresolved in
 Step 7.
 
 **Check every `EVIDENCE` line against the file,** as posting.md describes, before
@@ -403,18 +403,18 @@ you anchor the finding.
 
 ### 5b: Show, then confirm once
 
-Show everything that could go on the PR, then ask once. The critical comments
-and the informational choice share one confirmation, and the result is one
-review. With no critical and no informational findings, there is nothing to
+Show everything that could go on the PR, then ask once. The important comments
+and the nit choice share one confirmation, and the result is one
+review. With no important and no nit findings, there is nothing to
 post: skip to Step 6. Otherwise print and ask as the Step 5b section of
 [posting.md](references/posting.md) says.
 
-Don't re-litigate the answer. Cancel posts nothing, informational findings
+Don't re-litigate the answer. Cancel posts nothing, nit findings
 included.
 
 ### 5c: Post
 
-Post the critical comments and the chosen informational ones as a *single*
+Post the important comments and the chosen nits as a *single*
 COMMENT review. The payload format and the `gh api` call are in the Step 5c
 section of [posting.md](references/posting.md).
 
@@ -432,7 +432,7 @@ Print the returned review URL.
 
 Nothing here is posted, and nothing here asks a question. Report, terse:
 
-- The informational findings the user didn't pick, by number.
+- The nit findings the user didn't pick, by number.
 - Findings another reviewer already raised, with the existing URL.
 - The leads, under `LEADS — <n> unconfirmed (never posted)`, each with
   `file:line`, the suspicion in a line, and what would confirm it. Put
@@ -457,9 +457,9 @@ Nothing here is posted, and nothing here asks a question. Report, terse:
   | Coverage             | host ___/___ files read, peer ___/___ / N/A; unread: <paths> or none |
   | Staleness            | CURRENT / BEHIND _ / OVERLAP _ files / CONFLICT _ files |
   +--------------------------------------------------------------------+
-  | CRITICAL findings    | ___ (___ posted inline, ___ in summary)     |
-  | Earlier CRITICAL     | ___ resolved, ___ still present, ___ outdated / N/A |
-  | INFORMATIONAL        | ___ (___ posted, ___ reported only)         |
+  | IMPORTANT findings   | ___ (___ posted inline, ___ in summary)     |
+  | Earlier IMPORTANT    | ___ resolved, ___ still present, ___ outdated / N/A |
+  | NIT / PRE-EXISTING   | ___ (___ posted, ___ reported only) / ___   |
   | Already on the PR    | ___ dropped as duplicates                   |
   | Raised by both       | ___ of ___                                  |
   | Auto-fixed locally   | ___ (uncommitted) / N/A                     |
@@ -474,15 +474,17 @@ Nothing here is posted, and nothing here asks a question. Report, terse:
 
 Apply `bork:review`'s **Result** gates to the whole PR using the merged
 findings (duplicates included, posted or not), the STILL PRESENT earlier
-findings, and the completed check and peer evidence. An unresolved CRITICAL finding or missing required evidence means
+findings, and the completed check and peer evidence. An unresolved IMPORTANT finding or missing required evidence means
 **DO NOT LAND**; a posted suggestion is not a resolution. Then apply the Step 2b
 staleness cap: CONFLICT means **DO NOT LAND**, and OVERLAP lowers SAFE TO LAND
 to **LAND WITH CAUTION**. A cap never raises a verdict. Say plainly that the
 verdict describes the PR as it stands, not as it would stand once the
 suggestions are applied.
 
+Then the tier: [risk-tier.md](references/risk-tier.md).
+
 **When the verdict isn't SAFE TO LAND**, name the next step in one line and
-don't start it: `bork:do`'s **land** pipeline, with the unresolved CRITICAL
+don't start it: `bork:do`'s **land** pipeline, with the unresolved IMPORTANT
 findings as its starting blockers, so it checks the same bar this review used.
 
 **Cleanup.** If you created a worktree in Step 2, or local checks created one at

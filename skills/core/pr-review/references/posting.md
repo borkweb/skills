@@ -17,7 +17,7 @@ Findings on protected subjects are never dropped, only kept or demoted to a
 `LEAD` that quotes the contradicting line: memory or bounds safety, concurrency,
 declaration or linkage consistency, a behavior or compatibility change (a
 message, field, status, default or error path the old code produced and the new
-code does not), an unused parameter, and the checklist's forced-CRITICAL classes
+code does not), an unused parameter, and the checklist's forced-IMPORTANT classes
 (data loss, trust-boundary bypass, uncapped spend). A wrong finding on a PR
 costs the author minutes; a right one dropped is destroyed silently, and nobody
 learns that it was.
@@ -41,7 +41,7 @@ within a few of `line` (or of `original_line`, because an outdated comment has
 ## Step 5a: Anchor and write each comment
 
 **Check every anchor is inside the diff.** GitHub rejects (422) an inline comment
-on a line that isn't part of the PR's diff. For each CRITICAL finding:
+on a line that isn't part of the PR's diff. For each IMPORTANT finding:
 
 ```bash
 git diff <merge-base> <headRefOid> -- <file>
@@ -60,7 +60,7 @@ Confirm the line appears in a hunk. Then:
 **Write each comment body** as:
 
 ```markdown
-🤖 **CRITICAL — <title>**
+🤖 **IMPORTANT — <title>**
 
 <problem, one to three sentences>
 
@@ -95,7 +95,7 @@ identifiers go in Details, in ASD-STE100 Simplified Technical English
 body. Rewrite each finding here; do not paste `PROBLEM` and `FIX` unchanged,
 because the peer does not follow these rules.
 
-Keep code, identifiers, paths, error strings, the `🤖 **CRITICAL —**` label and the
+Keep code, identifiers, paths, error strings, the `🤖 **IMPORTANT —**` label and the
 suggestion block exactly as written. Every comment and the review body start
 with 🤖 unless the user asks you to leave it out; then pass `--no-robot` to the
 check. The prose rules apply around them, never
@@ -104,13 +104,13 @@ these rules.
 
 ## Step 5b: What to print
 
-First, print every planned critical comment exactly as it will appear:
+First, print every planned important comment exactly as it will appear:
 
 ````
 Posting 3 inline comments to PR #<n> (<title>) as a COMMENT review:
 
 1. app/models/post.rb:42  [RIGHT]  [both]  — Race condition in status transition
-   🤖 **CRITICAL — Race condition in status transition**
+   🤖 **IMPORTANT — Race condition in status transition**
    Two concurrent publishes both read status='draft' and both write...
    ```suggestion
      .where(status: 'draft')
@@ -127,16 +127,16 @@ Staleness note in the review body:
    `app/models/post.rb`. Rebase the branch, then run the checks again.
 ````
 
-Then list the INFORMATIONAL findings, numbered and grouped by source. Show each
+Then list the NIT findings, numbered and grouped by source. Show each
 one's planned comment exactly as it would be posted, so that nothing reaches the
 PR unseen:
 
 ```
-INFORMATIONAL — 6 findings (post only the ones you pick)
+NIT — 6 findings (post only the ones you pick)
 
 Error handling (2)
   1. app/jobs/import.rb:31  [RIGHT]  [both]
-     🤖 **INFORMATIONAL — The timeout log does not include the job ID**
+     🤖 **NIT — The timeout log does not include the job ID**
      The log for an expected timeout does not include the job ID. Add the job
      ID to the structured log.
   2. ...
@@ -148,18 +148,18 @@ Design (1)
 Then one `AskUserQuestion` call with up to two questions. Leave out a question
 that has nothing to ask about.
 
-- **Critical comments** — *Post* or *Cancel*. The user edits a comment through
+- **Important comments** — *Post* or *Cancel*. The user edits a comment through
   the free-text answer.
-- **Informational findings** (single-select) — *My recommendation (#1, #4)*,
+- **Nit findings** (single-select) — *My recommendation (#1, #4)*,
   *All <n>*, *None*. The user types other numbers through the free-text answer.
-  Say which you'd post and why in one line; they're informational precisely
+  Say which you'd post and why in one line; they're nits precisely
   because reasonable people would leave some of them off a PR.
 
 ## Step 5c: The payload and the call
 
 Post one COMMENT review: one notification for the author, not one per finding.
-It holds the critical comments and the chosen informational ones, with bodies
-labeled `🤖 **INFORMATIONAL — <title>**`. The informational ones follow the same
+It holds the important comments and the chosen nits, with bodies
+labeled `🤖 **NIT — <title>**`. The nits follow the same
 anchor, duplicate and prose rules. The hidden marker on the first line lets
 the next run find this review in Step 0.
 
@@ -178,7 +178,7 @@ is about a word the check refuses. Never post a payload that fails.
 {
   "commit_id": "<headRefOid>",
   "event": "COMMENT",
-  "body": "<!-- review sha=<headRefOid> -->\n🤖 <n> critical findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
+  "body": "<!-- review sha=<headRefOid> -->\n🤖 <n> important findings inline.\n\n<staleness note, only for OVERLAP or CONFLICT>\n\n<any findings that couldn't be anchored>",
   "comments": [
     { "path": "app/models/post.rb", "line": 42, "side": "RIGHT", "body": "..." }
   ]
