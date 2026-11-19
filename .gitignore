@@ -2,6 +2,7 @@
 .claude/settings.local.json
 .claude/worktrees
 .lavish
+output/
 docs/superpowers
 __pycache__/
 node_modules/

@@ -1,6 +1,6 @@
 # Dreaming over memory stores
 
-The memory step of the dreaming pass ([dreaming.md](dreaming.md)). Sessions write to Claude Code's auto memory one note at a time, so a store collects duplicates, contradictions and stale entries, and its `MEMORY.md` index is loaded into every session: a wrong line there reaches all of them. This step reads a store next to the sessions that wrote it and builds a new copy: duplicates merged, stale or contradicted entries replaced with the latest value, and lessons the sessions show but no note holds added. The live store is never edited in place. The user takes the whole new copy or discards it.
+The memory step of the dreaming pass ([dreaming.md](dreaming.md)). Sessions write to Claude Code's auto memory one note at a time, so a store collects duplicates, contradictions and stale entries, and its `MEMORY.md` index is loaded into every session: a wrong line there reaches all of them. This step reads a store next to the sessions that wrote it and builds a new copy: duplicates merged, stale or contradicted entries replaced with the latest value, and lessons the sessions show but no note holds added. The live store is never edited in place. The user keeps or reverts each change on the dream report, and the copy replaces the store only after that.
 
 ## Scope
 
@@ -30,15 +30,21 @@ The memory step of the dreaming pass ([dreaming.md](dreaming.md)). Sessions writ
 
 ## Approve and swap
 
-This is the one place the pass does not ask row by row. Ask once per changed store, never two stores in one question (AskUserQuestion): the counts by kind, every retired note by name, and the paths of `changes.md` and the two directories for `diff -ru input output`. The options are **Use it** and **Discard it**. There is no partial swap: for a different result the user discards, then edits the live store or reruns with a focus.
+Each store is one section of the dream report (`report.md` in the `dream` skill directory), and each `changes.md` row is one item there, with the note's text before and after. Name in the item's `detail` any other row it depends on, such as the index row of a merge. The user decides each row:
 
-On **Use it**:
+- **Keep**: the row stays in `output/`.
+- **Revert**: undo that row in `output/` by restoring the files it touched from `input/`, with their `MEMORY.md` lines, and undo the rows that depend on it.
+- **Change it**: revise the row in `output/` as the comment says, then ask about the revised row before it counts as kept.
+
+A store whose rows are all reverted is discarded: record it in `decisions.md` and change nothing. Without the page, ask once per changed store, never two stores in one question (AskUserQuestion): the counts by kind, every retired note by name, and the paths of `changes.md` and the two directories for `diff -ru input output`, with the options **Use it** and **Discard it**.
+
+For a store with one or more kept rows:
 
 1. Compare the live store with `input/` again (`diff -r`). Other sessions write memory while a dream runs. Any difference means refuse: name the files, leave the live store untouched and keep `output/`.
 2. Replace the store's contents: `rsync -a --delete "<output>/" "<live store>/"`, with the live path resolved by `realpath` so a symlinked store stays a link.
 3. Confirm `diff -r output <live store>` is empty, and give the user the restore command (the same `rsync` from `input/`).
 
-On **Discard it**, record the store and the user's reason in `decisions.md`. Leave the staged directories in place either way, and never commit.
+Leave the staged directories in place either way, and never commit.
 
 ## Report
 
