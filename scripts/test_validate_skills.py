@@ -1,4 +1,4 @@
-"""Mutation tests for scripts/validate-skills.rb: each case edits a throwaway copy of the repo."""
+"""Mutation tests for scripts/validate-skills.py: each case edits a throwaway copy of the repo."""
 import os
 from pathlib import Path
 import re
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parent.parent
-RUBY = os.environ.get('RUBY', 'ruby')
+UV = os.environ.get('UV', 'uv')
 BUDGET = 20000
 OFFLOAD = 'skills/core/offload/SKILL.md'
 PR_REVIEW = 'skills/core/pr-review/SKILL.md'
@@ -24,7 +24,7 @@ class ValidateSkillsTests(unittest.TestCase):
         shutil.copytree(REPO, self.root, symlinks=True, ignore=shutil.ignore_patterns('.git', 'node_modules', '__pycache__'))
 
     def validate(self):
-        done = subprocess.run([RUBY, str(self.root / 'scripts/validate-skills.rb')], stdout=subprocess.PIPE,
+        done = subprocess.run([UV, 'run', '--quiet', '--script', str(self.root / 'scripts/validate-skills.py')], stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, universal_newlines=True)
         return done.returncode, done.stdout
 
@@ -96,7 +96,7 @@ class ValidateSkillsTests(unittest.TestCase):
         self.assertIn(OFFLOAD, out); self.assertIn(str(len(data)), out)
 
     def test_allowlist_entry_that_is_not_a_manifest_skill_fails(self):
-        self.edit_text('scripts/validate-skills.rb', lambda t: t.replace("'" + PR_REVIEW + "' =>", "'skills/core/gone/SKILL.md' =>", 1))
+        self.edit_text('scripts/validate-skills.py', lambda t: t.replace("'" + PR_REVIEW + "':", "'skills/core/gone/SKILL.md':", 1))
         self.assertFails('skills/core/gone/SKILL.md')
 
     def test_builder_template_labels_must_start_a_line_inside_the_fence(self):

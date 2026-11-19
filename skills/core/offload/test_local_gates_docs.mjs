@@ -152,8 +152,8 @@ test('C9i: the exit code is the same everywhere it is named', () => {
 
 test('C9j: SKILL.md stays within the size the allowlist held before this slice', () => {
   assert.ok(statSync(join(HERE, 'SKILL.md')).size <= 24094);
-  const rb = readFileSync(join(HERE, '..', '..', '..', 'scripts', 'validate-skills.rb'), 'utf8');
-  const entry = Number(/'skills\/core\/offload\/SKILL\.md' => ([\d_]+)/.exec(rb)?.[1].replace(/_/g, ''));
+  const validator = readFileSync(join(HERE, '..', '..', '..', 'scripts', 'validate-skills.py'), 'utf8');
+  const entry = Number(/'skills\/core\/offload\/SKILL\.md': ([\d_]+)/.exec(validator)?.[1].replace(/_/g, ''));
   assert.ok(entry <= 24094, `allowlist entry ${entry} was raised`);
 });
 

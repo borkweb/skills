@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One command that runs every check in this repo and prints one summary line per group:
 #
-#   validate     ruby scripts/validate-skills.rb
+#   validate     uv run scripts/validate-skills.py
 #   py-scripts   python3 -m unittest discover -s scripts -p 'test_*.py'
 #   py-evals     python3 -m unittest discover -s evals -p 'test_*.py'
 #   node         node --test over every test_*.mjs and *.test.mjs under hooks, skills and evals (found by glob)
@@ -97,12 +97,12 @@ build_child_env() {
   for name in $(compgen -e); do
     case "$name" in
       PATH|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|TZ|TERM|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|\
-      HTTP_PROXY|HTTPS_PROXY|NO_PROXY|ALL_PROXY|http_proxy|https_proxy|no_proxy|all_proxy|LC_*)
+      HTTP_PROXY|HTTPS_PROXY|NO_PROXY|ALL_PROXY|http_proxy|https_proxy|no_proxy|all_proxy|LC_*|UV_*)
         CHILD_ENV+=("$name=${!name}") ;;
     esac
   done
   # With no LANG (a stripped or CI environment) python 3.9 coerces the C locale and adds LC_CTYPE to the
-  # environment its tests inspect, and ruby reads Markdown as US-ASCII. Default to UTF-8 when none is set.
+  # environment its tests inspect. Default to UTF-8 when none is set.
   [ -z "${LANG:-}" ] && CHILD_ENV+=("LANG=en_US.UTF-8")
   CHILD_ENV+=(
     "BORK_RUN_DIR=$SENT/sentinel-run" "BORK_RUN_ID=sentinel-run" "BORK_RUNS_HOME=$SENT/runs-home"
@@ -155,8 +155,8 @@ num() { # file, regex with one capture group -> the LAST match or 0: the runner'
 }
 
 group_validate() {
-  # -Eutf-8: with no LANG (a stripped or CI environment) ruby reads the Markdown as US-ASCII and the validator crashes.
-  "${CHILD_ENV[@]}" ruby -Eutf-8 scripts/validate-skills.rb > "$OUT/validate.out" 2>&1
+  # uv reads the script's inline dependency block (PyYAML) and caches it; no venv to set up.
+  "${CHILD_ENV[@]}" uv run --quiet --script scripts/validate-skills.py > "$OUT/validate.out" 2>&1
   local rc=$? f=0
   [ "$rc" -ne 0 ] && f=1
   report validate 1 "$f" 0

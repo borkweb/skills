@@ -21,9 +21,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: ruby/setup-ruby@v1
+      # The structure validator runs through uv, which installs its inline PyYAML dependency.
+      # Caching is off: it keys on a lockfile this repo does not have, and the one wheel downloads fast.
+      - uses: astral-sh/setup-uv@v6
         with:
-          ruby-version: '3.3'
+          enable-cache: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

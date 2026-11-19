@@ -249,7 +249,7 @@ Keep the first implementation local and inspectable. A heavyweight graph framewo
 | Host/model unavailable | Report capability gap; no invented IDs or silent fallback |
 | Jev disabled, unavailable, or adversarial input | No initial dependency; later optional failure cannot grant authority |
 
-Use `ruby scripts/validate-skills.rb` for structural changes and relevant helper tests when helpers change. Add executable engine tests with fake adapters, live smoke tests per supported adapter, and behavioral routing evaluations. Text assertions about instructions do not prove runtime recovery or permission enforcement.
+Use `uv run scripts/validate-skills.py` for structural changes and relevant helper tests when helpers change. Add executable engine tests with fake adapters, live smoke tests per supported adapter, and behavioral routing evaluations. Text assertions about instructions do not prove runtime recovery or permission enforcement.
 
 Compare representative tasks against the current workflow with matched scope, harness/model configuration, and environments. Record elapsed time, user interventions, corrective rounds, redundant checks, cost when known, missed defects, and false blockers. Report uncertainty and separate harness failures from routing mistakes. Promote only when authority/acceptance invariants hold and observed usefulness justifies the overhead.
 

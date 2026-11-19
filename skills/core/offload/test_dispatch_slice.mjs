@@ -1204,7 +1204,7 @@ test('C1g/C1h: a malformed local line in the block refuses the dispatch: nothing
 test('C2a: a fresh dispatch copies every local line verbatim beside the criterion lines', () => {
   const R = repo();
   const WT = join(BOX, 'wt-lcopy');
-  const lines = ['L1: local: node --test a.mjs', '- L2: local: ruby scripts/validate-skills.rb --strict'];
+  const lines = ['L1: local: node --test a.mjs', '- L2: local: uv run scripts/validate-skills.py --strict'];
   run([R, WT, 'feat/lcopy', blockFile('lcopy.md', blockWith(lines))]);
   const doc = hoff(['path', WT, 'arch']);
   const frozen = frozenOf(doc).split('\n');
