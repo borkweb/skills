@@ -26,7 +26,10 @@ BUILD
 TEST BAR
 - A new or changed test must fail when the behavior it names breaks, and keep passing when only the implementation changes.
 - It fails that bar when its expected value comes from the code under test, when a mock or fixture supplies the result the code should produce, or when it asserts calls between internal parts instead of what the code returns, stores or sends.
-- New logic with a branch, loop, parser, money or security gets one such test. A trivial change needs none.
+- A test is redundant when an existing test already fails for the same break. Search first and name the closest one; extend it, add a table row, or cite it for a criterion. Test a shared helper once, where it lives; a caller gets one test proving it calls it.
+- New logic with a branch, loop, parser, money or security gets one such test. A trivial change needs none. Beyond the main path, test only the bug being fixed, the error a caller branches on, and failures that lose data, money, access or security; one table row per distinct outcome.
+- Build an expensive fixture (site, database, server) once per class when cases can restore what they change.
+- The repo's own test guidance and checker, when present, decide how many tests to write.
 - Add no production export, flag, wrapper or hook that only tests use when the real entry point can drive the behavior.
 
 BEFORE READY

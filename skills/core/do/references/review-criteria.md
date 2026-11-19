@@ -68,7 +68,7 @@ Enforced by: prose only
 
 Seen as: regex-only date parsing accepting month 13; a zero or empty price overwriting a known one; id-less rows deduplicated into twins; a webhook payload used unvalidated; structured tool output written to the store without a shape check; a value longer than its database column.
 
-Criterion: list each external input and its accepted shape. Check: a rejection test per input with the nearest malformed value (boundary, empty, wrong type, duplicate, over-length).
+Criterion: list each external input the slice's own code parses, and its accepted shape. Check: one rejection test per distinct rejection branch, with the nearest malformed value (boundary, empty, wrong type, duplicate, over-length).
 
 Enforced by: prose only
 
@@ -101,5 +101,13 @@ Enforced by: prose only
 Seen as: a validator that reads markup or declared dimensions while the reader sees rendered output; a checker on one parser's tree while production parses with another; an approval prompt built by a different normalizer than the write, so the user approves one value and the write uses another; an approval prompt that drops values under a length bound or shows caller text instead of the resolved target; host checks run before a canonicalizing transform; a guard that reimplements an external enforcer's matching and diverges from it; blinding applied to a subject's stdin but not its environment, working directory or version-control history.
 
 Criterion: for each check, name the consumer that acts on the value (renderer, parser, write path, enforcer, subject process). The check runs on that consumer's input after every transform, or through the consumer itself. Check: a differential test feeds hostile inputs (control and bidi characters, maximum length, encoded forms) to both the check and the consumer and asserts that they agree; for isolation, plant a marker and search every channel the subject can reach.
+
+Enforced by: prose only
+
+## 15. Tests that add cost but no protection
+
+Seen as: per-caller rows that repeat a shared helper's own test; re-assertions of flags other tests in the file already check; edge cases that run one branch to one outcome; a site built per test that pushes a CI group near its time limit.
+
+Criterion: each new test names a break no existing test catches; shared helpers are tested once where they live; expensive fixtures are built once per class. Check: one mutation of the protected line fails the new test and no existing test.
 
 Enforced by: prose only

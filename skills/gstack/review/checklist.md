@@ -105,6 +105,8 @@ A gate is anything that would have made this change fail: a test, an assertion, 
 - Security enforcement features without integration tests verifying the enforcement path
 - A path whose only tests are weak (smoke, existence, trivial, or a test that asserts its own setup or mirrors the implementation) stays a coverage gap; a low-value test never closes a gap
 - A new or changed test earns its place only when it can say what behavior or contract it protects, what credible regression fails it, why existing coverage does not already catch that (prefer a row in an existing table-driven test over a near-duplicate), and whether it needs a production seam no caller needs (if so, test at the real boundary)
+- A redundant or padded test: an existing test already fails for the same break (the same assertion elsewhere, the shared helper's own test, a contract test), or several cases run one branch to one outcome. Name the existing test or the case to keep (NIT)
+- An expensive fixture (site, database, server) built per test when cases could share one per class: IMPORTANT when quoted CI timing shows the group near its time limit, otherwise NIT
 - A new assertion that something is absent records a behavior removal, not coverage; cite the spec line or plan item that authorizes the removal
 - For each identifier, flag, heading or string the diff renames or deletes, grep the test suite for negative assertions naming the old value; each one now passes forever and guards nothing
 - A test named as a regression test with no record of failing before the fix proves the mock, not the fix; ask for the fails-before, passes-after evidence (NIT)
