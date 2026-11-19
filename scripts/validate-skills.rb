@@ -146,6 +146,46 @@ rescue StandardError => e
   errors << "inventory check: #{e.message}"
 end
 
+# Git spawn ratchet: a user's ~/.gitconfig (diff.context, status.showUntrackedFiles) can change what a git
+# child prints, so non-test code spawns git with GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM set, or with a
+# pinned env constant (GIT_ENV, GITENV), on the same line. scripts/git-spawn-baseline.txt holds today's
+# unpinned count per file; a file may never go above it. At zero the entry must go; when it drops, lower it.
+begin
+  baseline_rel = 'scripts/git-spawn-baseline.txt'
+  baseline = {}
+  root.join(baseline_rel).read.each_line.with_index(1) do |line, n|
+    next if line.strip.empty? || line.start_with?('#')
+    rel, count = line.split
+    if count.to_s.match?(/\A\d+\z/) then baseline[rel] = count.to_i
+    else errors << "#{baseline_rel}:#{n}: expected `<path> <count>`"
+    end
+  end
+  spawn_call = /\b(?:spawn|spawnSync|execFileSync|execSync)\(\s*['"`]git\b/
+  pinned = ->(line) { line.match?(/\bGIT_ENV\b|\bGITENV\b/) || (line.include?('GIT_CONFIG_GLOBAL') && line.include?('GIT_CONFIG_NOSYSTEM')) }
+  offenders = Hash.new { |h, k| h[k] = [] }
+  Dir.glob('{skills,hooks,scripts}/**/*.{mjs,js,cjs,ts}', base: root.to_s).sort.each do |rel|
+    next if rel.split('/').include?('node_modules') || File.basename(rel).match?(/\Atest_|\.test\./)
+    root.join(rel).read.scrub.each_line.with_index(1) do |line, n|
+      offenders[rel] << n if line.match?(spawn_call) && !pinned.call(line)
+    end
+  end
+  offenders.each do |rel, lines|
+    allowed = baseline.fetch(rel, 0)
+    next if lines.length <= allowed
+    lines.each { |n| errors << "#{rel}:#{n}: git spawn does not pin GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM (#{lines.length} in file, baseline #{allowed})" }
+  end
+  baseline.each do |rel, allowed|
+    found = offenders.fetch(rel, []).length
+    if found.zero?
+      errors << "#{baseline_rel}: #{rel} has no unpinned git spawn; remove its entry"
+    elsif found < allowed
+      notes << "note: #{rel} has #{found} unpinned git spawns; lower its #{baseline_rel} entry from #{allowed}"
+    end
+  end
+rescue StandardError => e
+  errors << "git spawn check: #{e.message}"
+end
+
 # A public repo must not carry one person's home path. Placeholder users are fine.
 PLACEHOLDER_USERS = %w[me you someone user name example t].freeze
 TEXT_EXT = %w[.md .mjs .js .ts .tsx .py .rb .sh .json .yaml .yml .toml].freeze

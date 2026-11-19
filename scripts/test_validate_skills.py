@@ -153,6 +153,25 @@ class ValidateSkillsTests(unittest.TestCase):
         self.edit_text('AGENTS.md', lambda t: t.replace('/home/' + 'realperson/', '/Users/me/'))
         self.assertEqual(self.validate()[0], 0)
 
+    def test_a_new_unpinned_git_spawn_fails_unless_pinned_in_a_test_or_baselined(self):
+        rel, spawn = 'skills/core/do/repo-rules-key.mjs', "execFileSync('git', ['status'], { encoding: 'utf8' });\n"
+        original = self.read(rel)
+        line = len(original.decode('utf-8').splitlines()) + 1
+        self.write(rel, original + spawn.encode('utf-8'))
+        self.assertFails('%s:%d: git spawn does not pin' % (rel, line))
+        self.write(rel, original + spawn.replace('{ encoding', '{ env: GIT_ENV, encoding').encode('utf-8'))
+        self.assertEqual(self.validate()[0], 0)
+        self.write(rel, original)
+        self.write('skills/core/do/test_zz_spawn.mjs', spawn.encode('utf-8'))
+        self.assertEqual(self.validate()[0], 0)
+        self.edit_text('scripts/git-spawn-baseline.txt', lambda t: t + 'skills/core/desk/runs.mjs 9\n')
+        self.edit_text('skills/core/desk/runs.mjs', lambda t: t + spawn)
+        self.assertEqual(self.validate()[0], 0)
+
+    def test_a_baseline_entry_with_no_unpinned_spawn_must_go(self):
+        self.edit_text('scripts/git-spawn-baseline.txt', lambda t: t + 'skills/core/do/memory-store.mjs 1\n')
+        self.assertFails('skills/core/do/memory-store.mjs has no unpinned git spawn; remove its entry')
+
 
 if __name__ == '__main__':
     unittest.main()

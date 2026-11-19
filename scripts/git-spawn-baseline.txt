@@ -1,0 +1,8 @@
+# Unpinned git spawns per non-test file, read by scripts/validate-skills.rb. A git spawn is pinned when its
+# line sets GIT_CONFIG_GLOBAL and GIT_CONFIG_NOSYSTEM or passes GIT_ENV or GITENV. A file may not go above
+# its count. Pin a spawn, then lower or remove the entry; never raise one.
+skills/core/desk/runs.mjs 2
+skills/core/desk/testkit.mjs 1
+skills/core/offload/architect-guard.mjs 2
+skills/core/offload/handoff.mjs 2
+skills/core/offload/ledger.mjs 1
