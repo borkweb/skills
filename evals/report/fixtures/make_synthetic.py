@@ -205,9 +205,9 @@ def review_configs(include_broken=True):
          'axes': {'harness': 'codex', 'model': 'gpt-6.1-sol', 'effort': 'medium', 'skill': 'review'}},
     ]
     if include_broken:
-        configs.append({'id': 'c6', 'label': 'gemini · gemini-3-pro', 'q': 0, 'price': (0, 0), 'speed': 1,
+        configs.append({'id': 'c6', 'label': 'antigravity · gemini-3.8-flash-high', 'q': 0, 'price': (0, 0), 'speed': 1,
                         'verbosity': 1, 'broken': 'adapter refused: no clean session with a copied login',
-                        'axes': {'harness': 'gemini', 'model': 'gemini-3-pro', 'effort': None, 'skill': 'review'}})
+                        'axes': {'harness': 'antigravity', 'model': 'gemini-3.8-flash-high', 'effort': 'high', 'skill': 'review'}})
     return configs
 
 

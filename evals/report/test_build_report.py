@@ -209,7 +209,7 @@ class AssetTests(unittest.TestCase):
 
     def test_report_code_knows_nothing_about_one_eval(self):
         # run.grader.harness is a field of the results format itself, so "harness" is allowed.
-        words = re.compile(r'(?i)\b(recall|findings?|verdicts?|reviews?|grok|codex|claude|gemini)\b')
+        words = re.compile(r'(?i)\b(recall|findings?|verdicts?|reviews?|grok|codex|claude|gemini|antigravity|agy)\b')
         sources = {**self.assets(), 'build_report.py': (HERE / 'build_report.py').read_text(encoding='utf-8'),
                    'eval_stats.py': (HERE / 'eval_stats.py').read_text(encoding='utf-8')}
         for name, text in sources.items():
