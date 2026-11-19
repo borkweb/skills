@@ -1,6 +1,7 @@
 """Observable snapshot, export, copy and cleanup contracts on disposable repositories."""
 import ast
 from concurrent.futures import ThreadPoolExecutor
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -235,6 +236,34 @@ class MakeSnapshotTests(Scratch):
         self.assertEqual(list(self.dest.iterdir()), [self.dest/'keep'])
         self.assertEqual((self.dest/'keep').read_text(), 'keep')
 
+    def test_refuses_option_like_refs_before_process_start(self):
+        for base, head in [('--upload-pack=bad', self.head), (self.base, '--output=bad')]:
+            with self.subTest(base=base, head=head), patch.dict(os.environ, {'PATH': str(self.root/'empty')}):
+                self.assertEqual(snapshot.make_snapshot(self.src, base, head, self.dest, 10),
+                                 (None, 'snapshot: refs: option-like or empty ref'))
+                self.assertFalse(self.dest.exists())
+
+    def test_refuses_empty_review_range(self):
+        for head in (self.base, self.mb):
+            with self.subTest(head=head):
+                self.assertEqual(snapshot.make_snapshot(self.src, self.base, head, self.dest, 10),
+                                 (None, 'snapshot: range: head adds no commits to base'))
+                self.assertFalse(self.dest.exists())
+
+    def test_git_errors_are_one_line(self):
+        path = self.wrapper("if 'merge-base' in sys.argv: sys.stderr.write('first error\\nsecond error'); sys.exit(9)")
+        with patch.dict(os.environ, {'PATH': path}):
+            self.assertEqual(snapshot.make_snapshot(self.src, self.base, self.head, self.dest, 10),
+                             (None, 'snapshot: merge-base: first error second error'))
+
+    def test_cleanup_error_keeps_original_snapshot_failure(self):
+        path = self.wrapper("if 'init' in sys.argv: sys.stderr.write('initial failure'); sys.exit(9)")
+        with patch.dict(os.environ, {'PATH': path}), patch.object(snapshot, 'remove_tree',
+                                                                 side_effect=OSError('cleanup blocked')):
+            mb, error = snapshot.make_snapshot(self.src, self.base, self.head, self.dest, 10)
+        self.assertIsNone(mb)
+        self.assertEqual(error, 'snapshot: init: initial failure; cleanup failed: cleanup blocked')
+
 
 class CloneCopyTests(Scratch):
     def test_copy_is_a_working_snapshot(self):
@@ -277,12 +306,24 @@ class CloneCopyTests(Scratch):
         with self.assertRaises(snapshot.SnapshotError): snapshot.clone_copy(src, dest)
         self.assertFalse(dest.exists())
 
+    def test_cleanup_error_keeps_copy_error_type_and_reason(self):
+        src = self.root/'src'; src.mkdir(); (src/'ok').write_text('ok')
+        bad = src/'unreadable'; bad.write_text('bad'); bad.chmod(0)
+        self.addCleanup(bad.chmod, 0o600)
+        with patch.object(snapshot, 'remove_tree', side_effect=OSError('cleanup blocked')):
+            with self.assertRaises(snapshot.SnapshotError) as raised:
+                snapshot.clone_copy(src, self.root/'copy')
+        self.assertIn('returned non-zero exit status', str(raised.exception))
+        self.assertIn('cleanup failed: cleanup blocked', str(raised.exception))
+
 
 class RealExport:
     temp = None
     @classmethod
     def get(cls):
-        if cls.temp is None:
+        if cls.temp is None or not cls.dest.exists():
+            if cls.temp is not None:
+                cls.temp.cleanup()
             cls.temp = tempfile.TemporaryDirectory(prefix='shared-skills-export-')
             cls.root = Path(cls.temp.name).resolve()
             cls.ref = git(REPO, 'rev-parse', 'HEAD')
@@ -367,6 +408,15 @@ class ExportSkillsTests(Scratch):
         src = init(self.root/'src'); ref = commit(src, 'REF')
         self.assertEqual(snapshot.export_skills(src, 'main', self.root/'dest'), ref)
 
+    def test_cleanup_error_keeps_original_archive_failure(self):
+        path = self.wrapper("if 'archive' in sys.argv: sys.stderr.write('archive blocked'); sys.exit(9)")
+        with patch.dict(os.environ, {'PATH': path}), patch.object(snapshot, 'remove_tree',
+                                                                 side_effect=OSError('cleanup blocked')):
+            with self.assertRaises(snapshot.SnapshotError) as raised:
+                snapshot.export_skills(REPO, 'HEAD', self.root/'export')
+        self.assertIn('archive blocked', str(raised.exception))
+        self.assertIn('cleanup failed: cleanup blocked', str(raised.exception))
+
 
 class RemoveTreeTests(Scratch):
     @classmethod
@@ -410,11 +460,88 @@ class RemoveTreeTests(Scratch):
                 self.assertEqual((outside/'keep').read_text(), 'keep')
 
     def test_root_under_symlinked_tmp(self):
-        for prefix in ('/var', '/private/var'):
-            with self.subTest(prefix=prefix):
-                spelling = Path(str(self.root).replace('/private/var', prefix, 1))
-                tree = spelling/'tree'; tree.mkdir(); (tree/'file').write_text('x')
-                snapshot.remove_tree(tree, spelling); self.assertFalse(tree.exists())
+        system_temp = subprocess.check_output(['/usr/bin/getconf', 'DARWIN_USER_TEMP_DIR'],
+                                              env=caselib.scrubbed_env(), text=True).strip()
+        with tempfile.TemporaryDirectory(prefix='snapshot-alias-', dir=system_temp) as temp:
+            physical = Path(temp).resolve()
+            self.assertTrue(str(physical).startswith('/private/var/folders/'))
+            for prefix in ('/var', '/private/var'):
+                with self.subTest(prefix=prefix):
+                    spelling = Path(str(physical).replace('/private/var', prefix, 1))
+                    self.assertTrue(str(spelling).startswith(prefix+'/'))
+                    self.assertEqual(spelling.resolve(), physical)
+                    tree = spelling/'tree'; tree.mkdir(); (tree/'file').write_text('x')
+                    snapshot.remove_tree(tree, spelling); self.assertFalse(tree.exists())
+
+    def _atomic_swap(self, first, second):
+        rename = ctypes.CDLL(None, use_errno=True).renamex_np
+        rename.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint)
+        rename.restype = ctypes.c_int
+        if rename(os.fsencode(first), os.fsencode(second), 2):
+            raise OSError(ctypes.get_errno(), 'renamex_np RENAME_SWAP failed')
+
+    def _swap_fixture(self):
+        owned = self.root/'owned'; owned.mkdir(); tree = owned/'tree'; tree.mkdir()
+        victim = tree/'directory'; victim.mkdir()
+        outside = self.root/'outside'; outside.mkdir()
+        for i in range(20):
+            (victim/f'keep{i}').write_text('owned')
+            (outside/f'keep{i}').write_text('outside')
+            (outside/f'keep{i}').chmod(0o644)
+        outside.chmod(0o555)
+        link = owned/'swap-link'; link.symlink_to(outside)
+        self.addCleanup(outside.chmod, 0o755)
+        return owned, tree, victim, outside, link
+
+    def _assert_outside_unchanged(self, outside):
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o555)
+        self.assertEqual(sorted(p.name for p in outside.iterdir()), sorted(f'keep{i}' for i in range(20)))
+        self.assertTrue(all(p.read_text() == 'outside' for p in outside.iterdir()))
+        self.assertTrue(all(stat.S_IMODE(p.stat().st_mode) == 0o644 for p in outside.iterdir()))
+
+    def test_directory_swap_during_deletion_cannot_reach_outside(self):
+        owned, tree, victim, outside, link = self._swap_fixture()
+        identity = victim.stat()
+        real_unlink = os.unlink
+        swapped = False
+        def unlink_then_swap(name, *args, dir_fd=None, **kwargs):
+            nonlocal swapped
+            in_victim = (os.path.samestat(identity, os.fstat(dir_fd)) if dir_fd is not None
+                         else Path(name).parent == victim)
+            result = real_unlink(name, *args, dir_fd=dir_fd, **kwargs)
+            if in_victim and not swapped:
+                self._atomic_swap(victim, link)
+                swapped = True
+            return result
+        with patch.object(snapshot.os, 'unlink', side_effect=unlink_then_swap):
+            try:
+                snapshot.remove_tree(tree, owned)
+            except snapshot.SnapshotError:
+                pass
+        self.assertTrue(swapped, 'the attack must actually swap a directory during deletion')
+        self._assert_outside_unchanged(outside)
+
+    def test_directory_swap_before_open_cannot_chmod_outside(self):
+        owned, tree, victim, outside, link = self._swap_fixture()
+        parent = tree.stat()
+        real_stat = os.stat
+        swapped = False
+        def stat_then_swap(name, *args, dir_fd=None, follow_symlinks=True, **kwargs):
+            nonlocal swapped
+            info = real_stat(name, *args, dir_fd=dir_fd, follow_symlinks=follow_symlinks, **kwargs)
+            at_victim = ((name == victim.name and os.path.samestat(parent, os.fstat(dir_fd)))
+                         if dir_fd is not None else Path(name) == victim)
+            if at_victim and not follow_symlinks and not swapped:
+                self._atomic_swap(victim, link)
+                swapped = True
+            return info
+        with patch.object(snapshot.os, 'stat', side_effect=stat_then_swap):
+            try:
+                snapshot.remove_tree(tree, owned)
+            except snapshot.SnapshotError:
+                pass
+        self.assertTrue(swapped, 'the attack must actually swap after the non-following stat')
+        self._assert_outside_unchanged(outside)
 
     def test_removes_real_export(self):
         dest = self.export.dest; parent = self.export.root

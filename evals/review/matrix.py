@@ -177,11 +177,11 @@ def cost(model, usage):
 
 def plan(m, selected_cases):
     prices = _prices()
-    highest = max(prices['models'], key=lambda name: sum(prices['models'][name][k]
-                                                      for k in ('input', 'cached_input', 'output')))
-
     def estimate(model, kind):
-        return cost(model if model in prices['models'] else highest, prices['estimates'][kind])
+        usage = prices['estimates'][kind]
+        if model in prices['models']:
+            return cost(model, usage)
+        return max(cost(name, usage) for name in prices['models'])
 
     n = len(selected_cases)
     calls = len(m.configs) * n * m.trials

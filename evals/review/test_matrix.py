@@ -144,10 +144,26 @@ class PlanTests(MatrixTest):
 
     def test_unpriced_model_costed_at_highest_price(self):
         prices = json.loads((HERE/'prices.json').read_text())['models']
-        highest = max(prices, key=lambda n: sum(prices[n][k] for k in ('input', 'cached_input', 'output')))
         doc = document(); doc['configs'][0]['model'] = 'unpriced-example'
-        unknown = self.plan(doc)['estimated_cost_usd']; doc['configs'][0]['model'] = highest
+        unknown = self.plan(doc)['estimated_cost_usd']; doc['configs'][0]['model'] = 'claude-opus-5-5'
         self.assertEqual(unknown, self.plan(doc)['estimated_cost_usd']); self.assertGreater(unknown, 0)
+
+    def test_unpriced_calls_use_the_most_expensive_cost_for_each_estimate(self):
+        # Crossed rates: B wins the rate sum, A wins input-heavy calls, B wins output-heavy calls.
+        table = {'models': {'A': {'input': 10, 'cached_input': 0, 'output': 10},
+                            'B': {'input': 1, 'cached_input': 0, 'output': 30}},
+                 'estimates': {'review': {'input_tokens': 30000, 'cached_input_tokens': 0, 'output_tokens': 4000},
+                               'match': {'input_tokens': 1000, 'cached_input_tokens': 0, 'output_tokens': 2000},
+                               'extras': {'input_tokens': 2000, 'cached_input_tokens': 0, 'output_tokens': 100}}}
+        price_file = self.root/'prices.json'; price_file.write_text(json.dumps(table))
+        real_read = Path.read_text
+        def read(path, *args, **kwargs):
+            return real_read(price_file if path == HERE/'prices.json' else path, *args, **kwargs)
+        doc = document(); doc['configs'][0]['model'] = 'unpriced'; doc['grader']['model'] = 'unpriced'
+        with patch.object(Path, 'read_text', read):
+            result = self.plan(doc)
+        # Review: A=.34 > B=.15; match: B=.061 > A=.03; extras: A=.021 > B=.005.
+        self.assertAlmostEqual(result['estimated_cost_usd'], .422)
 
     def test_plan_includes_grader_cost(self):
         doc = document(); cheap = self.plan(doc)['estimated_cost_usd']

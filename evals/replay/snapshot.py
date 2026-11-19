@@ -33,25 +33,66 @@ def make_clone(repo, base, branch, clone, timeout):
 
 
 def remove_tree(path, root):
-    """Remove an owned descendant without following links or chmodding shared files."""
+    """Delete an owned descendant through pinned directory descriptors, never links."""
     path, root = Path(path), Path(root).resolve()
-    # Resolve the parent only: a leaf link must be refused, not followed.
     path = Path(os.path.normpath(str(path.parent.resolve() / path.name)))
     if path == root or root not in path.parents or path.is_symlink():
         raise SnapshotError(f'remove: {path} is not an owned tree below {root}')
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
-    def remove(entry):
-        info = entry.lstat()
+    def open_directory(name, parent_fd, info):
+        fd = os.open(name, flags, dir_fd=parent_fd)
+        try:
+            if not os.path.samestat(info, os.fstat(fd)):
+                raise SnapshotError('remove: directory changed while opening')
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+    def remove(name, parent_fd, top=False):
+        try:
+            info = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if top and stat.S_ISLNK(info.st_mode):
+            raise SnapshotError('remove: tree became a symlink')
         if stat.S_ISDIR(info.st_mode):
-            entry.chmod(info.st_mode | stat.S_IRWXU)
-            for child in entry.iterdir():
-                remove(child)
-            entry.rmdir()
+            fd = open_directory(name, parent_fd, info)
+            try:
+                os.fchmod(fd, info.st_mode | stat.S_IRWXU)
+                with os.scandir(fd) as entries:
+                    for entry in entries:
+                        remove(entry.name, fd)
+            finally:
+                os.close(fd)
+            os.rmdir(name, dir_fd=parent_fd)
         else:
-            entry.unlink()
+            os.unlink(name, dir_fd=parent_fd)
 
-    if path.exists():
-        remove(path)
+    descriptors = []
+    try:
+        fd = os.open(root, flags)
+        descriptors.append(fd)
+        parts = path.relative_to(root).parts
+        for name in parts[:-1]:
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            fd = open_directory(name, fd, info)
+            descriptors.append(fd)
+        remove(parts[-1], fd, top=True)
+    except (OSError, RuntimeError) as exc:
+        raise SnapshotError(f'remove: {" ".join(str(exc).splitlines())}') from exc
+    finally:
+        for fd in reversed(descriptors):
+            os.close(fd)
+
+
+def _cleanup_error(dest, error):
+    try:
+        remove_tree(dest, dest.parent)
+    except (OSError, RuntimeError) as exc:
+        return f'{error}; cleanup failed: {" ".join(str(exc).splitlines())}'
+    return error
 
 
 def make_snapshot(source, base, head, dest, timeout, max_depth=5000):
@@ -63,10 +104,15 @@ def make_snapshot(source, base, head, dest, timeout, max_depth=5000):
         if os.path.lexists(dest):
             raise SnapshotError('destination exists')
 
+        step = 'refs'
+        for ref in (base, head):
+            if not isinstance(ref, str) or not ref or ref.startswith('-'):
+                raise SnapshotError('option-like or empty ref')
+
         def git(where, *args):
             result = caselib.git(where, *args, timeout=timeout, check=False)
             if result.returncode:
-                raise SnapshotError(result.stderr.strip()[-500:] or 'git failed')
+                raise SnapshotError(' '.join(result.stderr.strip().splitlines())[-500:] or 'git failed')
             return result.stdout.strip()
 
         step = 'merge-base'
@@ -77,6 +123,9 @@ def make_snapshot(source, base, head, dest, timeout, max_depth=5000):
         step = 'boundary'
         boundary = [s[1:] for s in git(source, 'rev-list', '--boundary', head, '^' + base).splitlines()
                     if s.startswith('-')]
+        if not boundary:
+            step = 'range'
+            raise SnapshotError('head adds no commits to base')
         depth = 1 + max(int(git(source, 'rev-list', '--count', s + '..' + base))
                         for s in boundary)
         count = int(git(source, 'rev-list', '--count', base + '..' + head))
@@ -106,7 +155,7 @@ def make_snapshot(source, base, head, dest, timeout, max_depth=5000):
     except (OSError, RuntimeError, ValueError) as exc:
         error = str(exc)
     if created:
-        remove_tree(dest, dest.parent)
+        error = _cleanup_error(dest, error)
     return None, f'snapshot: {step}: {error}'
 
 
@@ -139,9 +188,8 @@ def clone_copy(src, dest):
         subprocess.run(['/bin/cp', '-c', '-R', str(src), str(dest)], check=True, capture_output=True,
                        env=caselib.scrubbed_env())
     except (OSError, subprocess.SubprocessError, SnapshotError) as exc:
-        if os.path.lexists(dest):
-            remove_tree(dest, dest.parent)
-        raise SnapshotError(f'copy: {exc}') from exc
+        error = _cleanup_error(dest, str(exc)) if os.path.lexists(dest) else str(exc)
+        raise SnapshotError(f'copy: {error}') from exc
 
 
 def export_skills(repo, ref, dest):
@@ -194,6 +242,5 @@ def export_skills(repo, ref, dest):
                         raise SnapshotError(f'export: hooks key in {path.relative_to(dest)}')
         return sha
     except (OSError, RuntimeError, ValueError, tarfile.TarError) as exc:
-        if created:
-            remove_tree(dest, dest.parent)
-        raise SnapshotError(f'export: {exc}') from exc
+        error = _cleanup_error(dest, str(exc)) if created else str(exc)
+        raise SnapshotError(f'export: {error}') from exc
