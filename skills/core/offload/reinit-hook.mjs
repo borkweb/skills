@@ -3,8 +3,10 @@
 // offload handoffs for this cwd so a fresh/cleared session can reattach.
 // No saved work means no context; helper paths are resolved when the skill loads.
 import { existsSync, readFileSync, writeSync } from 'node:fs';
-import { listFiles, field, age, tokenOf, prune, fileFor } from './dir.mjs';
+import { dirname } from 'node:path';
+import { DIR, listFiles, field, age, tokenOf, prune, fileFor } from './dir.mjs';
 import { ledgerFor, renderBoard } from './ledger.mjs';
+import { dreamDue } from './dream-due.mjs';
 
 let input = {};
 try { input = JSON.parse(readFileSync(0, 'utf8')); } catch { /* no/invalid stdin */ }
@@ -16,7 +18,11 @@ const files = listFiles(cwd);
 const ledger = session ? ledgerFor(cwd, session) : '';
 const owned = session ? fileFor(cwd, session) : '';
 const ownsLedger = ledger && existsSync(ledger);
-if (!files.length && !ownsLedger) process.exit(0);
+// A dream reminder goes only to a session a person just opened: not to a compacted or resumed one,
+// and not to a builder or an unattended architect turn, which cannot pass it on.
+const attended = !process.env.OFFLOAD_UNATTENDED_TURN && !process.env.OFFLOAD_HANDOFF;
+const reminder = input.source === 'startup' && attended ? dreamDue({ handoffs: dirname(DIR) }) : ''; // DIR is <store>/offload; runs live beside it
+if (!files.length && !ownsLedger && !reminder) process.exit(0);
 
 let context = '';
 // The session that owns a ledger here is mid-run (this fires on compact and
@@ -35,6 +41,8 @@ if (others.length) {
     context += `  [${i + 1}] ${tokenOf(f)} ${JSON.stringify(field(f, 'title'))} — owner ${JSON.stringify(field(f, 'architect_session') || field(f, 'claude_session') || 'unknown')}, ${field(f, 'status')} · ${age(f)} old\n`;
   }
 }
+
+context += reminder;
 
 // writeSync, not process.stdout.write: a pipe write is async on macOS and the process.exit below would drop a payload over the pipe buffer.
 writeSync(1, `${JSON.stringify({

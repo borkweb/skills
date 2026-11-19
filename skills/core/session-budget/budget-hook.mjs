@@ -1,15 +1,24 @@
 #!/usr/bin/env node
-// Claude Code UserPromptSubmit hook: when the session transcript grows past a
+// Claude Code UserPromptSubmit hook: when the session's context grows past a
 // (tunable) threshold, inject a one-shot instruction asking the agent to run the
 // session-budget skill in proactive mode. Throttled to once per growth band so it
 // doesn't nag. Silent (no output) below threshold or when already nudged this band.
+//
+// The measure is the context the last main-thread turn was billed for (input +
+// cache read + cache creation tokens in the transcript's last usage record). The
+// transcript file keeps growing after a compaction, so its size says nothing about
+// a session that was just compacted; bytes are the fallback only when the tail of
+// the transcript holds no usage record.
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync, writeFileSync, writeSync } from 'node:fs';
 
 const DIR = process.env.AGENT_HANDOFFS_DIR || join(homedir(), '.agent-handoffs');
 const THRESHOLD = Number(process.env.BUDGET_HOOK_THRESHOLD_BYTES) || 1_500_000;
 const BAND = Number(process.env.BUDGET_HOOK_BAND_BYTES) || 750_000;
+const TOKEN_THRESHOLD = Number(process.env.BUDGET_HOOK_THRESHOLD_TOKENS) || 150_000;
+const TOKEN_BAND = Number(process.env.BUDGET_HOOK_BAND_TOKENS) || 50_000;
+const TAIL_BYTES = 512_000;
 
 function silent() { process.exit(0); }
 
@@ -24,25 +33,62 @@ if (!transcript || !existsSync(transcript)) silent();
 
 let size = 0;
 try { size = statSync(transcript).size; } catch { silent(); }
-if (size < THRESHOLD) silent();
 
-const band = Math.floor(size / BAND);
+// Context tokens of the last main-thread assistant turn, or null when the tail has
+// none. Subagent turns (isSidechain) are billed against their own context.
+function lastContextTokens(path, fileSize) {
+  let text = '';
+  try {
+    const len = Math.min(fileSize, TAIL_BYTES);
+    const buf = Buffer.alloc(len);
+    const fd = openSync(path, 'r');
+    try { readSync(fd, buf, 0, len, fileSize - len); } finally { closeSync(fd); }
+    text = buf.toString('utf8');
+  } catch { return null; }
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!lines[i].includes('"usage"')) continue;
+    let row;
+    try { row = JSON.parse(lines[i]); } catch { continue; } // the first tail line is usually cut
+    const u = row?.message?.usage;
+    if (!u || row.isSidechain) continue;
+    const n = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    if (n > 0) return n;
+  }
+  return null;
+}
+
+const tokens = lastContextTokens(transcript, size);
+const byTokens = tokens !== null;
+const measure = byTokens ? tokens : size;
 const sessionId = String(input.session_id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '_');
 const stateFile = join(DIR, `.budget-hook-${sessionId}.state`);
+if (measure < (byTokens ? TOKEN_THRESHOLD : THRESHOLD)) {
+  // Context fell back under the threshold (a compaction): forget the bands already
+  // nudged, so the session is told again when it refills.
+  if (byTokens && existsSync(stateFile)) { try { writeFileSync(stateFile, 't:0'); } catch { /* best effort */ } }
+  silent();
+}
 
+const band = Math.floor(measure / (byTokens ? TOKEN_BAND : BAND));
+
+// State is "<unit>:<band>". A state in the other unit (or the old bare number) does not count.
+const unit = byTokens ? 't' : 'b';
 let lastBand = -1;
 if (existsSync(stateFile)) {
-  const v = Number(readFileSync(stateFile, 'utf8').trim());
-  if (Number.isFinite(v)) lastBand = v;
+  const [u, v] = readFileSync(stateFile, 'utf8').trim().split(':');
+  if (u === unit && Number.isFinite(Number(v))) lastBand = Number(v);
 }
 if (band <= lastBand) silent(); // already nudged for this band
 
 mkdirSync(DIR, { recursive: true });
-writeFileSync(stateFile, String(band));
+writeFileSync(stateFile, `${unit}:${band}`);
 
-const mb = (size / 1_000_000).toFixed(1);
+const amount = byTokens
+  ? `context is ~${Math.round(tokens / 1000)}k tokens`
+  : `transcript is ~${(size / 1_000_000).toFixed(1)} MB`;
 const context =
-  `[session-budget] This session's transcript is ~${mb} MB and context may be getting heavy. ` +
+  `[session-budget] This session's ${amount} and context may be getting heavy. ` +
   `Run the session-budget skill in PROACTIVE mode now: assess context composition and act ONLY if the ` +
   `verdict is COMPACT or CLEAR. If the verdict is NOT YET, do nothing and do not mention this check. ` +
   `If action is warranted, apply the skill's handoff-worth gate: pre-stage the reinit-ready handoff only ` +

@@ -1,6 +1,6 @@
 // test_reinit_hook.mjs
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,8 @@ const NODE = process.execPath;
 const BOX = mkdtempSync(join(tmpdir(), 'ofl-h-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
 const REPO = join(BOX, 'repo');
-const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX };
+const env = { ...process.env, AGENT_HANDOFFS_DIR: BOX, BORK_REVIEW_CRITERIA: join(BOX, 'no-criteria.md') };
+delete env.OFFLOAD_UNATTENDED_TURN; delete env.OFFLOAD_HANDOFF; delete env.BORK_DREAM_REMINDER;
 
 const hoff = (args) => execFileSync(NODE, [HANDOFF, ...args], { encoding: 'utf8', env }).trim();
 const fireHook = (cwd) =>
@@ -77,4 +78,46 @@ test('another session’s ledger is listed as a notice only — no board, no pat
   })).hookSpecificOutput.additionalContext;
   assert.doesNotMatch(ctx, /BOARD/);
   assert.match(ctx, /owner "arch-9"/);
+});
+
+// EC-12: one reminder line when a dream pass is due.
+test('dream reminder: due after five changed runs, once, only on an attended startup', () => {
+  const box = mkdtempSync(join(tmpdir(), 'ofl-dream-'));
+  try {
+    const criteria = join(box, 'review-criteria.md');
+    const day = (n) => new Date(Date.now() - n * 86_400_000);
+    const iso = (d) => d.toISOString().slice(0, 10);
+    const setCutoff = (daysAgo) => writeFileSync(criteria, `# Review criteria\n\nLast dreamed: ${iso(day(daysAgo))}, 19 runs scanned.\n`);
+    const run = (name, daysAgo) => { const d = join(box, 'runs', name); mkdirSync(d, { recursive: true }); utimesSync(d, day(daysAgo), day(daysAgo)); };
+    const fire = (source, extra = {}) => execFileSync(NODE, [HOOK], {
+      encoding: 'utf8', input: JSON.stringify({ cwd: join(box, 'repo'), ...(source ? { source } : {}) }),
+      env: { ...env, AGENT_HANDOFFS_DIR: box, BORK_REVIEW_CRITERIA: criteria, ...extra },
+    });
+    const quiet = () => rmSync(join(box, '.dream-reminder'), { force: true });
+
+    setCutoff(6);
+    for (let i = 0; i < 4; i += 1) run(`2026-run-${i}`, 2);
+    run('2026-old-run', 30);
+    run('2026-11-14-dream-abcd', 1);
+    assert.strictEqual(fire('startup'), '', 'four runs since, six days: not due; old runs and dream directories do not count');
+    run('2026-run-4', 2);
+    assert.strictEqual(fire('compact'), '', 'not on compact');
+    assert.strictEqual(fire('resume'), '', 'not on resume');
+    assert.strictEqual(fire(null), '', 'not without a source');
+    assert.strictEqual(fire('startup', { OFFLOAD_UNATTENDED_TURN: '1' }), '', 'not in an unattended turn');
+    assert.strictEqual(fire('startup', { OFFLOAD_HANDOFF: '/x' }), '', 'not in a builder');
+    assert.strictEqual(fire('startup', { BORK_DREAM_REMINDER: '0' }), '', 'off switch');
+    const ctx = JSON.parse(fire('startup')).hookSpecificOutput.additionalContext;
+    assert.match(ctx, /^\[dream\] The last dream pass was 6 day\(s\) ago .* and 5 run\(s\) have changed since\..*Do not run it unless they ask\.\n$/);
+    assert.strictEqual(fire('startup'), '', 'throttled after one reminder');
+
+    quiet(); setCutoff(20);
+    for (let i = 0; i < 5; i += 1) utimesSync(join(box, 'runs', `2026-run-${i}`), day(25), day(25));
+    assert.strictEqual(fire('startup'), '', 'old cutoff with no run since: nothing to learn from');
+    utimesSync(join(box, 'runs', '2026-run-0'), day(1), day(1));
+    assert.match(fire('startup'), /20 day\(s\) ago/, 'over 14 days and one run since: due');
+
+    quiet(); rmSync(criteria);
+    assert.strictEqual(fire('startup'), '', 'no private criteria: the user has never dreamed, no reminder');
+  } finally { rmSync(box, { recursive: true, force: true }); }
 });

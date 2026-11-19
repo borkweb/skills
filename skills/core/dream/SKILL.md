@@ -11,6 +11,8 @@ Read [dreaming.md](../do/references/dreaming.md) and follow it. Resolve the path
 
 The pass also finds what escaped after merge (reverts, fix-forwards, review defects and failing post-merge checks) and proposes each as an escape row. An approved row records it with `runs.mjs escape`, one row at a time; nothing else in a run directory is written.
 
+The offload SessionStart hook reminds the user when a pass is due (over 14 days since `Last dreamed:`, or five runs changed since); it never starts one.
+
 The optional argument is a `YYYY-MM-DD` cutoff. It overrides the `Last dreamed:` date in `~/.borkweb-skills/review-criteria.md`.
 
 This is maintenance, not delivery. Never run it inside a `do`, `complete` or `offload` run, and never start one from here. Never apply a change the user did not approve row by row.
