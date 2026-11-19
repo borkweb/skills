@@ -57,6 +57,7 @@ function header() {
     ['Total cost', costMetric ? (totals.cost === null ? 'n/a' : fmt(totals.cost, 'cost', costMetric.estimated) + ' over ' + plural(totals.cost_trials, 'trial')) : 'not measured'],
     ['Errors', String(errors)],
   ];
+  if (run.grader.cost_usd !== undefined || run.grader.calls !== undefined) items.push(['Grader cost', (typeof run.grader.cost_usd === 'number' && Number.isFinite(run.grader.cost_usd) ? fmt(run.grader.cost_usd, 'cost') : 'n/a') + ' · ' + (run.grader.calls == null ? 'n/a' : String(run.grader.calls)) + ' calls']);
   if (run.context) items.push(['Context', run.context]);
   if (run.eval_version) items.push(['Eval version', run.eval_version]);
   if (run.regraded_from) items.push(['Regrade of', run.regraded_from]);
