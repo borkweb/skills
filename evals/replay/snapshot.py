@@ -7,6 +7,7 @@ import stat
 import subprocess
 import tarfile
 import tempfile
+import threading
 
 import caselib
 
@@ -109,7 +110,8 @@ def make_snapshot(source, base, head, dest, timeout, max_depth=5000):
     return None, f'snapshot: {step}: {error}'
 
 
-_apfs_devices = set()
+_apfs_devices = {}
+_apfs_lock = threading.Lock()
 
 
 def clone_copy(src, dest):
@@ -121,18 +123,19 @@ def clone_copy(src, dest):
         device = src.stat().st_dev
         if device != dest.parent.stat().st_dev:
             raise SnapshotError('copy: source and destination must share an APFS device')
-        if device not in _apfs_devices:
-            mounts = subprocess.run(['/sbin/mount'], capture_output=True, text=True, check=True,
-                                    env=caselib.scrubbed_env())
-            found = False
-            for line in mounts.stdout.splitlines():
-                match = re.match(r'.+ on (.+) \(apfs(?:,|\))', line)
-                if match and Path(match[1]).stat().st_dev == device:
-                    found = True
-                    break
-            if not found:
+        with _apfs_lock:
+            if device not in _apfs_devices:
+                mounts = subprocess.run(['/sbin/mount'], capture_output=True, text=True, check=True,
+                                        env=caselib.scrubbed_env())
+                found = False
+                for line in mounts.stdout.splitlines():
+                    match = re.match(r'.+ on (.+) \(apfs(?:,|\))', line)
+                    if match and Path(match[1]).stat().st_dev == device:
+                        found = True
+                        break
+                _apfs_devices[device] = found
+            if not _apfs_devices[device]:
                 raise SnapshotError('copy: device is not APFS')
-            _apfs_devices.add(device)
         subprocess.run(['/bin/cp', '-c', '-R', str(src), str(dest)], check=True, capture_output=True,
                        env=caselib.scrubbed_env())
     except (OSError, subprocess.SubprocessError, SnapshotError) as exc:

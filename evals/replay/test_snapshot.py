@@ -1,5 +1,6 @@
 """Observable snapshot, export, copy and cleanup contracts on disposable repositories."""
 import ast
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -236,11 +237,15 @@ class CloneCopyTests(Scratch):
         src, base, head, mb, *_ = fixture(self.root)
         snap = self.root/'snap'; dest = self.root/'copy'
         self.assertEqual(snapshot.make_snapshot(src, base, head, snap, 10), (mb, None))
-        snapshot.clone_copy(snap, dest)
-        self.assertEqual(sorted(str(p.relative_to(snap)) for p in snap.rglob('*')),
-                         sorted(str(p.relative_to(dest)) for p in dest.rglob('*')))
-        self.assertEqual(git(dest, 'merge-base', 'review-base', 'review-target'), mb)
-        self.assertEqual(git(dest, 'status', '--porcelain'), '')
+        destinations = [dest, self.root/'copy-two']
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda target: snapshot.clone_copy(snap, target), destinations))
+        for copied in destinations:
+            with self.subTest(dest=copied):
+                self.assertEqual(sorted(str(p.relative_to(snap)) for p in snap.rglob('*')),
+                                 sorted(str(p.relative_to(copied)) for p in copied.rglob('*')))
+                self.assertEqual(git(copied, 'merge-base', 'review-base', 'review-target'), mb)
+                self.assertEqual(git(copied, 'status', '--porcelain'), '')
 
     def test_refuses_existing_dest(self):
         src = self.root/'src'; src.mkdir(); dest = self.root/'dest'; dest.mkdir()
