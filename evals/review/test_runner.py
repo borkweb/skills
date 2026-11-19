@@ -1097,5 +1097,13 @@ class SignalTests(RunnerCase):
             if proc.poll() is None: proc.kill(); proc.wait()
 
 
+def load_tests(loader, tests, pattern):
+    # Both evals/ and evals/review/ have test_runner.py. Package discovery
+    # must find the root module after collecting this package's tests.
+    if __package__:
+        sys.path.insert(0, str(HERE.parent))
+    return tests
+
+
 if __name__ == '__main__':
     unittest.main()
