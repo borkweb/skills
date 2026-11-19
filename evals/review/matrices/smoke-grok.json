@@ -1,0 +1,27 @@
+{
+  "eval": "review",
+  "cases": "~/git/skills-private/evals/review/cases",
+  "case_filter": {
+    "skill": [
+      "review"
+    ],
+    "tags_any": [
+      "wpcom"
+    ]
+  },
+  "case_limit": 1,
+  "skills_ref": "HEAD",
+  "trials": 1,
+  "grader": {
+    "harness": "claude",
+    "model": "claude-sonnet-5-5",
+    "effort": "high"
+  },
+  "budget_usd": 5,
+  "configs": [
+    {
+      "harness": "grok",
+      "model": "<model id>"
+    }
+  ]
+}

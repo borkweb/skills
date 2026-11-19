@@ -22,6 +22,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import caselib  # noqa: E402
+from snapshot import make_clone  # noqa: E402
 import procs  # noqa: E402
 import real_adapter  # noqa: E402
 import render  # noqa: E402
@@ -282,22 +283,6 @@ def remove_tree(path):
                 except OSError:
                     pass
     shutil.rmtree(path, ignore_errors=True)
-
-
-def make_clone(repo, base, branch, clone, timeout):
-    """A disposable trial repo holding exactly one ref (`branch`, at `base`) and nothing after it: `git init`, then
-    a fetch of that one commit, then a checkout. No other branch, no tag, no later commit, no remote, no reflog or
-    FETCH_HEAD naming `repo`, no alternates and no hardlink to its object store. Returns an error string or None."""
-    steps = (('init', clone.parent, ('init', '-q', str(clone))),
-             ('config', clone, ('config', 'core.logAllRefUpdates', 'false')),
-             ('fetch', clone, ('-c', 'core.logAllRefUpdates=false', '-c', 'uploadpack.allowAnySHA1InWant=true', 'fetch',
-                               '-q', '--no-tags', '--no-write-fetch-head', str(repo), f'{base}:refs/heads/{branch}')),
-             ('checkout', clone, ('checkout', '-q', branch)))
-    for label, where, args in steps:
-        done = caselib.git(where, *args, check=False, timeout=timeout)
-        if done.returncode != 0:
-            return f'clone failed ({label}): {done.stderr.strip()[-200:]}'
-    return None
 
 
 def adapter_request(ctx, role, request):
