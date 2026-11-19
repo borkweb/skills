@@ -53,6 +53,12 @@ class RunTest(unittest.TestCase):
         self.match['reported'] = self.match['reported'][:1]
         self.records.remove(self.extra)
 
+    def nonfinite_cost_sum(self):
+        # Valid JSON numbers can overflow during decoding; their sum is NaN, not a JSON input constant.
+        path = self.root / 'trials.jsonl'
+        text = path.read_text().replace('"grader_cost_usd": 0.02', '"grader_cost_usd": 1e999')
+        path.write_text(text.replace('"grader_cost_usd": 0.03', '"grader_cost_usd": -1e999'))
+
 
 class RecordsTests(RunTest):
     def state(self):
@@ -162,6 +168,9 @@ class BuildTests(RunTest):
                         self.assertTrue(value is None or math.isfinite(value))
                 if edge == 'same-group':
                     self.assertEqual(len(doc['trials'][0]['items']), 3)
+        self.nonfinite_cost_sum()
+        with self.assertRaisesRegex(ValueError, 'Out of range float values'):
+            results.write(self.root)
 
     def test_extras_group_item_id_is_stable_across_trials(self):
         r2, _ = self.second()
@@ -235,20 +244,15 @@ class BuildTests(RunTest):
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         for rel, data in inputs.items():
             self.assertEqual((self.root / rel).read_bytes(), data)
-        with patch.object(results.json, 'dumps', side_effect=ValueError('serialization refused')):
-            with self.assertRaisesRegex(ValueError, 'serialization refused'):
-                results.write(self.root)
+        self.nonfinite_cost_sum()
+        inputs = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*')
+                  if p.is_file() and p.name != 'results.json'}
+        with self.assertRaisesRegex(ValueError, 'Out of range float values'):
+            results.write(self.root)
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual(list(self.root.glob('*.tmp')), [])
         for rel, data in inputs.items():
             self.assertEqual((self.root / rel).read_bytes(), data)
-        # A non-finite grader cost is outside the checker's declared metrics; serialization must still refuse it.
-        self.match['grader_cost_usd'] = float('nan')
-        self.save()
-        with self.assertRaises(ValueError):
-            results.write(self.root)
-        self.assertEqual(path.read_bytes(), before)
-        self.assertEqual(list(self.root.glob('*.tmp')), [])
 
     def test_grader_calls_and_cost_totals(self):
         self.records.extend([dict(self.match, attempt=2, outcome='ungraded', grader_cost_usd=None),
