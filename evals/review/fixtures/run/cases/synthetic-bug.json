@@ -1,0 +1,35 @@
+{
+  "id": "synthetic-bug",
+  "title": "Expired cache entries",
+  "skill": "review",
+  "kind": "bug",
+  "repo": {
+    "identity": "example.org/sample/cache"
+  },
+  "base": "1111111111111111111111111111111111111111",
+  "head": "2222222222222222222222222222222222222222",
+  "expected_verdict": "DO NOT LAND",
+  "expected_findings": [
+    {
+      "id": "F1",
+      "file": "cache.py",
+      "lines": "12",
+      "severity": "IMPORTANT",
+      "answer": "Expired entries are reused after their timeout."
+    },
+    {
+      "id": "F2",
+      "file": "cache.py",
+      "lines": "40",
+      "severity": "NIT",
+      "answer": "The cache size label reports the previous count."
+    }
+  ],
+  "tags": [
+    "synthetic"
+  ],
+  "provenance": {
+    "source": "invented"
+  },
+  "added": "2026-11-19"
+}

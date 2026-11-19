@@ -247,6 +247,16 @@ class TrialFileTests(unittest.TestCase):
 
 
 class AssetTests(unittest.TestCase):
+    def test_run_header_shows_grader_cost_and_calls(self):
+        header = self.assets()['run.js'].split('function header() {', 1)[1].split('function filterBar()', 1)[0]
+        self.assertIn("if (run.grader.cost_usd !== undefined || run.grader.calls !== undefined)", header)
+        self.assertIn("items.push(['Grader cost',", header)
+        self.assertIn("typeof run.grader.cost_usd === 'number' && Number.isFinite(run.grader.cost_usd)", header)
+        self.assertIn("fmt(run.grader.cost_usd, 'cost', true) : 'n/a'", header)
+        self.assertIn("run.grader.cost_complete === false ? ' (partial)' : ''", header)
+        self.assertIn("String(run.grader.calls)", header)
+        self.assertIn("text: v", header)
+
     def assets(self):
         return {p.name: p.read_text(encoding='utf-8') for p in ASSETS.iterdir()}
 

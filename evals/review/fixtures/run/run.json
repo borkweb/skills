@@ -1,0 +1,31 @@
+{
+  "schema": "bork-review-run/1",
+  "run_id": "synthetic-run",
+  "started_at": "2026-11-19T00:00:00Z",
+  "eval": "review",
+  "eval_version": "1",
+  "matrix_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "skills_ref": "main",
+  "skills_sha": "4444444444444444444444444444444444444444",
+  "case_set_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "grader": {
+    "harness": "fake",
+    "model": "synthetic-grader",
+    "effort": null
+  },
+  "context": "skill-only",
+  "export": "skills-only",
+  "work_root": "/unused",
+  "matrix": {
+    "skill": "review",
+    "trials": 3,
+    "configs": [
+      {
+        "harness": "fake",
+        "model": "synthetic-model",
+        "effort": null,
+        "skill_loading": "plugin"
+      }
+    ]
+  }
+}
