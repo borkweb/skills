@@ -215,7 +215,7 @@ new_uuid() {
 }
 
 # Claude Code's transcript dir for a cwd: every non-alphanumeric byte becomes
-# '-' (/Users/matt/.hermes -> -Users-matt--hermes). Names past 200 chars are
+# '-' (/Users/me/.hermes -> -Users-me--hermes). Names past 200 chars are
 # truncated and hashed by Claude, which we cannot reproduce — fail instead.
 claude_project_dir() {
   local enc

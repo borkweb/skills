@@ -9,7 +9,7 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 | [`/plan-eng-review`](#plan-eng-review) | **Eng Manager** | Lock in architecture, data flow, diagrams, edge cases, and tests. Forces hidden assumptions into the open. |
 | [`/plan-design-review`](#plan-design-review) | **Senior Designer** | Interactive plan-mode design review. Rates each dimension 0-10, explains what a 10 looks like, fixes the plan. |
 | [`/design-consultation`](#design-consultation) | **Design Partner** | Build a complete design system from scratch. Knows the landscape, proposes creative risks, generates realistic product mockups. |
-| [`/review`](#review) | **Staff Engineer** | Find the bugs that pass CI but blow up in production. Auto-fixes the obvious ones. Flags completeness gaps. |
+| [`/review`](#review) | **Staff Engineer** | Find the bugs that pass CI but blow up in production. Report-only by default. Flags completeness gaps. |
 | [`/investigate`](#investigate) | **Debugger** | Systematic root-cause debugging. Iron Law: no fixes without investigation. Traces data flow, tests hypotheses, stops after 3 failed fixes. |
 | [`/design-review`](#design-review) | **Designer Who Codes** | Live-site visual audit + fix loop. 80-item audit, then fixes what it finds. Atomic commits, before/after screenshots. |
 | [`/qa`](#qa) | **QA Lead** | Test your app, find bugs, fix them with atomic commits, re-verify. Auto-generates regression tests for every fix. |
@@ -26,7 +26,6 @@ Detailed guides for every team skill — philosophy, workflow, and examples.
 
 | Agent | What it does |
 |-------|-------------|
-| [workflow-orchestrator](#workflow-orchestrator-agent) | Proactive pipeline navigator. Detects your stage and suggests next steps. |
 | [triage](#triage-agent) | Emergency incident responder. Fast-tracks investigation → fix → ship for production issues. |
 
 ### Hooks
@@ -241,9 +240,9 @@ Passing tests do not mean the branch is safe. `/review` exists because there is 
 * Tests that pass while missing the real failure mode
 * Forgotten enum handlers — add a new status constant, and `/review` traces it through every switch statement and allowlist in your codebase
 
-### Fix-First
+### Report first
 
-Findings get action, not just listed. Obvious mechanical fixes (dead code, stale comments, N+1 queries) are applied automatically. Genuinely ambiguous issues (security, race conditions, design decisions) get surfaced for your call.
+A review request reports findings and a verdict and changes nothing. Ask for fixes, or run it where fixes are already authorized, and it applies scoped corrections, reruns the checks they could affect and reviews the changed scope again.
 
 ### Example
 
@@ -322,14 +321,6 @@ Claude: STATUS REPORT
 
         Next up: /qa — code is reviewed, time to test
 ```
-
----
-
-## Workflow Orchestrator (agent)
-
-A proactive agent that detects where you are in the pipeline and suggests the next step. It understands the full dependency graph between skills — that `/plan-session` feeds into `/plan-eng-review`, and that `/review` should come before `/qa`.
-
-It triggers automatically when you complete a skill, finish writing code, or ask "what's next?" It never runs skills itself — it recommends.
 
 ---
 

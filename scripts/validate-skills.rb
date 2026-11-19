@@ -122,6 +122,45 @@ begin
 rescue StandardError => e
   errors << "#{template}: #{e.message}"
 end
+
+# The README is the inventory people read, so it must name what the repo ships and nothing else.
+begin
+  readme = root.join('README.md').read
+  names.each { |name| errors << "README.md: skill #{name} has no `| **#{name}**` row" unless readme.match?(/^\| \*\*#{Regexp.escape(name)}\*\*/) }
+  table = lambda do |text, heading|
+    body = text[/^##+ #{Regexp.escape(heading)}\n(.*?)(?=^##+ |\z)/m, 1].to_s
+    body.scan(/^\| *(?:\[)?(?:\*\*|`)?\/?([a-z0-9][a-z0-9-]*)(?:\*\*|`)?/).flatten
+  end
+  { 'commands' => 'Commands', 'agents' => 'Agents' }.each do |dir, heading|
+    on_disk = Dir.glob(root.join(dir, '*.md').to_s).map { |f| File.basename(f, '.md') }.sort
+    listed = table.call(readme, heading)
+    (on_disk - listed).each { |n| errors << "README.md: #{dir}/#{n}.md is not in the #{heading} table" }
+    (listed - on_disk).each { |n| errors << "README.md: the #{heading} table lists #{n}, and #{dir}/#{n}.md does not exist" }
+    documented = table.call(root.join('docs/skills.md').read, heading)
+    (documented - on_disk).each { |n| errors << "docs/skills.md: the #{heading} table lists #{n}, and #{dir}/#{n}.md does not exist" }
+  end
+  events = JSON.parse(root.join('hooks/hooks.json').read).fetch('hooks').keys
+  hooks_text = readme[/^## Hooks\n(.*?)(?=^## |\z)/m, 1].to_s
+  events.each { |e| errors << "README.md: the Hooks section does not name the #{e} event" unless hooks_text.include?("`#{e}`") }
+rescue StandardError => e
+  errors << "inventory check: #{e.message}"
+end
+
+# A public repo must not carry one person's home path. Placeholder users are fine.
+PLACEHOLDER_USERS = %w[me you someone user name example t].freeze
+TEXT_EXT = %w[.md .mjs .js .ts .tsx .py .rb .sh .json .yaml .yml .toml].freeze
+SKIP_DIRS = %w[.git .claude .lavish .opencode node_modules __pycache__ graphify-out .codegraph].freeze
+Dir.glob('**/*', File::FNM_DOTMATCH, base: root.to_s).each do |rel|
+  next if rel.split('/').any? { |part| SKIP_DIRS.include?(part) } || rel.start_with?('docs/superpowers/')
+  path = root.join(rel)
+  next unless path.file? && !path.symlink? && (TEXT_EXT.include?(path.extname) || %w[AGENTS.md README.md].include?(rel))
+  path.read.scrub.each_line.with_index(1) do |line, n|
+    line.scan(%r{(?:/Users|/home)/([A-Za-z0-9._-]+)(?=/)}).flatten.each do |user|
+      errors << "#{rel}:#{n}: personal path /…/#{user}/ (use ~ or a placeholder such as /Users/me)" unless PLACEHOLDER_USERS.include?(user)
+    end
+  end
+end
+
 if errors.empty?
   puts notes
   puts "PASS: #{paths.length} skills, YAML policies, manifests, #{seen.length} linked Markdown files and #{INVARIANTS.values.flatten.length} frozen phrases"

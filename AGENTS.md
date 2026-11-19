@@ -1,5 +1,3 @@
-@/Users/matt/.codex/RTK.md
-
 # Bork skill library
 
 This repository ships skills for Codex and Claude Code. Use `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json` for the canonical skill inventory; keep their skill lists and release versions synchronized. `skills/core/` contains original workflows and `skills/gstack/` contains adapted workflows. Supporting commands, hooks and scripts live in their named root directories.

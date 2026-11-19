@@ -123,5 +123,36 @@ class ValidateSkillsTests(unittest.TestCase):
                 self.write(rel, original)
 
 
+    def test_readme_must_list_every_skill_command_and_agent_and_no_extra(self):
+        cases = (
+            ('README.md', lambda t: t.replace('| **dream** |', '| **dreams** |'), 'README.md: skill dream has no'),
+            ('README.md', lambda t: t.replace('| `/status` |', '| `/statuz` |'), 'README.md: commands/status.md is not in the Commands table'),
+            ('README.md', lambda t: t.replace('| `/status` |', '| `/status` |\n| `/offload` | x |\n|'), 'README.md: the Commands table lists offload'),
+            ('README.md', lambda t: t.replace('| **triage** |', '| **triage** | a | b |\n| **helper** |'), 'README.md: the Agents table lists helper'),
+            ('docs/skills.md', lambda t: t.replace('| [triage](#triage-agent)', '| [workflow-orchestrator](#x) | y |\n| [triage](#triage-agent)'),
+             'docs/skills.md: the Agents table lists workflow-orchestrator'),
+            ('README.md', lambda t: t.replace('`PreToolUse` (', 'PreToolUse ('), 'README.md: the Hooks section does not name the PreToolUse event'),
+        )
+        for rel, fn, message in cases:
+            with self.subTest(message=message):
+                original = self.read(rel)
+                self.edit_text(rel, fn)
+                self.assertNotEqual(self.read(rel), original, 'the mutation applied')
+                self.assertFails(message)
+                self.write(rel, original)
+
+    def test_a_new_command_file_must_be_documented(self):
+        self.write('commands/brand-new.md', b'---\ndescription: x\n---\nx\n')
+        self.assertFails('README.md: commands/brand-new.md is not in the Commands table')
+
+    def test_personal_home_paths_fail_and_placeholders_pass(self):
+        self.edit_text('AGENTS.md', lambda t: '@/Users/' + 'realperson/.codex/RTK.md\n\n' + t)
+        self.assertFails('AGENTS.md:1: personal path')
+        self.edit_text('AGENTS.md', lambda t: t.replace('/Users/' + 'realperson/', '/home/' + 'realperson/'))
+        self.assertFails('AGENTS.md:1: personal path')
+        self.edit_text('AGENTS.md', lambda t: t.replace('/home/' + 'realperson/', '/Users/me/'))
+        self.assertEqual(self.validate()[0], 0)
+
+
 if __name__ == '__main__':
     unittest.main()

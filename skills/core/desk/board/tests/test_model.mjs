@@ -467,7 +467,7 @@ test('toast texts match the spec', () => {
 
 // The engine's own lead on an fs rejection, as seen live with a chmod 000 runs home (architect L1).
 test('reasonOf drops the real engine lead and keeps the file system error', () => {
-  assert.equal(reasonOf('desk-board: $.fs.list(/Users/matt/.agent-handoffs/runs) failed: EACCES'), 'EACCES');
+  assert.equal(reasonOf('desk-board: $.fs.list(/Users/me/.agent-handoffs/runs) failed: EACCES'), 'EACCES');
   assert.equal(reasonOf('desk-board: $.fs.list(/tmp/a (b)/runs) failed: EACCES: permission denied\nsecond'), 'EACCES: permission denied');
 });
 
