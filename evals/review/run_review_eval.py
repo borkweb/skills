@@ -655,6 +655,12 @@ def main(argv=None):
                 raise harnesses.Refusal('--resume cannot be combined with --output or --case')
             run_dir = args.resume.resolve()
             manifest = json.loads((run_dir / 'run.json').read_text())
+            run_id = manifest['run_id']
+            if (not isinstance(run_id, str) or run_id in ('', '.', '..') or Path(run_id).name != run_id):
+                raise harnesses.Refusal('invalid run_id')
+            expected_work = (Path.home() / '.borkweb-skills/eval-work').resolve() / run_id
+            if Path(manifest['work_root']) != expected_work:
+                raise harnesses.Refusal('work_root drift')
             m = stored_matrix(manifest['matrix'])
             if (matrix_hash(m.raw) != manifest['matrix_sha256'] or
                     args.matrix and matrix_hash(matrix.load(args.matrix).raw) != manifest['matrix_sha256']):

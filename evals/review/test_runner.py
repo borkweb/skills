@@ -508,10 +508,12 @@ class ResumeTests(RunnerCase):
     def test_resume_refuses_manifest_drift(self):
         self.assert_ok(self.cli()); manifest = self.manifest()
         data = (self.output / 'trials.jsonl').read_bytes()
-        for field in ('matrix_sha256', 'skills_sha', 'case_set_sha256', 'grader', 'matrix-file'):
+        outside = self.root / 'outside'; outside.mkdir(); (outside / 'keep').write_text('outside')
+        for field in ('matrix_sha256', 'skills_sha', 'case_set_sha256', 'grader', 'matrix-file', 'work_root'):
             with self.subTest(field=field):
                 changed = json.loads(json.dumps(manifest)); flags = []
                 if field == 'grader': changed['grader']['model'] = 'changed'
+                elif field == 'work_root': changed['work_root'] = str(outside)
                 elif field == 'matrix-file':
                     self.configure(trials=2); flags = ['--matrix', str(self.matrix_file)]
                 else: changed[field] = '0' * 64
@@ -521,6 +523,7 @@ class ResumeTests(RunnerCase):
                 self.assertEqual(sum(s.startswith('refusing:') for s in done.stderr.splitlines()), 1)
                 self.assertEqual((self.output / 'trials.jsonl').read_bytes(), data)
                 self.assertFalse(self.events())
+                self.assertEqual((outside / 'keep').read_text(), 'outside')
         run.write_json(self.output / 'run.json', manifest)
 
     def test_budget_override_on_resume(self):
@@ -651,6 +654,11 @@ class BudgetTests(RunnerCase):
         self.assert_ok(self.cli(resume=True, spend=True))
         self.assertEqual(len(self.events('review')), before)
         self.assertTrue(any(r['reason'] == 'budget' for r in self.state().reviews.values()))
+        m = run.matrix.load(self.matrix_file)
+        seeded = [dict(r, **({'cost_usd': .1} if r['type'] == 'review' else {'grader_cost_usd': .2}))
+                  for r in self.state().records]
+        expected = sum(.1 if r['type'] == 'review' else .2 for r in seeded)
+        self.assertAlmostEqual(run.Budget(10, seeded, m.configs, m.grader['model']).spent, expected)
 
     def test_budget_never_strands_a_paid_review(self):
         self.configure(harness='claude', grader='claude', trials=6, budget_usd=1)
