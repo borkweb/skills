@@ -1,6 +1,7 @@
 """Read the append-only review ledger and publish report-compatible results."""
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import sys
@@ -10,6 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'report'))
 import check_results  # noqa: E402
 
 SCHEMA = 'bork-review-trial/1'
+COMMON_FIELDS = {'schema', 'type', 'key', 'at', 'attempt'}
+RECORD_FIELDS = {
+    'review': {'case_id', 'config_key', 'trial', 'outcome', 'reason', 'text_file', 'usage', 'rounds',
+               'duration_s', 'cost_usd', 'resolved_model', 'resolved_effort', 'skill_invoked',
+               'skill_evidence', 'skill_loading'},
+    'match': {'review_attempt', 'outcome', 'reason', 'reported', 'expected', 'verdict', 'verdict_method',
+              'grader_usage', 'grader_cost_usd'},
+    'extras': {'tokens', 'outcome', 'groups', 'grader_usage', 'grader_cost_usd'},
+}
 AXES = ('harness', 'model', 'effort', 'skill_loading')
 METRICS = [
     {'key': 'recall', 'label': 'Recall', 'kind': 'rate', 'better': 'higher', 'primary': True},
@@ -40,10 +50,12 @@ class State:
 def read_records(path):
     """Highest attempt wins, with later lines breaking ties. Filter stale grades."""
     records, winners = [], {}
-    lines = Path(path).read_text(encoding='utf-8').splitlines()
+    lines = Path(path).read_bytes().split(b'\n')
+    if lines[-1] == b'':
+        lines.pop()
     for i, line in enumerate(lines, 1):
         try:
-            record = check_results.parse(line)
+            record = check_results.parse(line.decode('utf-8'))
         except (ValueError, RecursionError) as exc:
             if i == len(lines):
                 break
@@ -56,6 +68,14 @@ def read_records(path):
             raise ResultsError(f'line {i}: missing key')
         if type(record.get('attempt')) is not int or record['attempt'] < 1:
             raise ResultsError(f'line {i}: invalid attempt')
+        missing = (COMMON_FIELDS | RECORD_FIELDS[record['type']]) - record.keys()
+        if missing:
+            raise ResultsError(f'line {i}: missing fields: {", ".join(sorted(missing))}')
+        if record['type'] in ('match', 'extras'):
+            cost = record['grader_cost_usd']
+            finite = type(cost) is int or (type(cost) is float and math.isfinite(cost))
+            if cost is not None and not finite:
+                raise ResultsError(f'line {i}: grader_cost_usd must be a finite non-bool number or null')
         records.append(record)
         key = record['type'], record['key']
         if key not in winners or record['attempt'] >= winners[key]['attempt']:
@@ -126,6 +146,9 @@ def build(run_dir):
     state = read_records(run_dir / 'trials.jsonl')
     cases = [check_results.parse(p.read_text(encoding='utf-8')) for p in sorted((run_dir / 'cases').glob('*.json'))]
     by_id = {c['id']: c for c in cases}
+    for token, review in state.reviews.items():
+        if review['case_id'] not in by_id:
+            raise ResultsError(f'{token}: unknown case {review["case_id"]}')
     matrix = manifest['matrix']
     configs = [_config(c, matrix['skill']) for c in matrix['configs']]
     config_ids = {c['id'] for c in configs}
@@ -150,8 +173,7 @@ def build(run_dir):
         extra = state.extras.get(case_id)
         groups = extra['groups'] if extra and extra['outcome'] == 'graded' else []
         rulings = {tuple(member): group['ruling'] for group in groups for member in group['members']}
-        extras_ready = not extra_pairs or (extra is not None and extra['outcome'] == 'graded'
-                                            and set(rulings) == extra_pairs)
+        extras_ready = set(rulings) == extra_pairs
         for review in reviews:
             token = review['key']
             if review['config_key'] not in config_ids:
@@ -167,7 +189,7 @@ def build(run_dir):
             if outcome == 'graded':
                 items = [{'id': f['id'], 'label': f['answer'], 'status': match['expected'][f['id']]}
                          for f in case['expected_findings']]
-                for group in groups:
+                for group in groups if extras_ready else []:
                     members = {n for t, n in group['members'] if t == token}
                     if members:
                         finding = next(f for f in match['reported'] if f['n'] in members)

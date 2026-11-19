@@ -234,6 +234,10 @@ class ExtrasTests(unittest.TestCase):
         for groups in ([{'group': 'g', 'ruling': 'real', 'members': ['E9']}],
                        [{'group': 'g', 'ruling': 'real', 'members': ['E1']}],
                        [{'group': 'g', 'ruling': 'real', 'members': ['E1', 'E2', 'E1']}],
+                       [{'group': 'g', 'ruling': 'real', 'members': ['E1', 'E2']},
+                        {'group': 'h', 'ruling': 'real', 'members': ['E1']}],
+                       [{'group': 'g', 'ruling': 'real', 'members': ['E1']},
+                        {'group': 'h', 'ruling': 'real', 'members': ['E1', 'E2']}],
                        [{'group': 'g', 'ruling': 'yes', 'members': ['E1', 'E2']}],):
             with self.subTest(groups=groups):
                 self.assertIsNone(grader.parse_extras({'groups': groups}, extras()[:2]))

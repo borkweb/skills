@@ -252,7 +252,8 @@ class AssetTests(unittest.TestCase):
         self.assertIn("if (run.grader.cost_usd !== undefined || run.grader.calls !== undefined)", header)
         self.assertIn("items.push(['Grader cost',", header)
         self.assertIn("typeof run.grader.cost_usd === 'number' && Number.isFinite(run.grader.cost_usd)", header)
-        self.assertIn("fmt(run.grader.cost_usd, 'cost') : 'n/a'", header)
+        self.assertIn("fmt(run.grader.cost_usd, 'cost', true) : 'n/a'", header)
+        self.assertIn("run.grader.cost_complete === false ? ' (partial)' : ''", header)
         self.assertIn("String(run.grader.calls)", header)
         self.assertIn("text: v", header)
 

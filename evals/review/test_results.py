@@ -53,14 +53,59 @@ class RunTest(unittest.TestCase):
         self.match['reported'] = self.match['reported'][:1]
         self.records.remove(self.extra)
 
-    def nonfinite_cost_sum(self):
-        # Valid JSON numbers can overflow during decoding; their sum is NaN, not a JSON input constant.
-        path = self.root / 'trials.jsonl'
-        text = path.read_text().replace('"grader_cost_usd": 0.02', '"grader_cost_usd": 1e999')
-        path.write_text(text.replace('"grader_cost_usd": 0.03', '"grader_cost_usd": -1e999'))
+    def nonfinite_subject(self):
+        # A valid JSON exponent overflows decoding in metadata outside the declared metric checks.
+        path = self.root / 'run.json'
+        path.write_text(path.read_text().replace('"skills_sha": "' + '4' * 40 + '"', '"skills_sha": 1e999'))
 
 
 class RecordsTests(RunTest):
+    def test_unicode_separators_are_not_record_boundaries(self):
+        for separator in ('\u2028', '\u2029', '\u0085'):
+            with self.subTest(separator=ascii(separator)):
+                self.review['reason'] = 'before' + separator + 'after'
+                path = self.root / 'trials.jsonl'
+                path.write_text(''.join(json.dumps(r, ensure_ascii=False) + '\n' for r in self.records))
+                state = results.read_records(path)
+                self.assertEqual(state.records, self.records)
+                self.assertEqual(state.reviews[self.review['key']]['reason'], 'before' + separator + 'after')
+
+    def test_torn_multibyte_final_line_is_dropped(self):
+        self.save()
+        path = self.root / 'trials.jsonl'
+        with path.open('ab') as stream:
+            stream.write(b'{"reason":"' + 'λ'.encode('utf-8')[:1])
+        self.assertEqual(results.read_records(path).records, self.records)
+
+    def test_undecodable_nonfinal_line_names_its_line(self):
+        path = self.root / 'trials.jsonl'
+        path.write_bytes(json.dumps(self.review).encode() + b'\n\xff\n' + json.dumps(self.match).encode() + b'\n')
+        with self.assertRaisesRegex(results.ResultsError, 'line 2:'):
+            results.read_records(path)
+
+    def test_each_missing_record_field_names_its_line(self):
+        for original in self.records:
+            for field in original:
+                record = dict(original)
+                del record[field]
+                with self.subTest(kind=original['type'], field=field):
+                    path = self.root / 'trials.jsonl'
+                    path.write_text(json.dumps(self.review) + '\n' + json.dumps(record) + '\n')
+                    with self.assertRaisesRegex(results.ResultsError, 'line 2:'):
+                        results.read_records(path)
+
+    def test_grader_cost_must_be_finite_nonbool_number_or_null(self):
+        for kind in ('match', 'extras'):
+            original = self.match if kind == 'match' else self.extra
+            for cost in ('"x"', '{}', 'true', 'false', '1e999', '-1e999'):
+                with self.subTest(kind=kind, cost=cost):
+                    record = dict(original, grader_cost_usd=0.02)
+                    path = self.root / 'trials.jsonl'
+                    text = json.dumps(record).replace('"grader_cost_usd": 0.02', '"grader_cost_usd": ' + cost)
+                    path.write_text(json.dumps(self.review) + '\n' + text + '\n')
+                    with self.assertRaisesRegex(results.ResultsError, 'line 2:.*grader_cost_usd'):
+                        results.read_records(path)
+
     def state(self):
         self.save()
         return results.read_records(self.root / 'trials.jsonl')
@@ -111,6 +156,33 @@ class RecordsTests(RunTest):
 
 
 class BuildTests(RunTest):
+    def test_new_match_cannot_reuse_incompatible_extra_items(self):
+        baseline = deepcopy(self.match)
+        for variant in ('dropped-extra', 'renumbered'):
+            with self.subTest(variant=variant):
+                regrade = deepcopy(baseline)
+                regrade['attempt'] = 2
+                if variant == 'dropped-extra':
+                    regrade['reported'] = regrade['reported'][:1]
+                else:
+                    finding, extra = regrade['reported']
+                    regrade['reported'] = [dict(extra, n=1), dict(finding, n=2)]
+                self.records = [self.review, baseline, self.extra, regrade]
+                doc = self.build()
+                trial = doc['trials'][0]
+                self.assertEqual(trial['outcome'], 'graded')
+                self.assertEqual([i['id'] for i in trial['items']], ['F1', 'F2'])
+                self.assertIsNone(trial['metrics']['precision'])
+                self.save()
+                results.write(self.root)
+                check_results.load(self.root)
+
+    def test_unknown_case_is_an_error_instead_of_a_dropped_trial(self):
+        unknown, _ = self.second()
+        unknown['case_id'] = 'unknown-case'
+        with self.assertRaisesRegex(results.ResultsError, unknown['key'] + ': unknown case unknown-case'):
+            self.build()
+
     def test_only_trials_with_a_review_record_appear(self):
         doc = self.build()
         self.assertEqual(len(doc['trials']), 1)
@@ -168,7 +240,7 @@ class BuildTests(RunTest):
                         self.assertTrue(value is None or math.isfinite(value))
                 if edge == 'same-group':
                     self.assertEqual(len(doc['trials'][0]['items']), 3)
-        self.nonfinite_cost_sum()
+        self.nonfinite_subject()
         with self.assertRaisesRegex(ValueError, 'Out of range float values'):
             results.write(self.root)
 
@@ -244,7 +316,7 @@ class BuildTests(RunTest):
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         for rel, data in inputs.items():
             self.assertEqual((self.root / rel).read_bytes(), data)
-        self.nonfinite_cost_sum()
+        self.nonfinite_subject()
         inputs = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*')
                   if p.is_file() and p.name != 'results.json'}
         with self.assertRaisesRegex(ValueError, 'Out of range float values'):
