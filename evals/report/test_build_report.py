@@ -16,6 +16,9 @@ sys.path.insert(0, str(HERE / 'fixtures'))
 import build_report as br  # noqa: E402
 import make_synthetic  # noqa: E402
 
+sys.path.insert(0, str(HERE.parent / 'replay'))
+import caselib  # noqa: E402
+
 ASSETS = HERE / 'assets'
 
 
@@ -177,6 +180,55 @@ class TrialFileTests(unittest.TestCase):
         self.assertEqual([f['name'] for f in files[self.token]], ['answer.txt'])
         self.assertNotIn(other, files)
 
+    def test_a_hard_link_to_an_outside_file_is_not_embedded(self):
+        # link-safe-tree-walk rule: a hard link to a file outside the run has nlink 2 and must be skipped.
+        secret = self.tmp / 'secret.txt'
+        secret.write_text('OUTSIDE-SECRET', encoding='utf-8')
+        os.link(secret, self.run_dir / 'trials' / self.token / 'linked.txt')
+        files = br.trial_files(self.run_dir, self.doc)
+        self.assertEqual([f['name'] for f in files[self.token]], ['answer.txt'])
+        br.build_run(self.run_dir)
+        self.assertNotIn('OUTSIDE-SECRET', (self.run_dir / 'report.html').read_text(encoding='utf-8'))
+        self.assertEqual(secret.read_text(encoding='utf-8'), 'OUTSIDE-SECRET')
+
+    def test_file_count_and_run_size_are_capped(self):
+        folder = self.run_dir / 'trials' / self.token
+        for i in range(br.FILES_PER_TRIAL + 5):
+            (folder / f'extra-{i:02}.txt').write_text('x', encoding='utf-8')
+        files = br.trial_files(self.run_dir, self.doc)[self.token]
+        self.assertEqual(len(files), br.FILES_PER_TRIAL + 1)
+        self.assertEqual(files[-1]['name'], '(more files)')
+        old = br.RUN_FILES_CAP
+        br.RUN_FILES_CAP = 0
+        try:
+            capped = br.trial_files(self.run_dir, self.doc)[self.token]
+        finally:
+            br.RUN_FILES_CAP = old
+        self.assertTrue(all(f['text_bytes'] == 0 for f in capped))
+
+    def test_a_lone_surrogate_and_a_broken_run_do_not_stop_the_build(self):
+        results = json.loads((self.run_dir / 'results.json').read_text(encoding='utf-8'))
+        results['trials'][0]['reason'] = '\ud800 cut mid-emoji'
+        (self.run_dir / 'results.json').write_text(json.dumps(results), encoding='utf-8')
+        self.assertEqual(br.main([str(self.run_dir)]), 0)
+        page = (self.run_dir / 'report.html').read_text(encoding='utf-8')
+        self.assertIn('\\ud800', page)
+        broken = self.tmp / 'runs' / 'broken'
+        broken.mkdir()
+        (broken / 'results.json').write_text('{}', encoding='utf-8')
+        real_load = br.check_results.load
+        def load(target):
+            if Path(target).name == 'broken':
+                raise RuntimeError('unexpected')
+            return real_load(target)
+        br.check_results.load = load
+        try:
+            self.assertEqual(br.main([str(broken), str(self.run_dir), '--index', str(self.tmp / 'runs')]), 1)
+        finally:
+            br.check_results.load = real_load
+        index = (self.tmp / 'runs' / 'index.html').read_text(encoding='utf-8')
+        self.assertIn('RuntimeError: unexpected', index)
+
     def test_large_and_binary_files_are_capped_and_decoded(self):
         folder = self.run_dir / 'trials' / self.token
         (folder / 'big.txt').write_bytes(b'a' * (br.FILE_CAP + 10))
@@ -232,9 +284,23 @@ class FixtureDriftTests(unittest.TestCase):
                          'synthetic-results.json drifted: rerun fixtures/make_synthetic.py')
 
 
+def child_env():
+    """The CLI child gets an allowlisted environment (spawned-process-env-allowlist rule), never os.environ."""
+    return caselib.scrubbed_env()
+
+
 class CliTests(unittest.TestCase):
+    def test_child_env_drops_unlisted_variables(self):
+        os.environ['BORK_HOSTILE_PROBE'] = 'leak'
+        self.addCleanup(os.environ.pop, 'BORK_HOSTILE_PROBE', None)
+        env = child_env()
+        self.assertNotIn('BORK_HOSTILE_PROBE', env)
+        proc = subprocess.run([sys.executable, '-c', 'import os; print(os.environ.get("BORK_HOSTILE_PROBE"))'],
+                              capture_output=True, text=True, env=env)
+        self.assertEqual(proc.stdout.strip(), 'None')
+
     def test_cli_needs_a_target(self):
-        proc = subprocess.run([sys.executable, str(HERE / 'build_report.py')], capture_output=True, text=True)
+        proc = subprocess.run([sys.executable, str(HERE / 'build_report.py')], capture_output=True, text=True, env=child_env())
         self.assertEqual(proc.returncode, 2)
         self.assertIn('give a run dir, --index, or both', proc.stderr)
 

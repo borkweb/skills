@@ -459,9 +459,9 @@ function drill(configs) {
 // ---- head-to-head -------------------------------------------------------------------------------------------
 
 function pairResult(a, b) {
-  const direct = S.pairs[a + '|' + b];
+  const direct = S.pairs[JSON.stringify([a, b])];
   if (direct) return direct;
-  const rev = S.pairs[b + '|' + a];
+  const rev = S.pairs[JSON.stringify([b, a])];
   if (!rev) return null;
   const metrics = {};
   Object.entries(rev.metrics).forEach(([k, r]) => {

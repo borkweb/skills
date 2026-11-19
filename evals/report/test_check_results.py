@@ -87,7 +87,26 @@ class RejectTests(unittest.TestCase):
         self.assertRejects(doc, 'is negative')
         doc = base()
         doc['trials'][0]['metrics']['duration_s'] = True
-        self.assertRejects(doc, 'finite number or null')
+        self.assertRejects(doc, 'finite number')
+        doc = base()
+        doc['trials'][0]['metrics']['duration_s'] = 1.5e308
+        self.assertRejects(doc, 'at most 1e+15')
+
+    def test_configs_must_differ_on_an_axis(self):
+        # The index tells configs apart by their axis values; two configs with the same values merged into one line.
+        doc = base()
+        doc['configs'][1]['axes'] = dict(doc['configs'][0]['axes'])
+        self.assertRejects(doc, "same axis values as config 'c1'")
+        doc = base()
+        doc['axes'] = []
+        for config in doc['configs']:
+            config['axes'] = {}
+        self.assertRejects(doc, 'declare an axis that tells them apart')
+
+    def test_band_metric_of_the_wrong_type_is_an_error_not_a_crash(self):
+        doc = base()
+        doc['bands'][0]['band_metric'] = ['recall']
+        self.assertRejects(doc, "unknown metric ['recall']")
 
     def test_duplicates_and_references(self):
         doc = base()

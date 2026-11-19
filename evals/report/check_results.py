@@ -38,8 +38,13 @@ def parse(text):
     return json.loads(text, parse_constant=_reject_constant)
 
 
+# Larger values could overflow to inf when the report sums them, and inf cannot be written as JSON.
+VALUE_LIMIT = 1e15
+
+
 def is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+            and abs(value) <= VALUE_LIMIT)
 
 
 class _Checker:
@@ -171,7 +176,7 @@ def check(doc):
                 c.text(band, 'key', path)
                 c.text(band, 'label', path, required=False)
                 band_metric = band.get('band_metric')
-                if band_metric is not None and band_metric not in metric_kind:
+                if band_metric is not None and (not isinstance(band_metric, str) or band_metric not in metric_kind):
                     c.err(f'{path}.band_metric', f'unknown metric {band_metric!r}')
         c.unique(bands, 'key', '$.bands')
 
@@ -207,6 +212,17 @@ def check(doc):
                     elif value is not None and not isinstance(value, str):
                         c.err(f'{path}.axes.{name}', 'must be a string or null')
         config_ids = c.unique(configs, 'id', '$.configs')
+        # The index page tells configs apart across runs by their axis values, so two configs of one run must differ
+        # on at least one axis. Declare an axis for whatever tells them apart.
+        seen_axes = {}
+        for i, config in enumerate(configs):
+            if isinstance(config, dict) and isinstance(config.get('axes'), dict):
+                values = tuple(repr(config['axes'].get(k)) for k in sorted(axis_keys))
+                if values in seen_axes:
+                    c.err(f'$.configs[{i}].axes', f'same axis values as config {seen_axes[values]!r}; '
+                                                  'declare an axis that tells them apart')
+                else:
+                    seen_axes[values] = config.get('id')
 
     cases = doc.get('cases')
     case_ids = set()
@@ -270,7 +286,7 @@ def check(doc):
                     elif value is None:
                         continue
                     elif not is_number(value):
-                        c.err(f'{path}.metrics.{key}', 'must be a finite number or null')
+                        c.err(f'{path}.metrics.{key}', f'must be a finite number of at most {VALUE_LIMIT:g} in size, or null')
                     elif metric_kind[key] == 'rate' and not 0 <= value <= 1:
                         c.err(f'{path}.metrics.{key}', f'rate {value} is outside 0 to 1')
                     elif metric_kind[key] in ('count', 'cost', 'duration') and value < 0:
@@ -279,7 +295,7 @@ def check(doc):
             if usage is not None and c.obj(usage, f'{path}.usage'):
                 for key, value in usage.items():
                     if value is not None and not is_number(value):
-                        c.err(f'{path}.usage.{key}', 'must be a finite number or null')
+                        c.err(f'{path}.usage.{key}', f'must be a finite number of at most {VALUE_LIMIT:g} in size, or null')
             items = trial.get('items')
             if items is not None and c.lst(items, f'{path}.items'):
                 for j, item in enumerate(items):

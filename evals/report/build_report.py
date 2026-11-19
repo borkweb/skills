@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import stat
 import sys
 
 HERE = Path(__file__).resolve().parent
@@ -26,6 +27,8 @@ import eval_stats  # noqa: E402
 
 ASSETS = HERE / 'assets'
 FILE_CAP = 200 * 1024
+FILES_PER_TRIAL = 20
+RUN_FILES_CAP = 32 * 1024 * 1024
 CSP = ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; "
        "base-uri 'none'; form-action 'none'")
 
@@ -53,9 +56,10 @@ PAGE = """<!doctype html>
 
 
 def embed_json(data):
-    """JSON that is safe inside a <script> element: no "<", ">" or "&" and no line separators survive raw."""
-    text = json.dumps(data, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
-    for raw, escaped in (('<', '\\u003c'), ('>', '\\u003e'), ('&', '\\u0026'), (' ', '\\u2028'), (' ', '\\u2029')):
+    """JSON that is safe inside a <script> element. ensure_ascii writes every non-ASCII character, U+2028, U+2029 and
+    a lone surrogate included, as a \\u escape; "<", ">" and "&" are escaped too, so no data can close the element."""
+    text = json.dumps(data, ensure_ascii=True, allow_nan=False, separators=(',', ':'))
+    for raw, escaped in (('<', '\\u003c'), ('>', '\\u003e'), ('&', '\\u0026')):
         text = text.replace(raw, escaped)
     return text
 
@@ -78,7 +82,7 @@ def write_private(path, text):
     tmp = path.with_name(f'.{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp')
     fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     try:
-        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        with os.fdopen(fd, 'w', encoding='utf-8', errors='backslashreplace') as handle:
             handle.write(text)
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
@@ -88,38 +92,77 @@ def write_private(path, text):
     return path
 
 
-def _inside(path, root):
+NOFOLLOW_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _read_trial_dir(trials_fd, token, budget):
+    """The files of one trials/<token>/ dir, opened relative to directory fds and never through a link.
+
+    Each file is opened O_NOFOLLOW (a symlink fails to open) and checked with fstat on the same fd: it must be a
+    regular file with one link. A hard link to a file outside the run has two or more links, so it is skipped, and a
+    swap between a check and the open cannot change which file is read.
+    """
     try:
-        path.resolve(strict=True).relative_to(root)
-        return True
-    except (OSError, ValueError):
-        return False
+        dir_fd = os.open(token, NOFOLLOW_DIR, dir_fd=trials_fd)
+    except OSError:
+        return []
+    files = []
+    try:
+        for name in sorted(os.listdir(dir_fd)):
+            if len(files) >= FILES_PER_TRIAL:
+                files.append({'name': '(more files)', 'text': f'Only the first {FILES_PER_TRIAL} files are embedded.',
+                              'bytes': 0, 'text_bytes': 0, 'truncated': True})
+                break
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    continue
+                if budget[0] <= 0:
+                    files.append({'name': name, 'text': 'Not embedded: the report reached its size cap for raw files.',
+                                  'bytes': info.st_size, 'text_bytes': 0, 'truncated': True})
+                    continue
+                want = min(FILE_CAP, budget[0])
+                chunks, got = [], 0
+                while got < want:
+                    chunk = os.read(fd, want - got)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    got += len(chunk)
+                raw = b''.join(chunks)
+                budget[0] -= len(raw)
+                files.append({'name': name, 'text': raw.decode('utf-8', errors='replace'), 'bytes': info.st_size,
+                              'text_bytes': len(raw), 'truncated': info.st_size > len(raw)})
+            finally:
+                os.close(fd)
+    finally:
+        os.close(dir_fd)
+    return files
 
 
 def trial_files(run_dir, doc):
     """token -> [{name, text, bytes, text_bytes, truncated}] for the regular files in trials/<token>/.
 
-    Symlinks, subdirectories and anything that resolves outside the run dir are skipped, so a link cannot pull an
-    outside file into the page. Each file is capped at FILE_CAP bytes and decoded as UTF-8 with replacement.
+    Nothing outside the run can come in: the trials dir, each token dir and each file are opened without following
+    links, and a file with more than one hard link is skipped. Each file is capped at FILE_CAP bytes, a trial at
+    FILES_PER_TRIAL files and the run at RUN_FILES_CAP bytes, and each is decoded as UTF-8 with replacement.
     """
-    root = Path(run_dir).resolve()
-    out = {}
-    for trial in doc['trials']:
-        token = trial['token']
-        folder = root / 'trials' / token
-        if folder.is_symlink() or not folder.is_dir() or not _inside(folder, root):
-            continue
-        files = []
-        for entry in sorted(folder.iterdir(), key=lambda p: p.name):
-            if entry.is_symlink() or not entry.is_file() or not _inside(entry, root):
-                continue
-            size = entry.stat().st_size
-            with entry.open('rb') as handle:
-                raw = handle.read(FILE_CAP)
-            files.append({'name': entry.name, 'text': raw.decode('utf-8', errors='replace'), 'bytes': size,
-                          'text_bytes': len(raw), 'truncated': size > FILE_CAP})
-        if files:
-            out[token] = files
+    try:
+        trials_fd = os.open(Path(run_dir) / 'trials', NOFOLLOW_DIR)
+    except OSError:
+        return {}
+    out, budget = {}, [RUN_FILES_CAP]
+    try:
+        for trial in doc['trials']:
+            files = _read_trial_dir(trials_fd, trial['token'], budget)
+            if files:
+                out[trial['token']] = files
+    finally:
+        os.close(trials_fd)
     return out
 
 
@@ -143,6 +186,8 @@ def build_index(root):
         except check_results.CheckError as exc:
             first = exc.errors[0].split(': ', 1)[-1]
             skipped.append({'dir': child.name, 'error': first + (f' (and {len(exc.errors) - 1} more)' if len(exc.errors) > 1 else '')})
+        except Exception as exc:  # one broken run must not stop the index; it is listed with its error
+            skipped.append({'dir': child.name, 'error': f'{type(exc).__name__}: {exc}'})
     data = {'kind': 'index', 'root_name': root.resolve().name, 'evals': eval_stats.summarize_index(docs),
             'skipped': skipped, 'reports': reports}
     return write_private(root / 'index.html', render_page('Eval runs', data, ['common.js', 'index.js']))
@@ -162,6 +207,9 @@ def main(argv=None):
         except check_results.CheckError as exc:
             status = 1
             print('\n'.join(exc.errors), file=sys.stderr)
+        except Exception as exc:  # report the run and go on to the next one
+            status = 1
+            print(f'{run_dir}: {type(exc).__name__}: {exc}', file=sys.stderr)
     if args.index:
         print(build_index(args.index))
     return status

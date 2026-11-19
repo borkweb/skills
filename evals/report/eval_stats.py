@@ -123,6 +123,12 @@ def pareto_front(points, better_x, better_y):
 # ---- one run -------------------------------------------------------------------------------------------
 
 
+def pair_key(a, b):
+    """The key of a config pair. JSON, so an id that holds a separator cannot collide; the page builds the same
+    string with JSON.stringify([a, b])."""
+    return json.dumps([a, b], separators=(',', ':'), ensure_ascii=False)
+
+
 def _graded(doc):
     return [t for t in doc['trials'] if t['outcome'] == 'graded']
 
@@ -303,7 +309,7 @@ def summarize(doc):
                     top = sorted(({'case_id': c, 'a': _round(mean(va[c])), 'b': _round(mean(vb[c])), 'diff': _round(d)}
                                   for c, d in zip(shared, diffs) if d != 0),
                                  key=lambda r: (-abs(r['diff']), case_order[r['case_id']]))[:TOP_CASES]
-            pairs[f'{a}|{b}'] = {'metrics': per_metric, 'top_cases': top}
+            pairs[pair_key(a, b)] = {'metrics': per_metric, 'top_cases': top}
 
     cost = role_metric(doc, 'cost')
     cost_values = [t['metrics'].get(cost['key']) for t in doc['trials']] if cost else []

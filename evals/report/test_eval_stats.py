@@ -78,10 +78,24 @@ class BootstrapTests(unittest.TestCase):
     def test_paired_comparison_uses_only_cases_both_configs_have(self):
         d = doc([trial('k1', 'a', 1, 1.0), trial('k1', 'b', 1, 0.0), trial('k2', 'a', 1, 1.0),
                  trial('k2', 'b', 1, 0.5), trial('k3', 'a', 1, 1.0), trial('k3', 'b', 1, None)])
-        got = s.summarize(d)['pairs']['a|b']
+        got = s.summarize(d)['pairs'][s.pair_key('a', 'b')]
         self.assertEqual(got['metrics']['score']['n'], 2)
         self.assertEqual(got['metrics']['score']['diff'], 0.75)
         self.assertEqual([r['case_id'] for r in got['top_cases']], ['k1', 'k2'])
+
+    def test_ids_with_the_old_separator_do_not_collide(self):
+        # Ids x|y, z, x, y|z once gave the keys "x|y|z" twice, so one pair was lost and another had the wrong sign.
+        ids = ('x|y', 'z', 'x', 'y|z')
+        values = {'x|y': 1.0, 'z': 0.0, 'x': 0.0, 'y|z': 1.0}
+        d = doc([trial(k, c, 1, values[c]) for c in ids for k in ('k1', 'k2')], configs=ids)
+        for i, cfg in enumerate(d['configs']):
+            cfg['axes'] = {'model': 'm', 'effort': str(i)}
+            for t in d['trials']:
+                t['token'] = t['token'].replace('|', '_')
+        pairs = s.summarize(d)['pairs']
+        self.assertEqual(len(pairs), 6)
+        self.assertEqual(pairs[s.pair_key('x|y', 'z')]['metrics']['score']['diff'], 1.0)
+        self.assertEqual(pairs[s.pair_key('x', 'y|z')]['metrics']['score']['diff'], -1.0)
 
     def test_quantile_interpolates(self):
         self.assertEqual(s.quantile([0, 10], 0.25), 2.5)
