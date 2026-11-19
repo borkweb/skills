@@ -14,7 +14,9 @@ and "ship it" alone do not authorize merging. Carry existing authorization
 forward without asking again. Delegation uses the current runtime's permissions.
 
 Read any supplied handoff and inspect the current checkout before resuming.
-Create a temporary directory for this run's state outside tracked files; report
+Create a run directory for this run's state with `runs.mjs init --repo "$PWD" --goal "<goal>"`
+(`skills/core/desk/runs.mjs`; it makes `~/.agent-handoffs/runs/<date>-<slug>-<rand>/`, mode 700), never a temp
+directory: later learning passes read only that store. Report
 its absolute path. Keep an architect-owned ledger there containing the goal,
 endpoint, authorization, orchestrator `Codex`, resolved worker and reviewer models, and
 one row per slice: ID, scope, dependencies, worktree/branch, handoff path, native
@@ -78,10 +80,11 @@ worker state: that helper observes external processes and bridges.
 
 Each worker must report changed files, commit/branch state, raw gate output and
 exit codes (a gate it cannot run is `NOT RUN` with the reason, never a pass),
-criteria evidence (one line per numbered acceptance criterion: the test, command
+criteria evidence (one line per numbered acceptance criterion: `<ID>: MET` with the test, command
 or file:line that proves it and the result, or `NOT MET`/`NOT RUN` with the
-reason), unresolved disagreements, and remaining work to its result file and
-final response. A blocker report identifies what needs a ruling. Workers must
+reason), the `Head:`, `Safety fact:` and `Loosened tests:` lines, unresolved disagreements, and remaining work to its result file and
+final response, in the RETURNS form of offload's [builder-template.md](../offload/builder-template.md).
+Before freezing, run each criterion's command at the base and rewrite one that is already green there (offload SKILL.md step 4). A blocker report identifies what needs a ruling. Workers must
 not change frozen criteria, claim independent acceptance of their own work, or
 delegate again without the architect assigning that work.
 
@@ -123,6 +126,8 @@ the ledger. This preserves review evidence without giving the reviewer write
 access to either the source or the ledger.
 
 Accept only when gates pass and the independent review has no blocking findings.
+The reviewer answers every frozen criterion with `<ID>: MET | UNMET | NOT CHECKED`; record each rejection's
+verdict with the same tags offload step 3 uses (`named C<n>` or `unnamed`, and for a review-only rejection `checkable: <tool>` or `checkable: no`).
 Otherwise record rejection and dispatch the corrective work with every confirmed
 blocking finding in one batch; the worker re-reports evidence for every
 criterion, not only the blockers. When the same criterion or blocker fails a
@@ -138,8 +143,9 @@ is not acceptance. Verify that reviewed files/HEAD stayed stable during review.
 
 ## Finish and hand off
 
-Confirm that every part of the goal is delivered and every ledger row is terminal;
-an abandoned or rejected row does not fulfill missing scope. Integrate accepted
+Confirm that every part of the goal is delivered and every ledger row is terminal and none is `rejected`
+(a rejected row is owed a corrective or an `abandoned` ruling);
+an abandoned row does not fulfill missing scope. Integrate accepted
 slices on the target branch through a delegated worker, then run relevant
 integration gates and a fresh independent `review` using the resolved reviewer model over the full diff
 against the intended base. Check the repository's required CI as well as local

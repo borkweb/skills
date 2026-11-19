@@ -170,7 +170,7 @@ function invariants(S, step) {
 const live = (S) => S.slices.filter((m) => !['rejected', 'abandoned', 'accepted', 'merged'].includes(m.state));
 
 async function writeEvidence(S, m, { head, complete }) {
-  const text = `Head: ${head}\nC1: PASS 1/1\n${complete ? 'C2: PASS 1/1\n' : ''}`;
+  const text = `Head: ${head}\nC1: MET 1/1\n${complete ? 'C2: MET 1/1\n' : ''}`;
   const r = await hoff(S, S.builderEnv(m), ['section', 'set', m.doc, 'Gate results', '--text', text]);
   return r;
 }

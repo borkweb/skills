@@ -176,7 +176,7 @@ turn-taking between slices and you never hold the fleet in your head.
    | `UNMANAGED PANE` | The recorded pane did not come from dispatch.sh; no signal can reach you from it. Judge what it produced, mark the slice terminal, re-dispatch through `offload`. |
 
 2. Read the bridge's `WAITER:` line and branch per [wait-signals.md](wait-signals.md).
-   `ready` → run `offload` on that slice: its step 0 judges the raw gates and runs
+   `ready` → run `offload` on that slice: its step 3 judges the raw gates and runs
    the acceptance `review`, which already applies the spec reviewer's criteria.
 3. Branch on the verdict:
    - gates or review fail → `ledger set … --state rejected --verdict "<why>"`
@@ -266,7 +266,7 @@ dependent coding.
 
 ## 7. Finish: merge-ready by default, merge only if authorized
 
-Reached when **every ledger row is terminal**, every accepted slice's gates passed
+Reached when **every ledger row is terminal** and none is `rejected` (a rejected row is owed a corrective, which reopens it, or an `abandoned` ruling), every accepted slice's gates passed
 and its per-slice `review` was clean, and the goal text is fully delivered with
 the authorized commit/push steps completed (or an explicit no-push record). Run
 `board` and confirm that first: a non-terminal row means you are not finished,

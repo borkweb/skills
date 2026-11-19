@@ -1160,7 +1160,7 @@ test('C1b: the freeze copy and handoff.mjs read the same local lines (table, wit
     const other = hoff(['init', R2, 'arch', 'lt']);
     hoff(['section', 'set', other, 'Frozen gates', '--text', text.replace(/\n/g, crlf ? '\r\n' : '\n')]);
     // C20 and C21 are criterion lines that merely say `local:`, so they need Gate results lines like any criterion.
-    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok\nC20: ok\nC21: ok`]);
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: MET\nC20: MET\nC21: MET`]);
     const r = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
     assert.equal(r.status, 0, r.stderr);
     assert.ok(existsSync(join(out, 'ran')), 'ready ran no local gate');
@@ -1181,7 +1181,7 @@ test('C1b: the freeze and handoff.mjs both refuse the same malformed lines', () 
     const R2 = repo();
     const other = hoff(['init', R2, 'arch', 'bad']);
     hoff(['section', 'set', other, 'Frozen gates', '--text', blockWith(lines)]);
-    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: ok`]);
+    hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: MET`]);
     const q = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
     assert.notEqual(q.status, 0, `${what}: ready must refuse`);
   }

@@ -17,6 +17,9 @@
 //   node handoff.mjs blocked  <path> [--steal]             -> status=blocked + bump updated (ownership-guarded); the
 //                                                             builder calls this before stopping on a mid-slice blocker
 //                                                             so the wait bridge wakes the architect to arbitrate
+//   node handoff.mjs review-coverage <path> <review-file> -> print the frozen criterion IDs the acceptance review gave no
+//                                                             `<ID>: MET | UNMET | NOT CHECKED` line, exit 4; with all
+//                                                             answered, print `unmet: <IDs>` if any and exit 0. Read-only.
 //   node handoff.mjs coverage <path>                      -> print the frozen criterion IDs that have no line under
 //                                                             Gate results, one per line (frozen means in Frozen gates
 //                                                             or in the `<path>.frozen` copy dispatch-slice.sh wrote,
@@ -343,6 +346,8 @@ async function setStatus(p, value, steal) {
   const gateCheck = (b) => {
     const missing = missingCriteria(b, snapshot);
     if (missing.length) die(`${incompleteMessage(missing)}\n${NEXT_INCOMPLETE}`, 4);
+    const vague = unverdictedCriteria(b, snapshot);
+    if (vague.length) die(`${unverdictedMessage(vague)}\n${NEXT_INCOMPLETE}`, 4);
     const stale = staleHead(b);
     if (stale) die(`stale: ${stale}\n${NEXT_STALE}`, 5);
   };
@@ -448,6 +453,23 @@ function missingCriteria(doc, snapshot = '') {
   return frozen.filter((id) => leaf(id) && !have.has(id));
 }
 
+// Frozen IDs whose Gate results line says nothing checkable: the text after the ID must open with
+// MET, NOT MET or NOT RUN (a colon, pipe, dash, `**` or backtick may come between). `C5: done` and
+// `C5: pass` are not verdicts. When an ID has several lines (an earlier round's and this one's), the
+// last one counts. This checks the form only; whether MET is true is the reviewer's job.
+const VERDICT = /^(?:\*\*|`)?\s*[:|]?\s*(?:[-–—]\s*)?(?:\*\*|`)?\s*(?:MET|NOT MET|NOT RUN)(?![A-Za-z0-9_])/;
+function unverdictedCriteria(doc, snapshot = '') {
+  const text = doc.replace(/\r\n?/g, '\n');
+  const frozen = new Set([...leadingIds(sectionText(text, 'Frozen gates')), ...leadingIds(snapshot)]);
+  const plain = sectionText(text, 'Gate results').replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
+  const ok = new Map();
+  for (const line of plain.split('\n')) {
+    const m = ID_FIRST.exec(line);
+    if (m && frozen.has(m[1])) ok.set(m[1], VERDICT.test(line.slice(m.index + m[0].length)));
+  }
+  return [...ok].filter(([, good]) => !good).map(([id]) => id);
+}
+
 // What the builder does after each `ready` refusal. The brief says only "do what the message says",
 // so each of these must be a complete instruction, and test_local_gates_docs.mjs reads them from real refusals.
 const NEXT_INCOMPLETE = 'Then run `ready` again. Do not run `blocked`, use `--steal` or run `status`.';
@@ -459,6 +481,11 @@ const incompleteMessage = (missing) =>
   'add one line per criterion: evidence, NOT MET or NOT RUN with the reason. ' +
   'One line per ID, the ID first; a line that lists several IDs or a range covers none of them.';
 
+const unverdictedMessage = (ids) =>
+  `incomplete: the Gate results line for ${ids.join(', ')} has no verdict.\n` +
+  'Start the text after each ID with MET, NOT MET or NOT RUN: `<ID>: MET — <test, command or file:line that proves it> — <result>`, ' +
+  'or `<ID>: NOT MET — <reason>`. Words such as done, pass or ok are not a verdict.';
+
 function coverage(p) {
   requireDoc(p);
   const doc = readFileSync(p, 'utf8');
@@ -467,8 +494,44 @@ function coverage(p) {
     process.stdout.write(`${missing.join('\n')}\n`);
     die(incompleteMessage(missing), 4);
   }
+  const vague = unverdictedCriteria(doc, frozenSnapshot(p));
+  if (vague.length) {
+    process.stdout.write(`${vague.join('\n')}\n`);
+    die(unverdictedMessage(vague), 4);
+  }
   const stale = staleHead(doc);
   if (stale) die(`stale: ${stale}`, 5);
+}
+
+// The acceptance reviewer owes one line per frozen criterion: `C5: MET | UNMET | NOT CHECKED — <evidence>`.
+// Lists the frozen leaf IDs whose last line in the review file has none of those verdicts (or that have
+// no line), exit 4. With every ID answered it prints `unmet: <IDs>` when any is UNMET (the IDs for the
+// ledger's `named C<n>` tag) and exits 0. Read-only; it checks the form, not the reviewer's judgment.
+const REVIEW_VERDICT = /^(?:\*\*|`)?\s*[:|]?\s*(?:[-–—]\s*)?(?:\*\*|`)?\s*(UNMET|MET|NOT CHECKED)(?![A-Za-z0-9_])/;
+function reviewCoverage(p, reviewFile) {
+  requireDoc(p);
+  if (!reviewFile || !existsSync(reviewFile)) die(`no review file at ${reviewFile || '<missing argument>'}`, 2);
+  const text = readFileSync(p, 'utf8').replace(/\r\n?/g, '\n');
+  const frozen = [...new Set([...leadingIds(sectionText(text, 'Frozen gates')), ...leadingIds(frozenSnapshot(p))])];
+  const leaf = (id) => !frozen.some((o) => o !== id && /^C\d+[a-z]$/.test(o) && o.slice(0, -1) === id);
+  const review = readFileSync(reviewFile, 'utf8').replace(/\r\n?/g, '\n').replace(COMMENT, (m) => m.replace(/[^\n]/g, ''));
+  const said = new Map();
+  for (const line of review.split('\n')) {
+    const m = ID_FIRST.exec(line);
+    if (m) said.set(m[1], REVIEW_VERDICT.exec(line.slice(m.index + m[0].length))?.[1] ?? null);
+  }
+  const owed = frozen.filter((id) => leaf(id) && !said.get(id));
+  if (owed.length) {
+    process.stdout.write(`${owed.join('\n')}\n`);
+    die(
+      `incomplete: the review has no verdict line for ${owed.join(', ')}.\n` +
+      'The reviewer adds one line per frozen criterion, the ID first: `<ID>: MET | UNMET | NOT CHECKED — <file:line or command>`. ' +
+      'Send the review back to the reviewer, not the builder; it costs the slice no round.',
+      4,
+    );
+  }
+  const unmet = frozen.filter((id) => said.get(id) === 'UNMET');
+  if (unmet.length) process.stdout.write(`unmet: ${unmet.join(', ')}\n`);
 }
 
 // --- local gates ----------------------------------------------------------
@@ -977,6 +1040,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     case 'ready':    await setStatus(pos[0], 'results-ready', steal); break;
     case 'blocked':  await setStatus(pos[0], 'blocked', steal); break;
     case 'coverage': coverage(pos[0]); break;
+    case 'review-coverage': reviewCoverage(pos[0], pos[1]); break;
     case 'rulings':  rulingsCmd(rest); break;
     case 'base':     setBase(pos[0], pos[1], pos[2], steal); break;
     case 'end':      end(pos[0]); break;

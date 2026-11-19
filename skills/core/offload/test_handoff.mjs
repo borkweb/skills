@@ -458,45 +458,45 @@ const ids = (out) => out.split('\n').filter(Boolean);
 const TEMPLATE_COMMENT = '<!-- Success criteria, frozen BEFORE results exist. Never edit after freezing. -->';
 const COVERAGE_ROWS = [
   // [name, frozen, results, expected missing IDs]
-  ['C13a a missing ID is printed, a covered one is not', 'C1: a\nC2: b\n', 'C1: pass\n', ['C2']],
-  ['C13b full coverage exits 0 and NOT MET counts as a line', 'C1: a\nC2: b\n', 'C1: pass\nC2: NOT MET because x\n', []],
+  ['C13a a missing ID is printed, a covered one is not', 'C1: a\nC2: b\n', 'C1: MET\n', ['C2']],
+  ['C13b full coverage exits 0 and NOT MET counts as a line', 'C1: a\nC2: b\n', 'C1: MET\nC2: NOT MET because x\n', []],
   ['C13f comment-only Frozen gates freezes nothing', `${TEMPLATE_COMMENT}\n`, '', []],
-  ['C14a every allowed first-token prefix covers', 'C1: a\nC2: b\nC3: c\nC4: d\nC5: e\nC6: f\n', '- C1: p\n* C2: p\n1. C3: p\n| C4 | p |\n**C5**: p\n`C6`: p\n', []],
-  ['C14b a mid-line mention does not cover', 'C1: a\n', 'Same as C1: pass\n', ['C1']],
-  ['C14c frozen-side IDs count only as first tokens', 'C1: a, same as C2\n', 'C1: p\n', []],
-  ['C14d token boundary: C10 does not cover C1', 'C1: a\nC10: b\n', 'C10: p\n', ['C1']],
+  ['C14a every allowed first-token prefix covers', 'C1: a\nC2: b\nC3: c\nC4: d\nC5: e\nC6: f\n', '- C1: MET\n* C2: MET\n1. C3: MET\n| C4 | MET |\n**C5**: MET\n`C6`: MET\n', []],
+  ['C14b a mid-line mention does not cover', 'C1: a\n', 'Same as C1: MET\n', ['C1']],
+  ['C14c frozen-side IDs count only as first tokens', 'C1: a, same as C2\n', 'C1: MET\n', []],
+  ['C14d token boundary: C10 does not cover C1', 'C1: a\nC10: b\n', 'C10: MET\n', ['C1']],
   ['C14e IDs are case-sensitive on the results side', 'C1: a\n', 'c1: p\nCP-01: p\n', ['C1']],
   ['C14e IDs are case-sensitive on the frozen side', 'CP-01: a\nc2: b\n', '', []],
-  ['C14f a single-line comment does not cover', 'C1: a\n', '<!-- C1: pass -->\n', ['C1']],
-  ['C14g a multi-line comment in Frozen gates freezes nothing', 'C1: a\n<!--\nC9: x\n-->\n', 'C1: p\n', []],
-  ['C14h a multi-line comment in Gate results does not cover', 'C1: a\n', '<!--\nC1: p\n-->\n', ['C1']],
+  ['C14f a single-line comment does not cover', 'C1: a\n', '<!-- C1: MET -->\n', ['C1']],
+  ['C14g a multi-line comment in Frozen gates freezes nothing', 'C1: a\n<!--\nC9: x\n-->\n', 'C1: MET\n', []],
+  ['C14h a multi-line comment in Gate results does not cover', 'C1: a\n', '<!--\nC1: MET\n-->\n', ['C1']],
   ['C14i duplicates are removed', 'C1: a\nC1: again\nC2: b\n', '', ['C1', 'C2']],
-  ['C14l a parent is covered by all its sub-IDs', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1a: p\nC1b: p\n', []],
-  ['C14m one missing sub-ID is reported, not the parent', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1a: p\n', ['C1b']],
-  ['C14n a parent line alone covers no sub-ID', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1: p\n', ['C1a', 'C1b']],
-  ['C14o a sub-ID line does not cover a parent with no frozen sub-IDs', 'C1: a\n', 'C1a: p\n', ['C1']],
-  ['C14p a hyphen range covers nothing', 'C1a: x\nC1b: y\nC2: z\n', 'C1a-C2: pass\n', ['C1a', 'C1b', 'C2']],
-  ['C14q an en-dash range covers nothing', 'C1: a\nC2: b\nC3: c\n', 'C1–C3: pass\n', ['C1', 'C2', 'C3']],
-  ['G4 a comma list covers nothing', 'C3: a\nC5b: b\n', 'C3, C5b: pass\n', ['C3', 'C5b']],
-  ['G4 a slash list covers nothing', 'C1: a\nC2: b\n', 'C1/C2: pass\n', ['C1', 'C2']],
-  ['G4 an "and" list covers nothing', 'C1: a\nC2: b\n', 'C1 and C2: pass\n', ['C1', 'C2']],
-  ['G4 a multi-ID line freezes nothing on the frozen side', 'C1 and C2: a\nC3: b\n', 'C3: p\n', []],
+  ['C14l a parent is covered by all its sub-IDs', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1a: MET\nC1b: MET\n', []],
+  ['C14m one missing sub-ID is reported, not the parent', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1a: MET\n', ['C1b']],
+  ['C14n a parent line alone covers no sub-ID', '**C1 Diff scope.**\n- C1a: x\n- C1b: y\n', 'C1: MET\n', ['C1a', 'C1b']],
+  ['C14o a sub-ID line does not cover a parent with no frozen sub-IDs', 'C1: a\n', 'C1a: MET\n', ['C1']],
+  ['C14MET a hyphen range covers nothing', 'C1a: x\nC1b: y\nC2: z\n', 'C1a-C2: MET\n', ['C1a', 'C1b', 'C2']],
+  ['C14q an en-dash range covers nothing', 'C1: a\nC2: b\nC3: c\n', 'C1–C3: MET\n', ['C1', 'C2', 'C3']],
+  ['G4 a comma list covers nothing', 'C3: a\nC5b: b\n', 'C3, C5b: MET\n', ['C3', 'C5b']],
+  ['G4 a slash list covers nothing', 'C1: a\nC2: b\n', 'C1/C2: MET\n', ['C1', 'C2']],
+  ['G4 an "and" list covers nothing', 'C1: a\nC2: b\n', 'C1 and C2: MET\n', ['C1', 'C2']],
+  ['G4 a multi-ID line freezes nothing on the frozen side', 'C1 and C2: a\nC3: b\n', 'C3: MET\n', []],
   ['G4 bold ID with a title still counts', '**C4 Diff scope.**\n', '', ['C4']],
-  ['G2 leading whitespace is accepted', '  C1: a\n\t- C2: b\n', '   C1: p\n', ['C2']],
+  ['G2 leading whitespace is accepted', '  C1: a\n\t- C2: b\n', '   C1: MET\n', ['C2']],
   // A <!-- opens a comment only at the start of a line. A criterion that quotes it mid-line must not hide the lines after it.
-  ['B1 a <!-- inside a code span hides nothing', 'C1: uses `<!--` here\nC2: b\n', 'C1: p\n', ['C2']],
-  ['B1 a mid-line opener closed on a later line is not a comment', 'C1: a <!-- note\nC2: b\nC3: c -->\n', 'C1: p\n', ['C2', 'C3']],
+  ['B1 a <!-- inside a code span hides nothing', 'C1: uses `<!--` here\nC2: b\n', 'C1: MET\n', ['C2']],
+  ['B1 a mid-line opener closed on a later line is not a comment', 'C1: a <!-- note\nC2: b\nC3: c -->\n', 'C1: MET\n', ['C2', 'C3']],
   ['B1 a mid-line closer joins nothing onto the next line', 'C1: a <!-- note\nx -->C2: b\n', '', ['C1']],
   ['B1 an unclosed line-start comment ends at the next blank line', 'C1: a\n<!-- unclosed\nC9: hidden\n\nC2: b\n', '', ['C1', 'C2']],
   ['B1 a closed multi-line comment hides its own blank lines', 'C1: a\n<!--\nnote\n\nC9: hidden\n-->\nC2: b\n', '', ['C1', 'C2']],
   ['B1 an indented line-start comment is a comment', 'C1: a\n   <!-- C9: x -->\nC2: b\n', '', ['C1', 'C2']],
-  ['B1 results side: a <!-- in a code span does not hide later lines', 'C1: a\nC2: b\n', 'C1: p `<!--`\nC2: p\n', []],
+  ['B1 results side: a <!-- in a code span does not hide later lines', 'C1: a\nC2: b\n', 'C1: MET `<!--`\nC2: MET\n', []],
   // A leading ID followed by another ID (space, comma, semicolon, slash, dash, and, or, to, through) counts for no ID.
-  ['B2 "C1 C2:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 C2: pass\n', ['C1', 'C2', 'C3']],
-  ['B2 "C1; C2:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1; C2: pass\n', ['C1', 'C2', 'C3']],
-  ['B2 "C1 to C3:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 to C3: pass\n', ['C1', 'C2', 'C3']],
-  ['B2 "C1 through C3:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 through C3: pass\n', ['C1', 'C2', 'C3']],
-  ['B2 a joined first token freezes nothing on the frozen side', 'C1 C2: a\nC3: b\n', 'C3: p\n', []],
+  ['B2 "C1 C2:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 C2: MET\n', ['C1', 'C2', 'C3']],
+  ['B2 "C1; C2:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1; C2: MET\n', ['C1', 'C2', 'C3']],
+  ['B2 "C1 to C3:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 to C3: MET\n', ['C1', 'C2', 'C3']],
+  ['B2 "C1 through C3:" covers none', 'C1: a\nC2: b\nC3: c\n', 'C1 through C3: MET\n', ['C1', 'C2', 'C3']],
+  ['B2 a joined first token freezes nothing on the frozen side', 'C1 C2: a\nC3: b\n', 'C3: MET\n', []],
 ];
 for (const [name, frozen, results, missing] of COVERAGE_ROWS) {
   test(`coverage: ${name}`, () => {
@@ -508,18 +508,64 @@ for (const [name, frozen, results, missing] of COVERAGE_ROWS) {
   });
 }
 
+// EC-08: a criterion line must open with a verdict, so `C5: done` no longer covers C5.
+const VERDICT_ROWS = [
+  // [name, results, IDs refused for having no verdict]
+  ['MET, NOT MET and NOT RUN are verdicts', 'C1: MET — t.test.js — 3/3\nC2: NOT MET — blocked\nC3: NOT RUN no sandbox\n', []],
+  ['done, pass, ok and a bare line are not', 'C1: done\nC2: pass\nC3: ok\n', ['C1', 'C2', 'C3']],
+  ['the verdict is case-sensitive and must lead', 'C1: met\nC2: evidence shows MET\nC3: MET\n', ['C1', 'C2']],
+  ['METRIC and NOT METHOD are not verdicts', 'C1: METRIC up\nC2: NOT METHOD\nC3: MET\n', ['C1', 'C2']],
+  ['list, table, bold and code forms carry a verdict', '- C1: MET\n| C2 | MET | x |\n**C3** — MET\n', []],
+  ['the last line for an ID counts', 'C1: done\nC2: MET\nC3: MET\nC1: MET after the fix\n', []],
+  ['a later vague line undoes an earlier verdict', 'C1: MET\nC2: MET\nC3: MET\nC2: done\n', ['C2']],
+  ['a commented verdict does not count for the line outside it', '<!-- C1: MET -->\nC1: done\nC2: MET\nC3: MET\n', ['C1']],
+];
+for (const [name, results, vague] of VERDICT_ROWS) {
+  test(`verdict: ${name}`, () => {
+    const frozen = 'C1: a\nC2: b\nC3: c\n';
+    const r = cli(['coverage', mkDoc(frozen, results)]);
+    assert.deepEqual(ids(r.out), vague);
+    assert.equal(r.code, vague.length ? 4 : 0);
+    if (vague.length) assert.match(r.err, /^incomplete: the Gate results line for .* has no verdict/);
+    const ready = cli(['ready', mkDoc(frozen, results)], { session: 's' });
+    if (vague.length) {
+      assert.equal(ready.code, 4);
+      assert.match(ready.err, /has no verdict[\s\S]*Then run `ready` again/, 'ready gives the next step');
+    } else assert.doesNotMatch(ready.err, /has no verdict/);
+  });
+}
+test('verdict: a result line for an ID that is not frozen is not checked', () => {
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', 'C1: MET\nC9: done\n')]).code, 0);
+});
+
+// EC-09: the acceptance review owes one verdict line per frozen criterion.
+test('review-coverage: lists the IDs the review did not answer and names the unmet ones', () => {
+  const doc = mkDoc('**C1 Scope.**\n- C1a: x\n- C1b: y\nC2: b\nC3: c\n', '');
+  const review = (body) => { const f = join(BOX, `review-${++docN}.md`); writeFileSync(f, body); return f; };
+  const gap = cli(['review-coverage', doc, review('# Review\n1. finding about C2\nC1a: MET — a.js:3\nC2: looks fine\nC3: UNMET — b.js:9\n')]);
+  assert.equal(gap.code, 4);
+  assert.deepEqual(ids(gap.out), ['C1b', 'C2'], 'no line, and a line with no verdict; the parent C1 is covered by its sub-IDs');
+  assert.match(gap.err, /^incomplete: the review has no verdict line for C1b, C2/);
+  const full = cli(['review-coverage', doc, review('C1a: MET — a.js:3\n- C1b: NOT CHECKED — needs prod\n| C2 | UNMET | b.js:1 |\nC3: UNMET — b.js:9\nVerdict: DO NOT LAND\n')]);
+  assert.equal(full.code, 0);
+  assert.equal(full.out, 'unmet: C2, C3\n');
+  const clean = cli(['review-coverage', doc, review('C1a: MET\nC1b: MET\nC2: MET\nC3: MET\n')]);
+  assert.deepEqual([clean.code, clean.out], [0, '']);
+  assert.equal(cli(['review-coverage', doc, join(BOX, 'no-such-review.md')]).code, 2);
+});
+
 test('coverage: CRLF docs fail closed and pass when covered', () => {
-  const miss = cli(['coverage', mkDoc('C1: a\nC2: b\n', 'C1: p\n', { eol: '\r\n' })]);
+  const miss = cli(['coverage', mkDoc('C1: a\nC2: b\n', 'C1: MET\n', { eol: '\r\n' })]);
   assert.deepEqual(ids(miss.out), ['C2']);
   assert.equal(miss.code, 4);
-  const ok = cli(['coverage', mkDoc('C1: a\nC2: b\n', 'C1: p\nC2: p\n', { eol: '\r\n' })]);
+  const ok = cli(['coverage', mkDoc('C1: a\nC2: b\n', 'C1: MET\nC2: MET\n', { eol: '\r\n' })]);
   assert.equal(ok.out, '');
   assert.equal(ok.code, 0);
 });
 
 test('coverage: no Frozen gates section, or IDs without a Gate results section', () => {
   const none = join(BOX, 'cov-nofrozen.md');
-  writeFileSync(none, '## Gate results\nC1: pass\n');
+  writeFileSync(none, '## Gate results\nC1: MET\n');
   assert.equal(cli(['coverage', none]).code, 0, 'no Frozen gates section behaves as today');
   const nores = join(BOX, 'cov-nores.md');
   writeFileSync(nores, '## Frozen gates\nC1: a\nC2: b\n');
@@ -542,7 +588,7 @@ test('coverage: read-only, needs no session, and a missing path is neither 0 nor
 // The builder writes the doc, so the freeze's copy (`<doc>.frozen`) keeps a
 // criterion owed after its line is deleted from Frozen gates.
 test('coverage and ready owe a line for every ID in the frozen copy, even one deleted from the doc', () => {
-  const p = mkDoc('C1: a\n', 'C1: pass\n');
+  const p = mkDoc('C1: a\n', 'C1: MET\n');
   assert.equal(cli(['coverage', p]).code, 0, 'without a copy, the doc alone decides (a slice frozen before the copy)');
   writeFileSync(`${p}.frozen`, 'C1: a\nC2: b\n');
   const r = cli(['coverage', p]);
@@ -556,10 +602,10 @@ test('coverage and ready owe a line for every ID in the frozen copy, even one de
 });
 
 test('a ruling appended to the doc after the freeze is owed too, and a covered doc passes', () => {
-  const p = mkDoc('C1: a\nC2: b\nC3: appended ruling\n', 'C1: pass\nC2: pass\n');
+  const p = mkDoc('C1: a\nC2: b\nC3: appended ruling\n', 'C1: MET\nC2: MET\n');
   writeFileSync(`${p}.frozen`, 'C1: a\nC2: b\n');
   assert.deepEqual(ids(cli(['coverage', p]).out), ['C3']);
-  const q = mkDoc('C1: a\n', 'C1: pass\nC2: NOT MET because x\n');
+  const q = mkDoc('C1: a\n', 'C1: MET\nC2: NOT MET because x\n');
   writeFileSync(`${q}.frozen`, 'C1: a\nC2: b\n');
   assert.equal(cli(['coverage', q]).code, 0);
 });
@@ -634,7 +680,7 @@ test('a dispatched builder with the carried id gets the coverage refusal', () =>
 });
 
 test('a covered doc is still marked results-ready', () => {
-  const p = mkDoc('C1: a\n', 'C1: pass\n');
+  const p = mkDoc('C1: a\n', 'C1: MET\n');
   assert.equal(cli(['ready', p], { session: 's' }).code, 0);
   assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
 });
@@ -659,7 +705,7 @@ test('a CRLF doc that is incomplete is refused by ready', () => {
 // --- the gate head: ready refuses evidence from an earlier commit -------------
 test('ready refuses a worktree doc with no Head line: exit 5, stale:, no write', () => {
   const { dir, head } = gitRepo('head-missing');
-  const p = mkDoc('C1: a\n', 'C1: pass\n', { cwd: dir });
+  const p = mkDoc('C1: a\n', 'C1: MET\n', { cwd: dir });
   const before = readFileSync(p, 'utf8');
   const r = cli(['ready', p], { session: 's' });
   assert.equal(r.code, 5);
@@ -672,7 +718,7 @@ test('ready refuses a worktree doc with no Head line: exit 5, stale:, no write',
 test('ready refuses a Head line that names an earlier commit', () => {
   const { dir, head: old } = gitRepo('head-old');
   const now = commit(dir, 'late edit');
-  const p = mkDoc('C1: a\n', `Head: ${old.slice(0, 10)}\nC1: pass\n`, { cwd: dir });
+  const p = mkDoc('C1: a\n', `Head: ${old.slice(0, 10)}\nC1: MET\n`, { cwd: dir });
   const r = cli(['ready', p], { session: 's' });
   assert.equal(r.code, 5);
   assert.ok(r.err.includes(old.slice(0, 10)), r.err);
@@ -683,14 +729,14 @@ test('ready refuses a Head line that names an earlier commit', () => {
 test('one stale Head line among current ones still refuses', () => {
   const { dir, head: old } = gitRepo('head-mixed');
   const now = commit(dir, 'late edit');
-  const p = mkDoc('C1: a\n', `Head: ${now}\n- Head: ${old}\nC1: pass\n`, { cwd: dir });
+  const p = mkDoc('C1: a\n', `Head: ${now}\n- Head: ${old}\nC1: MET\n`, { cwd: dir });
   assert.equal(cli(['ready', p], { session: 's' }).code, 5);
 });
 
 test('a short, bold, backticked or upper-case Head prefix of HEAD passes', () => {
   const { dir, head } = gitRepo('head-forms');
   for (const line of [`Head: ${head.slice(0, 7)}`, `**Head:** \`${head.slice(0, 12)}\``, `- Head: ${head.toUpperCase()}`]) {
-    const p = mkDoc('C1: a\n', `${line}\nC1: pass\n`, { cwd: dir });
+    const p = mkDoc('C1: a\n', `${line}\nC1: MET\n`, { cwd: dir });
     const r = cli(['ready', p], { session: 's' });
     assert.equal(r.code, 0, `${line}: ${r.err}`);
     assert.match(readFileSync(p, 'utf8'), /status: results-ready/);
@@ -699,7 +745,7 @@ test('a short, bold, backticked or upper-case Head prefix of HEAD passes', () =>
 
 test('a Head line inside a comment or mid-line does not count', () => {
   const { dir, head } = gitRepo('head-comment');
-  for (const results of [`<!-- Head: ${head} -->\nC1: pass\n`, `C1: pass at Head: ${head}\n`, `Head: ${head} (after rebase)\nC1: pass\n`]) {
+  for (const results of [`<!-- Head: ${head} -->\nC1: MET\n`, `C1: MET at Head: ${head}\n`, `Head: ${head} (after rebase)\nC1: MET\n`]) {
     const p = mkDoc('C1: a\n', results, { cwd: dir });
     assert.equal(cli(['ready', p], { session: 's' }).code, 5, results);
   }
@@ -709,7 +755,7 @@ test('a work tree with no commit refuses instead of passing', () => {
   const dir = repo('head-unborn');
   mkdirSync(dir, { recursive: true });
   git(dir, 'init', '-q');
-  const p = mkDoc('C1: a\n', 'Head: abcdef1\nC1: pass\n', { cwd: dir });
+  const p = mkDoc('C1: a\n', 'Head: abcdef1\nC1: MET\n', { cwd: dir });
   const r = cli(['ready', p], { session: 's' });
   assert.equal(r.code, 5);
   assert.match(r.err, /cannot read HEAD/);
@@ -719,23 +765,23 @@ test('a cwd that is not a git work tree has no head to check', () => {
   const dir = repo('head-not-git');
   mkdirSync(dir, { recursive: true });
   for (const cwd of [dir, repo('head-missing-dir')]) {
-    const p = mkDoc('C1: a\n', 'C1: pass\n', { cwd });
+    const p = mkDoc('C1: a\n', 'C1: MET\n', { cwd });
     assert.equal(cli(['ready', p], { session: 's' }).code, 0, cwd);
   }
 });
 
 test('a cwd line in the body is not the frontmatter cwd', () => {
-  const p = mkDoc('C1: a\n', `cwd: ${repo('nowhere')}\nC1: pass\n`);
+  const p = mkDoc('C1: a\n', `cwd: ${repo('nowhere')}\nC1: MET\n`);
   assert.equal(cli(['ready', p], { session: 's' }).code, 0);
 });
 
 test('coverage reports missing IDs first (exit 4), then a stale head (exit 5)', () => {
   const { dir, head } = gitRepo('head-coverage');
   assert.equal(cli(['coverage', mkDoc('C1: a\n', '', { cwd: dir })]).code, 4);
-  const stale = cli(['coverage', mkDoc('C1: a\n', 'C1: pass\n', { cwd: dir })]);
+  const stale = cli(['coverage', mkDoc('C1: a\n', 'C1: MET\n', { cwd: dir })]);
   assert.equal(stale.code, 5);
   assert.ok(stale.err.startsWith('stale:'), stale.err);
-  assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: pass\n`, { cwd: dir })]).code, 0);
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: MET\n`, { cwd: dir })]).code, 0);
 });
 
 // --- X6 / C25: a Carried: line is not a Head: line -------------------------------
@@ -743,7 +789,7 @@ test('coverage reports missing IDs first (exit 4), then a stale head (exit 5)', 
 test('C25: a Carried: line beside the current Head: line never trips stale', () => {
   const { dir, head } = gitRepo('carried');
   const older = commit(dir, 'later work');
-  const p = mkDoc('C1: a\n', `Head: ${older}\nCarried: ${head} — G5\nC1: pass\n`, { cwd: dir });
+  const p = mkDoc('C1: a\n', `Head: ${older}\nCarried: ${head} — G5\nC1: MET\n`, { cwd: dir });
   assert.equal(cli(['coverage', p]).code, 0);
   assert.equal(cli(['ready', p], { session: 's' }).code, 0);
 });
@@ -890,7 +936,7 @@ function rebaseRepo(name, { commits = 1, patch, baseFiles = {} } = {}) {
 }
 const docFor = (fx, { heads, fmExtra, omit = [] } = {}) => {
   const fm = [`base: ${fx.base}`, 'base_ref: refs/heads/main'].filter((l) => !omit.some((o) => l.startsWith(`${o}:`)));
-  return mkDoc('C1: a\n', `${(heads ?? [fx.recorded]).map((h) => `Head: ${h}`).join('\n')}\nC1: pass\n`, { cwd: fx.dir, fm: [...fm, ...(fmExtra ?? [])] });
+  return mkDoc('C1: a\n', `${(heads ?? [fx.recorded]).map((h) => `Head: ${h}`).join('\n')}\nC1: MET\n`, { cwd: fx.dir, fm: [...fm, ...(fmExtra ?? [])] });
 };
 const docStatus = (p) => /^status: (.*)$/m.exec(readFileSync(p, 'utf8'))[1];
 
@@ -936,8 +982,8 @@ test('C4e: Head equal to HEAD passes with or without base; a doc with no cwd is 
   const fx = rebaseRepo('rb-same');
   const head = git(fx.dir, 'rev-parse', 'HEAD');
   assert.equal(cli(['coverage', docFor(fx, { heads: [head] })]).code, 0);
-  assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: pass\n`, { cwd: fx.dir })]).code, 0, 'no base lines');
-  assert.equal(cli(['coverage', mkDoc('C1: a\n', 'C1: pass\n')]).code, 0, 'no cwd');
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', `Head: ${head}\nC1: MET\n`, { cwd: fx.dir })]).code, 0, 'no base lines');
+  assert.equal(cli(['coverage', mkDoc('C1: a\n', 'C1: MET\n')]).code, 0, 'no cwd');
 });
 
 test('C5a: no base: refuses and names the missing base', () => {
@@ -1041,7 +1087,7 @@ test('C5h: every git error refuses naming a git error, not a patch mismatch or c
   assertRefused(docFor(gone), /git error: `base_ref: refs\/heads\/main` no longer resolves/);
   const lost = rebaseRepo('rb-lost');
   lost.rebase();
-  assertRefused(mkDoc('C1: a\n', `Head: ${lost.recorded}\nC1: pass\n`, { cwd: lost.dir, fm: [`base: ${'1'.repeat(40)}`, 'base_ref: refs/heads/main'] }), /git error: `base: 1{40}` no longer resolves/);
+  assertRefused(mkDoc('C1: a\n', `Head: ${lost.recorded}\nC1: MET\n`, { cwd: lost.dir, fm: [`base: ${'1'.repeat(40)}`, 'base_ref: refs/heads/main'] }), /git error: `base: 1{40}` no longer resolves/);
 });
 
 test('C5i: two Head lines, one rebase-equivalent and one whose patch differs, refuse', () => {
@@ -1060,12 +1106,12 @@ test('C5j: a base that is not a full hex sha is refused and never reaches git as
   fx.rebase();
   const pwned = join(BOX, 'pwned');
   for (const bad of [`--output=${pwned}`, 'HEAD', 'main']) {
-    const p = mkDoc('C1: a\n', `Head: ${fx.recorded}\nC1: pass\n`, { cwd: fx.dir, fm: [`base: ${bad}`, 'base_ref: refs/heads/main'] });
+    const p = mkDoc('C1: a\n', `Head: ${fx.recorded}\nC1: MET\n`, { cwd: fx.dir, fm: [`base: ${bad}`, 'base_ref: refs/heads/main'] });
     assertRefused(p, /not a full commit sha/);
     assert.ok(!existsSync(pwned), `${bad}: nothing was written`);
   }
   for (const bad of ['--output=/x', 'main', 'refs/tags/v1']) {
-    const p = mkDoc('C1: a\n', `Head: ${fx.recorded}\nC1: pass\n`, { cwd: fx.dir, fm: [`base: ${fx.base}`, `base_ref: ${bad}`] });
+    const p = mkDoc('C1: a\n', `Head: ${fx.recorded}\nC1: MET\n`, { cwd: fx.dir, fm: [`base: ${fx.base}`, `base_ref: ${bad}`] });
     assertRefused(p, /base_ref:.* is not a full refs/);
   }
 });

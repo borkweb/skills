@@ -20,7 +20,8 @@ Independent, read-only, and never writes feature code. Reviews the pinned diff a
 
 Returns:
 - a numbered findings list: severity, file:line, the evidence, and the smallest fix;
-- a verdict: SAFE TO LAND, LAND WITH CAUTION, or DO NOT LAND.
+- a verdict: SAFE TO LAND, LAND WITH CAUTION, or DO NOT LAND;
+- on an acceptance review (the brief hands it frozen criteria), one line per frozen criterion ID after the findings, the ID first: `C5: MET | UNMET | NOT CHECKED — <file:line or command>`. `UNMET` cites the finding number. `NOT CHECKED` names what the reviewer could not see.
 
 Diff the test files for removed, skipped or loosened assertions, expectations, fixtures and golden files. Each must appear on the builder's `Loosened tests:` line with a source of truth; one that does not is a class 13 blocker (review criteria, below).
 

@@ -58,7 +58,7 @@ export const L = (id, command) => `${id}: local: ${command}`;
 export function mkGateDoc({ frozen = [], results, head, cwd, status = 'dispatched', owner = 's', fm = [], eol = '\n', name = 'doc' } = {}) {
   mkdirSync(join(BOX, 'offload'), { recursive: true });
   const p = join(BOX, 'offload', `${uniq(name)}.md`);
-  const res = results ?? `${head ? `Head: ${head}\n` : ''}C1: ok\n`;
+  const res = results ?? `${head ? `Head: ${head}\n` : ''}C1: MET\n`;
   const front = ['---', ...(cwd ? [`cwd: ${cwd}`] : []), ...fm, `claude_session: ${owner}`, `status: ${status}`, 'updated: x', '---', ''];
   const body = [...front, '## Frozen gates', ['C1: x', ...frozen].join('\n'), '', '## Gate results', res, '', '## Work summary', 'wip', ''];
   writeFileSync(p, body.join('\n').replace(/\n/g, eol));

@@ -35,7 +35,7 @@ test('C1c: a local line never counts as a criterion: coverage prints nothing and
 test('C1d: a criterion line is never run as a gate, even when it says local:', () => {
   const fx = readyFx((out) => [`touch ${out}/real`], {});
   const out = fx.out;
-  const doc = mkGateDoc({ frozen: [`C7: local: touch ${out}/m7`, `- C8 local: touch ${out}/m8`], results: `Head: ${fx.head}\nC1: ok\nC7: ok\nC8: ok\n`, head: fx.head, cwd: fx.dir });
+  const doc = mkGateDoc({ frozen: [`C7: local: touch ${out}/m7`, `- C8 local: touch ${out}/m8`], results: `Head: ${fx.head}\nC1: MET\nC7: MET\nC8: MET\n`, head: fx.head, cwd: fx.dir });
   const r = cli(['ready', doc], { session: 's' });
   assert.equal(r.code, 0, r.err);
   assert.ok(!existsSync(join(out, 'm7')) && !existsSync(join(out, 'm8')), 'a criterion line ran as a gate');
@@ -200,7 +200,7 @@ test('C3o: HEAD moving during the gate run refuses and leaves the status alone',
   assert.equal(docStatus(fx.doc), 'dispatched');
 });
 
-test('C3p/C11: a gate past its timeout is red and the message says so', () => {
+test('C3MET/C11: a gate past its timeout is red and the message says so', () => {
   const fx = readyFx(['sleep 5']);
   const t0 = Date.now();
   const r = ready(fx, { env: { OFFLOAD_LOCAL_GATE_TIMEOUT_S: '1' } });
@@ -339,14 +339,14 @@ test('C4f: a local gate reruns after a pure rebase (carry-over passes coverage)'
   git(dir, 'add', '.'); git(dir, 'commit', '-q', '-m', 'main moves');
   git(dir, 'checkout', '-q', 'slice');
   git(dir, 'rebase', '-q', 'main');
-  const doc = mkGateDoc({ frozen: [L('L1', 'exit 3')], results: `Head: ${recorded}\nC1: ok\n`, cwd: dir, fm: [`base: ${base}`, 'base_ref: refs/heads/main'] });
+  const doc = mkGateDoc({ frozen: [L('L1', 'exit 3')], results: `Head: ${recorded}\nC1: MET\n`, cwd: dir, fm: [`base: ${base}`, 'base_ref: refs/heads/main'] });
   assert.equal(cli(['coverage', doc]).code, 0, 'coverage carries over the rebase');
   refused(cli(['ready', doc], { session: 's' }), 'rebase');
 });
 
 test('C4g: a Carried: line does not exempt a local gate', () => {
   const repo = gitRepo();
-  const doc = mkGateDoc({ frozen: [L('L1', 'exit 3')], results: `Head: ${repo.head}\nCarried: ${repo.head} — L1\nC1: ok\n`, cwd: repo.dir });
+  const doc = mkGateDoc({ frozen: [L('L1', 'exit 3')], results: `Head: ${repo.head}\nCarried: ${repo.head} — L1\nC1: MET\n`, cwd: repo.dir });
   refused(cli(['ready', doc], { session: 's' }));
 });
 

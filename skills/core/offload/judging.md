@@ -23,9 +23,13 @@ A review verdict never carries over a rebase. A rebase gives new shas and possib
 
 ## A `red:` refusal is not a verdict
 
-After coverage and the head check, `ready` runs the frozen local gates (the `L<n>: local: <command>` lines of *Frozen gates*) and refuses with `red:` and exit 7 when one is red; the doc stays as it was. That refusal is the builder's to fix. It is not a verdict: it records no rejection and costs no round, so send no corrective for it. A slice that reaches `results-ready` still gets your full gate run before acceptance; a local gate that passed at `ready` does not replace it.
+After coverage and the head check, `ready` runs the frozen local gates (the `L<n>: local: <command>` lines of *Frozen gates*) and refuses with `red:` and exit 7 when one is red; the doc stays as it was. That refusal is the builder's to fix. It is not a verdict: it records no rejection and costs no round, so send no corrective for it. A slice that reaches `results-ready` still gets your judgment of the raw gates as SKILL.md step 3 sets it out: read the evidence, spot-check any gate you doubt, and do the full gate run yourself on a head whose results have a `Carried:` line. A local gate that passed at `ready` replaces none of that.
 
 The builder can edit *Frozen gates*, so the doc's lines prove nothing about the bar. `coverage` and `ready` also read the copy the freeze wrote beside the doc (`<handoff>.frozen`), so a criterion deleted from the doc is still owed a Gate results line. The builder runs full-auto and can reach that copy too, so it is drift protection, not proof. When you judge, judge against the block you dispatched (the file you passed to `dispatch-slice.sh`), not the doc: rerun the local gates from it, check Gate results against its criterion IDs plus any rulings you appended, and treat a criterion or local line in the doc that differs from the block, or is missing, as a send-back: `ledger set … --state returned`, then a corrective without `--verdict` that asks for the line to be restored.
+
+## The review answers every criterion
+
+The acceptance reviewer owes one line per frozen criterion (`C5: MET | UNMET | NOT CHECKED — <evidence>`, [briefs.md](../do/references/briefs.md) *Reviewer*). Before you read its verdict, run `node "<resolved handoff.mjs>" review-coverage "$HANDOFF" "<run dir>/review-<slice>-r<round>.md"`. Exit 4 lists the IDs the review did not answer: send the review back to the reviewer for those lines. That is not a verdict on the builder and costs no round. Exit 0 prints `unmet: <IDs>` when the reviewer found any; those IDs are the `named C<n>` tags for the ledger `--verdict`, and a blocker with no ID on that line is `unnamed`. `NOT CHECKED` is a caveat you rule on, like a `NOT RUN` gate.
 
 ## The head still merges onto its base
 
