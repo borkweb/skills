@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""Deterministic stdlib-only stub for the `claude` CLI used by review-eval adapter tests."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import time
+
+DEFAULT_VERSION = '2.1.328 (Claude Code)'
+DEFAULT_TOOLS = ['Bash', 'Read', 'Grep', 'Glob', 'Skill']
+PROBE_USAGE = {
+    'input_tokens': 2,
+    'cache_creation_input_tokens': 2193,
+    'cache_read_input_tokens': 3223,
+    'output_tokens': 4,
+    'output_tokens_details': {'thinking_tokens': 0},
+}
+
+
+def _flag_value(argv, name, default=None):
+    for idx, arg in enumerate(argv):
+        if arg == name and idx + 1 < len(argv):
+            return argv[idx + 1]
+        if arg.startswith(name + '='):
+            return arg.split('=', 1)[1]
+    return default
+
+
+def _load_config(here):
+    cfg_path = here / 'stub_config.json'
+    cfg = {}
+    if cfg_path.is_file():
+        cfg = json.loads(cfg_path.read_text(encoding='utf-8'))
+    if os.environ.get('CLAUDE_STUB_MODE'):
+        cfg['mode'] = os.environ['CLAUDE_STUB_MODE']
+    if os.environ.get('CLAUDE_STUB_RECORD'):
+        cfg['record_file'] = os.environ['CLAUDE_STUB_RECORD']
+    return cfg
+
+
+def _record_call(here, cfg, argv, stdin_text):
+    record_file = cfg.get('record_file')
+    if not record_file and (here / 'stub_config.json').is_file():
+        record_file = str(here / 'calls.jsonl')
+    if not record_file:
+        return
+    token = os.environ.get('CLAUDE_CODE_OAUTH_TOKEN')
+    home_dir = os.environ.get('HOME', '')
+    cfg_dir = os.environ.get('CLAUDE_CONFIG_DIR', '')
+    entry = {
+        'argv': argv,
+        'cwd': os.getcwd(),
+        'pid': os.getpid(),
+        'env_names': sorted(os.environ.keys()),
+        'token_sha256': hashlib.sha256(token.encode('utf-8')).hexdigest() if token is not None else None,
+        'env_subset': {
+            k: os.environ[k]
+            for k in (
+                'HOME',
+                'CLAUDE_CONFIG_DIR',
+                'AGENT_HANDOFFS_DIR',
+                'BORK_REPO_RULES_DIR',
+                'TMPDIR',
+                'GIT_TERMINAL_PROMPT',
+                'CLAUDE_CODE_DISABLE_BUNDLED_SKILLS',
+            )
+            if k in os.environ
+        },
+        'home_is_dir': os.path.isdir(home_dir) if home_dir else False,
+        'config_is_dir': os.path.isdir(cfg_dir) if cfg_dir else False,
+        'home_has_claude_md': os.path.exists(os.path.join(home_dir, 'CLAUDE.md')) if home_dir else False,
+        'config_has_claude_md': os.path.exists(os.path.join(cfg_dir, 'CLAUDE.md')) if cfg_dir else False,
+        'stdin': stdin_text,
+    }
+    if cfg.get('record_full_env'):
+        entry['env'] = dict(os.environ)
+    with open(record_file, 'a', encoding='utf-8') as handle:
+        handle.write(json.dumps(entry) + '\n')
+
+
+def _emit(obj):
+    sys.stdout.write(json.dumps(obj) + '\n')
+    sys.stdout.flush()
+
+
+def _write_transcript(session_id, effort, echo_token_str, cfg):
+    if cfg.get('no_transcript'):
+        return
+    cfg_dir = os.environ.get('CLAUDE_CONFIG_DIR')
+    if not cfg_dir:
+        return
+    slug = cfg.get('transcript_slug') or ('-' + os.path.realpath(os.getcwd()).lstrip('/').replace('/', '-'))
+    proj_dir = Path(cfg_dir) / 'projects' / slug
+    proj_dir.mkdir(parents=True, exist_ok=True)
+    if cfg.get('other_session_transcript'):
+        other = cfg['other_session_transcript']
+        other_path = proj_dir / f'{other["session_id"]}.jsonl'
+        other_path.write_text(
+            json.dumps({'type': 'system', 'effort': other['effort']}) + '\n',
+            encoding='utf-8',
+        )
+    lines = []
+    if effort is not None:
+        lines.append(json.dumps({'type': 'system', 'effort': effort}))
+    if echo_token_str:
+        lines.append(json.dumps({'type': 'assistant', 'text': f'transcript-leak {echo_token_str}'}))
+    if not lines:
+        lines.append(json.dumps({'type': 'system', 'session_id': session_id}))
+    (proj_dir / f'{session_id}.jsonl').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+
+def _detect_skill_from_stdin(stdin_text):
+    if 'bork:review-security' in stdin_text:
+        return 'bork:review-security'
+    return 'bork:review'
+
+
+def _handle_grade(cfg, argv, stdin_text):
+    token = os.environ.get('CLAUDE_CODE_OAUTH_TOKEN', '')
+    echo = cfg.get('echo_token') is True
+    leak = f' {token}' if (echo and token) else ''
+    if echo and token:
+        sys.stderr.write(f'grade stderr leak {token}\n')
+        sys.stderr.flush()
+
+    gmode = cfg.get('grade_mode', 'ok')
+    if gmode == 'sleep':
+        child = subprocess.Popen(['sleep', '60'])
+        if cfg.get('pidfile'):
+            Path(cfg['pidfile']).write_text(
+                json.dumps({'stub': os.getpid(), 'child': child.pid}),
+                encoding='utf-8',
+            )
+        time.sleep(60)
+        return 0
+    if gmode == 'empty':
+        return int(cfg.get('exit_code', 0))
+    if gmode == 'non-json':
+        sys.stdout.write('not valid json output' + leak + '\n')
+        return int(cfg.get('exit_code', 0))
+    if gmode == 'is_error':
+        _emit({
+            'type': 'result',
+            'subtype': 'error_during_execution',
+            'is_error': True,
+            'result': f'grader failed{leak}',
+            'usage': PROBE_USAGE,
+            'total_cost_usd': 0.002,
+        })
+        return int(cfg.get('exit_code', 1))
+
+    envelope = {
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': False,
+        'result': f'graded{leak}',
+        'usage': PROBE_USAGE,
+        'total_cost_usd': 0.002,
+    }
+    if gmode == 'ok':
+        structured = cfg.get('structured_output', {'ok': True, 'note': f'clean{leak}'})
+        envelope['structured_output'] = structured
+    elif gmode == 'bad-structured':
+        envelope['structured_output'] = ['not', 'a', 'dict']
+    elif gmode == 'text-json':
+        envelope['result'] = json.dumps({'ok': True, 'note': f'from-text{leak}'})
+    elif gmode == 'text-non-json':
+        envelope['result'] = f'plain text not json{leak}'
+    elif gmode == 'text-list':
+        envelope['result'] = json.dumps([1, 2, 3])
+    _emit(envelope)
+    return int(cfg.get('exit_code', 0))
+
+
+def _handle_isolation_side_effects(cfg, stdin_text):
+    out_match = re.search(r'write "outside" to (\S+)', stdin_text, re.IGNORECASE)
+    in_match = re.search(r'write "inside" to (\S+)', stdin_text, re.IGNORECASE)
+    if cfg.get('write_outside_probe') and out_match:
+        Path(out_match.group(1)).write_text('outside\n', encoding='utf-8')
+    if not cfg.get('skip_inside_write') and in_match:
+        Path(in_match.group(1)).write_text('inside\n', encoding='utf-8')
+    if cfg.get('mutate_token_file'):
+        p = Path(cfg['mutate_token_file'])
+        p.write_text(p.read_text(encoding='utf-8') + 'X', encoding='utf-8')
+    if cfg.get('plant_links_to'):
+        target = Path(cfg['plant_links_to'])
+        tmp_dir = Path(os.environ['TMPDIR'])
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        sym = tmp_dir / 'planted-symlink'
+        hard = tmp_dir / 'planted-hardlink'
+        if not sym.exists():
+            os.symlink(str(target), str(sym))
+        if not hard.exists():
+            os.link(str(target), str(hard))
+
+
+def main():
+    here = Path(__file__).resolve().parent
+    argv = sys.argv[1:]
+    cfg = _load_config(here)
+
+    if '--version' in argv or '-v' in argv:
+        _record_call(here, cfg, argv, '')
+        if cfg.get('version_exit_code'):
+            sys.stderr.write(cfg.get('version_stderr', 'version failed\n'))
+            return int(cfg['version_exit_code'])
+        sys.stdout.write(cfg.get('version', DEFAULT_VERSION) + '\n')
+        return 0
+
+    stdin_text = sys.stdin.read()
+    _record_call(here, cfg, argv, stdin_text)
+
+    if '--json-schema' in argv:
+        return _handle_grade(cfg, argv, stdin_text)
+
+    mode = cfg.get('mode', 'ok')
+    token = os.environ.get('CLAUDE_CODE_OAUTH_TOKEN', '')
+    echo = cfg.get('echo_token') is True
+    leak = f' {token}' if (echo and token) else ''
+    if echo and token:
+        sys.stderr.write(f'stub stderr leak {token}\n')
+        sys.stderr.flush()
+
+    if mode == 'empty':
+        return int(cfg.get('exit_code', 1))
+    if mode == 'non-json':
+        sys.stdout.write(f'not json at all{leak}\n')
+        return int(cfg.get('exit_code', 0))
+
+    model = _flag_value(argv, '--model', 'claude-sonnet-5-5')
+    effort = _flag_value(argv, '--effort', None)
+    plugin_dir = _flag_value(argv, '--plugin-dir', '')
+    session_id = cfg.get('session_id', 'sess-0001-abcd')
+    init_model = cfg.get('init_model', model)
+    tools = cfg.get('init_tools', DEFAULT_TOOLS)
+    mcp_servers = cfg.get('mcp_servers', [])
+    api_key_source = cfg.get('api_key_source', 'none')
+    skills = cfg.get('init_skills', ['bork:review', 'bork:review-security'])
+
+    if 'init_plugins' in cfg:
+        plugins = cfg['init_plugins']
+    elif mode == 'no-plugin':
+        plugins = [
+            {'name': 'cc-plugin-agents-md', 'path': '/builtin/agents-md', 'source': 'cc-plugin-agents-md@builtin'},
+        ]
+    else:
+        plugins = [
+            {'name': 'bork', 'path': plugin_dir, 'source': 'bork@inline'},
+            {'name': 'cc-plugin-agents-md', 'path': '/builtin/agents-md', 'source': 'cc-plugin-agents-md@builtin'},
+            {'name': 'cc-plugin-telemetry', 'path': '/builtin/telemetry', 'source': 'cc-plugin-telemetry@builtin'},
+        ]
+
+    init_event = {
+        'type': 'system',
+        'subtype': 'init',
+        'cwd': os.getcwd(),
+        'session_id': session_id,
+        'tools': tools,
+        'mcp_servers': mcp_servers,
+        'model': init_model,
+        'permissionMode': _flag_value(argv, '--permission-mode', 'dontAsk'),
+        'slash_commands': list(skills),
+        'apiKeySource': api_key_source,
+        'claude_code_version': '2.1.328',
+        'output_style': 'default',
+        'skills': list(skills),
+        'plugins': plugins,
+    }
+
+    if mode == 'sleep':
+        child = subprocess.Popen(['sleep', '60'])
+        if cfg.get('pidfile'):
+            Path(cfg['pidfile']).write_text(
+                json.dumps({'stub': os.getpid(), 'child': child.pid}),
+                encoding='utf-8',
+            )
+        _emit(init_event)
+        time.sleep(60)
+        return 0
+
+    if not cfg.get('omit_init'):
+        _emit(init_event)
+
+    if mode == 'no-plugin':
+        if cfg.get('pidfile'):
+            Path(cfg['pidfile']).write_text(json.dumps({'stub': os.getpid()}), encoding='utf-8')
+        sleep_s = float(cfg.get('sleep_after_init', 0))
+        if sleep_s > 0:
+            time.sleep(sleep_s)
+        if cfg.get('after_init_marker'):
+            Path(cfg['after_init_marker']).write_text('reached-after-init\n', encoding='utf-8')
+        return 0
+
+    if cfg.get('isolation') or 'outside-probe.txt' in stdin_text:
+        _handle_isolation_side_effects(cfg, stdin_text)
+
+    if cfg.get('emit_hook_event'):
+        _emit({
+            'type': 'system',
+            'subtype': 'hook_started',
+            'hook_id': 'hook-1',
+            'hook_name': 'PreToolUse',
+            'hook_event': 'PreToolUse',
+        })
+
+    _write_transcript(session_id, cfg.get('transcript_effort', effort), token if echo else '', cfg)
+
+    served_model = cfg.get('served_model', 'claude-sonnet-5-5-fallback' if mode == 'fallback-model' else init_model)
+    configured_skill = cfg.get('invoked_skill', _detect_skill_from_stdin(stdin_text))
+
+    if mode == 'command-markup':
+        cmd_name = cfg.get('command_name', f'/{configured_skill}')
+        _emit({
+            'type': 'user',
+            'message': {
+                'role': 'user',
+                'content': f'<command-name>{cmd_name}</command-name>{leak}',
+            },
+        })
+        _emit({
+            'type': 'assistant',
+            'message': {
+                'id': 'msg_cmd_01',
+                'model': served_model,
+                'role': 'assistant',
+                'content': [{'type': 'text', 'text': f'Review complete via command markup.{leak}'}],
+            },
+        })
+    elif mode in ('ok', 'fallback-model'):
+        if not cfg.get('omit_assistant'):
+            tool_use_id = 'toolu_skill_01'
+            content_blocks = [
+                {'type': 'text', 'text': f'Running skill{leak}'},
+                {
+                    'type': 'tool_use',
+                    'id': tool_use_id,
+                    'name': 'Skill',
+                    'input': {'skill': configured_skill, 'args': f'check{leak}'},
+                },
+            ]
+            if cfg.get('isolation') or 'outside-probe.txt' in stdin_text:
+                content_blocks.append({
+                    'type': 'tool_use',
+                    'id': 'toolu_bash_01',
+                    'name': 'Bash',
+                    'input': {'command': 'env'},
+                })
+            _emit({
+                'type': 'assistant',
+                'message': {
+                    'id': 'msg_01',
+                    'model': served_model,
+                    'role': 'assistant',
+                    'content': content_blocks,
+                },
+            })
+            user_blocks = [
+                {
+                    'type': 'tool_result',
+                    'tool_use_id': tool_use_id,
+                    'is_error': bool(cfg.get('skill_tool_result_error', False)),
+                    'content': f'skill loaded{leak}',
+                }
+            ]
+            if cfg.get('isolation') or 'outside-probe.txt' in stdin_text:
+                if cfg.get('bash_echo_token_in_env'):
+                    bash_out = f'HOME={os.environ.get("HOME", "")}\nCLAUDE_CODE_OAUTH_TOKEN={token}\n'
+                else:
+                    bash_out = f'HOME={os.environ.get("HOME", "")}\nGIT_TERMINAL_PROMPT=0\n'
+                user_blocks.append({
+                    'type': 'tool_result',
+                    'tool_use_id': 'toolu_bash_01',
+                    'is_error': False,
+                    'content': bash_out,
+                })
+            _emit({
+                'type': 'user',
+                'message': {
+                    'role': 'user',
+                    'content': user_blocks,
+                },
+            })
+    elif mode == 'no-skill':
+        _emit({
+            'type': 'assistant',
+            'message': {
+                'id': 'msg_noskill_01',
+                'model': served_model,
+                'role': 'assistant',
+                'content': [{'type': 'text', 'text': f'Reviewed without invoking Skill.{leak}'}],
+            },
+        })
+    elif mode == 'rate-limit':
+        _emit({
+            'type': 'rate_limit_event',
+            'rate_limit_info': {
+                'status': 'rejected',
+                'unifiedWindows': [{'window': '5h', 'status': 'rejected'}],
+            },
+        })
+        _emit({
+            'type': 'result',
+            'subtype': 'error_rate_limit',
+            'is_error': True,
+            'num_turns': 0,
+            'result': f'Rate limit reached{leak}',
+            'session_id': session_id,
+            'total_cost_usd': 0.0,
+            'usage': PROBE_USAGE,
+            'modelUsage': {},
+            'permission_denials': [],
+        })
+        return int(cfg.get('exit_code', 1))
+    elif mode == 'error':
+        _emit({
+            'type': 'assistant',
+            'message': {
+                'id': 'msg_err_01',
+                'model': served_model,
+                'role': 'assistant',
+                'content': [{'type': 'text', 'text': f'Failing{leak}'}],
+            },
+        })
+        _emit({
+            'type': 'result',
+            'subtype': 'error_during_execution',
+            'is_error': True,
+            'num_turns': 1,
+            'result': f'execution failed\nmultiline detail{leak}',
+            'session_id': session_id,
+            'total_cost_usd': 0.001,
+            'usage': PROBE_USAGE,
+            'modelUsage': {},
+            'permission_denials': [],
+        })
+        return int(cfg.get('exit_code', 1))
+
+    if cfg.get('truncated'):
+        return int(cfg.get('exit_code', 0))
+
+    rl_info = cfg.get('rate_limit_info', {
+        'status': 'allowed_warning',
+        'unifiedWindows': [{'window': '5h', 'status': cfg.get('window_status', 'allowed_warning')}],
+    })
+    _emit({'type': 'rate_limit_event', 'rate_limit_info': rl_info})
+
+    denials = []
+    if cfg.get('deny_skill'):
+        denials.append({
+            'tool_name': 'Skill',
+            'tool_use_id': 'toolu_skill_01',
+            'tool_input': {'skill': configured_skill},
+        })
+
+    result_event = {
+        'type': 'result',
+        'subtype': 'success',
+        'is_error': False,
+        'num_turns': int(cfg.get('num_turns', 2)),
+        'result': f"{cfg.get('result_text', 'SAFE TO LAND — stub review.')}{leak}",
+        'session_id': session_id,
+        'total_cost_usd': 0.0091383,
+        'modelUsage': {
+            served_model: {
+                'inputTokens': 2,
+                'cacheCreationInputTokens': 2193,
+                'cacheReadInputTokens': 3223,
+                'outputTokens': 4,
+                'costUSD': 0.0091383,
+            }
+        },
+        'permission_denials': denials,
+        'terminal_reason': 'completed',
+    }
+    if not cfg.get('omit_usage'):
+        result_event['usage'] = cfg.get('usage', PROBE_USAGE)
+    _emit(result_event)
+    return int(cfg.get('exit_code', 0))
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
