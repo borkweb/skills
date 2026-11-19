@@ -84,16 +84,12 @@ def _run_group_streaming(proc, command, input, timeout, merge_stderr, grace, on_
         if deadline is not None:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                try:
-                    kind, payload = q.get_nowait()
-                except queue.Empty:
-                    raise subprocess.TimeoutExpired(command, timeout, ''.join(stdout_lines),
-                                                    None if merge_stderr else ''.join(stderr_chunks))
-            else:
-                try:
-                    kind, payload = q.get(timeout=min(remaining, 0.25))
-                except queue.Empty:
-                    continue
+                raise subprocess.TimeoutExpired(command, timeout, ''.join(stdout_lines),
+                                                None if merge_stderr else ''.join(stderr_chunks))
+            try:
+                kind, payload = q.get(timeout=min(remaining, 0.25))
+            except queue.Empty:
+                continue
         else:
             try:
                 kind, payload = q.get(timeout=0.25)

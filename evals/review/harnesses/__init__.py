@@ -68,19 +68,41 @@ def review_prompt(req, invoke):
     )
 
 
+_MAX_WALK_DEPTH = 256
+
+
 def _is_under_root(path, root_real):
     real = os.path.realpath(path)
     return real == root_real or real.startswith(root_real + os.sep)
 
 
+def _open_dir_nofollow(name, dir_fd=None):
+    flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_NOFOLLOW', 0)
+    if dir_fd is None:
+        return os.open(name, flags)
+    return os.open(name, flags, dir_fd=dir_fd)
+
+
+def _make_dir_writable_fd(dir_fd, st_mode):
+    needed = stat.S_IMODE(st_mode) | 0o700
+    if needed != stat.S_IMODE(st_mode):
+        try:
+            os.fchmod(dir_fd, needed)
+        except OSError:
+            pass
+
+
 def remove_tree_link_safe(path, root, created_inodes=None):
-    """Remove `path` recursively without following symlinks, leaving `root`, or touching foreign hard links."""
+    """Remove `path` recursively using fd-relative syscalls without following symlinks, leaving `root`,
+    chmodding files, or touching foreign hard links."""
     root_real = os.path.realpath(str(root))
     target = Path(path)
     try:
         st = os.lstat(target)
     except FileNotFoundError:
         return
+
+    created = set(created_inodes or ())
     if stat.S_ISLNK(st.st_mode):
         if not _is_under_root(str(target.parent), root_real):
             raise Refusal(f'refusing to remove link outside root {root_real}: {target}')
@@ -88,53 +110,111 @@ def remove_tree_link_safe(path, root, created_inodes=None):
         return
     if not _is_under_root(str(target), root_real):
         raise Refusal(f'refusing to remove path outside root {root_real}: {target}')
-    created = set(created_inodes or ())
     if not stat.S_ISDIR(st.st_mode):
         if st.st_nlink > 1 and (st.st_dev, st.st_ino) not in created:
             return
         os.unlink(target)
         return
 
-    def _walk(directory):
-        kept = False
-        try:
-            with os.scandir(directory) as entries:
-                items = list(entries)
-        except OSError:
-            return True
-        for entry in items:
-            entry_path = entry.path
-            try:
-                est = os.lstat(entry_path)
-            except FileNotFoundError:
-                continue
-            if stat.S_ISLNK(est.st_mode):
-                try:
-                    os.unlink(entry_path)
-                except OSError:
-                    kept = True
-            elif stat.S_ISDIR(est.st_mode):
-                if not _is_under_root(entry_path, root_real):
-                    kept = True
-                    continue
-                if _walk(entry_path):
-                    kept = True
-            else:
-                if est.st_nlink > 1 and (est.st_dev, est.st_ino) not in created:
-                    kept = True
-                    continue
-                try:
-                    os.unlink(entry_path)
-                except OSError:
-                    kept = True
-        if not kept:
-            try:
-                os.rmdir(directory)
-            except OSError:
-                kept = True
-        return kept
+    try:
+        top_fd = _open_dir_nofollow(str(target))
+    except OSError:
+        return
+    try:
+        top_fst = os.fstat(top_fd)
+        if not stat.S_ISDIR(top_fst.st_mode) or (top_fst.st_dev, top_fst.st_ino) != (st.st_dev, st.st_ino):
+            return
 
-    _walk(str(target))
+        def _walk_fd(dir_fd, dir_st, depth):
+            if depth > _MAX_WALK_DEPTH:
+                return True
+            kept = False
+            try:
+                names = os.listdir(dir_fd)
+            except PermissionError:
+                _make_dir_writable_fd(dir_fd, dir_st.st_mode)
+                try:
+                    names = os.listdir(dir_fd)
+                except OSError:
+                    return True
+            except OSError:
+                return True
+
+            for name in names:
+                try:
+                    est = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    kept = True
+                    continue
+
+                if stat.S_ISLNK(est.st_mode):
+                    try:
+                        os.unlink(name, dir_fd=dir_fd)
+                    except PermissionError:
+                        _make_dir_writable_fd(dir_fd, dir_st.st_mode)
+                        try:
+                            os.unlink(name, dir_fd=dir_fd)
+                        except OSError:
+                            kept = True
+                    except OSError:
+                        kept = True
+                elif stat.S_ISDIR(est.st_mode):
+                    try:
+                        child_fd = _open_dir_nofollow(name, dir_fd=dir_fd)
+                    except OSError:
+                        kept = True
+                        continue
+                    try:
+                        child_fst = os.fstat(child_fd)
+                        if (
+                            not stat.S_ISDIR(child_fst.st_mode)
+                            or (child_fst.st_dev, child_fst.st_ino) != (est.st_dev, est.st_ino)
+                        ):
+                            kept = True
+                            continue
+                        child_kept = _walk_fd(child_fd, child_fst, depth + 1)
+                    finally:
+                        os.close(child_fd)
+                    if child_kept:
+                        kept = True
+                    else:
+                        try:
+                            os.rmdir(name, dir_fd=dir_fd)
+                        except PermissionError:
+                            _make_dir_writable_fd(dir_fd, dir_st.st_mode)
+                            try:
+                                os.rmdir(name, dir_fd=dir_fd)
+                            except OSError:
+                                kept = True
+                        except OSError:
+                            kept = True
+                else:
+                    if est.st_nlink > 1 and (est.st_dev, est.st_ino) not in created:
+                        kept = True
+                        continue
+                    try:
+                        os.unlink(name, dir_fd=dir_fd)
+                    except PermissionError:
+                        _make_dir_writable_fd(dir_fd, dir_st.st_mode)
+                        try:
+                            os.unlink(name, dir_fd=dir_fd)
+                        except OSError:
+                            kept = True
+                    except OSError:
+                        kept = True
+            return kept
+
+        kept_top = _walk_fd(top_fd, top_fst, 0)
+    finally:
+        os.close(top_fd)
+
+    if not kept_top:
+        try:
+            os.rmdir(target)
+        except OSError:
+            pass
 
 
 __all__ = ['Refusal', 'Context', 'TimeoutExpired', 'load', 'scrub', 'review_prompt', 'remove_tree_link_safe']

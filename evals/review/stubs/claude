@@ -329,6 +329,43 @@ def main():
                 'content': [{'type': 'text', 'text': f'Review complete via command markup.{leak}'}],
             },
         })
+    elif mode == 'tool-result-markup':
+        cmd_name = cfg.get('command_name', f'/{configured_skill}')
+        _emit({
+            'type': 'assistant',
+            'message': {
+                'id': 'msg_trm_01',
+                'model': served_model,
+                'role': 'assistant',
+                'content': [{
+                    'type': 'tool_use',
+                    'id': 'toolu_bash_trm',
+                    'name': 'Bash',
+                    'input': {'command': 'grep -rn command-name .'},
+                }],
+            },
+        })
+        _emit({
+            'type': 'user',
+            'message': {
+                'role': 'user',
+                'content': [{
+                    'type': 'tool_result',
+                    'tool_use_id': 'toolu_bash_trm',
+                    'is_error': False,
+                    'content': f'x:12: <command-name>{cmd_name}</command-name>{leak}',
+                }],
+            },
+        })
+        _emit({
+            'type': 'assistant',
+            'message': {
+                'id': 'msg_trm_02',
+                'model': served_model,
+                'role': 'assistant',
+                'content': [{'type': 'text', 'text': f'Reviewed without Skill.{leak}'}],
+            },
+        })
     elif mode in ('ok', 'fallback-model'):
         if not cfg.get('omit_assistant'):
             tool_use_id = 'toolu_skill_01'

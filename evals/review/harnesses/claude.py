@@ -24,7 +24,7 @@ _LIMIT_TEXT = re.compile(
     r'rate[\s_-]*limit|usage[\s_-]*limit|too many requests|\b429\b|quota|limit reached|hit your limit',
     re.IGNORECASE,
 )
-_COMMAND_NAME_RE = re.compile(r'<command-name>\s*([^<\s]+)\s*</command-name>')
+_COMMAND_NAME_RE = re.compile(r'^\s*<command-name>\s*([^<\s]+)\s*</command-name>')
 
 _CACHE_LOCK = threading.Lock()
 _PREFLIGHT_CACHE = {}
@@ -68,7 +68,7 @@ def token_file_path():
 
 
 def read_token():
-    """Validate the token file with lstat + O_NOFOLLOW and return the stripped token."""
+    """Validate the token file via lstat, O_NOFOLLOW|O_NONBLOCK open, and fstat on the opened fd."""
     path = token_file_path()
     try:
         st = os.lstat(path)
@@ -83,11 +83,37 @@ def read_token():
         raise harnesses.Refusal(
             f'claude token file must not be accessible by group or other (mode {mode:04o}): {path}'
         )
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
     try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+        fd = os.open(str(path), flags)
+    except OSError as exc:
+        raise harnesses.Refusal(f'claude token file could not be opened ({path}): {exc}') from None
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise harnesses.Refusal(f'claude token file must be a regular file: {path}')
+        if (fst.st_dev, fst.st_ino) != (st.st_dev, st.st_ino):
+            raise harnesses.Refusal(f'claude token file changed during open: {path}')
+        if fst.st_mode & 0o077:
+            mode = stat.S_IMODE(fst.st_mode)
+            raise harnesses.Refusal(
+                f'claude token file must not be accessible by group or other (mode {mode:04o}): {path}'
+            )
+        if hasattr(os, 'geteuid') and fst.st_uid != os.geteuid():
+            raise harnesses.Refusal(f'claude token file must be owned by current user: {path}')
+        with os.fdopen(fd, 'r', encoding='utf-8', errors='replace') as handle:
+            fd = None
             raw = handle.read()
+    except harnesses.Refusal:
+        raise
     except OSError as exc:
         raise harnesses.Refusal(f'claude token file could not be read ({path}): {exc}') from None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
     token = raw.strip()
     if not token:
         raise harnesses.Refusal(f'claude token file is empty: {path}')
@@ -201,10 +227,13 @@ def _deny_read_rules(deny_read):
     rules = []
     for raw_path in (deny_read or ()):
         clean = str(raw_path).rstrip('/')
+        # Claude Code permissions syntax anchors single-slash `/path` at the settings source;
+        # `//path` denotes an absolute filesystem path (verified in 2.1.328 binary strings).
+        pattern = ('/' + clean) if (clean.startswith('/') and not clean.startswith('//')) else clean
         rules.extend([
-            f'Read({clean}/**)',
-            f'Grep({clean}/**)',
-            f'Glob({clean}/**)',
+            f'Read({pattern}/**)',
+            f'Grep({pattern}/**)',
+            f'Glob({pattern}/**)',
         ])
     return rules
 
@@ -272,7 +301,7 @@ def build_review_argv(
         '--tools', REVIEW_TOOLS,
         '--permission-mode', 'dontAsk',
         '--settings', json.dumps(settings, separators=(',', ':')),
-        '--max-budget-usd', f'{float(max_budget_usd):g}',
+        '--max-budget-usd', repr(float(max_budget_usd)),
     ])
     if extra_flags:
         argv.extend(extra_flags)
@@ -321,6 +350,7 @@ def _extract_usage(raw_usage):
 
 
 def _extract_command_names(event):
+    """Extract leading <command-name> tags from user-role own text content only (never tool_result blocks)."""
     texts = []
     msg = event.get('message')
     content = msg.get('content') if isinstance(msg, dict) else event.get('content')
@@ -330,40 +360,84 @@ def _extract_command_names(event):
         for block in content:
             if isinstance(block, str):
                 texts.append(block)
-            elif isinstance(block, dict):
-                for key in ('text', 'content'):
-                    val = block.get(key)
-                    if isinstance(val, str):
-                        texts.append(val)
+            elif isinstance(block, dict) and block.get('type') == 'text':
+                val = block.get('text')
+                if isinstance(val, str):
+                    texts.append(val)
     found = []
     for chunk in texts:
-        found.extend(_COMMAND_NAME_RE.findall(chunk))
+        match = _COMMAND_NAME_RE.match(chunk)
+        if match:
+            found.append(match.group(1))
     return found
 
 
-def _find_session_transcript(tmp_root, session_id):
+def _read_session_transcript(tmp_root, session_id):
+    """Read `<tmp_root>/claude-config/projects/<dir>/<session_id>.jsonl` fd-safely, rejecting symlinks and hard links."""
     if not isinstance(session_id, str) or not session_id:
         return None
     if '/' in session_id or '\\' in session_id or session_id in ('.', '..'):
         return None
-    projects_dir = Path(tmp_root) / 'claude-config' / 'projects'
-    if not projects_dir.is_dir():
+    root_real = os.path.realpath(str(tmp_root))
+    projects_path = Path(tmp_root) / 'claude-config' / 'projects'
+    dir_flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, 'O_NOFOLLOW', 0)
+    file_flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    try:
+        cfg_real = os.path.realpath(str(projects_path))
+        if cfg_real != root_real and not cfg_real.startswith(root_real + os.sep):
+            return None
+        proj_fd = os.open(str(projects_path), dir_flags)
+    except OSError:
         return None
     target_name = f'{session_id}.jsonl'
-    for candidate in sorted(projects_dir.glob(f'*/{target_name}')):
-        if candidate.name == target_name and candidate.is_file() and not candidate.is_symlink():
-            return candidate
+    try:
+        try:
+            subdirs = sorted(os.listdir(proj_fd))
+        except OSError:
+            return None
+        for subdir in subdirs:
+            try:
+                sub_st = os.stat(subdir, dir_fd=proj_fd, follow_symlinks=False)
+            except OSError:
+                continue
+            if not stat.S_ISDIR(sub_st.st_mode):
+                continue
+            try:
+                sub_fd = os.open(subdir, dir_flags, dir_fd=proj_fd)
+            except OSError:
+                continue
+            try:
+                sub_fst = os.fstat(sub_fd)
+                if not stat.S_ISDIR(sub_fst.st_mode) or (sub_fst.st_dev, sub_fst.st_ino) != (sub_st.st_dev, sub_st.st_ino):
+                    continue
+                try:
+                    t_fd = os.open(target_name, file_flags, dir_fd=sub_fd)
+                except OSError:
+                    continue
+                try:
+                    t_st = os.fstat(t_fd)
+                    if not stat.S_ISREG(t_st.st_mode) or t_st.st_nlink != 1:
+                        continue
+                    with os.fdopen(t_fd, 'r', encoding='utf-8', errors='replace') as handle:
+                        t_fd = None
+                        return handle.read()
+                finally:
+                    if t_fd is not None:
+                        try:
+                            os.close(t_fd)
+                        except OSError:
+                            pass
+            finally:
+                os.close(sub_fd)
+    finally:
+        os.close(proj_fd)
     return None
 
 
-def _read_effort_from_transcript(transcript_path):
-    if transcript_path is None:
+def _read_effort_from_text(text):
+    if not isinstance(text, str) or not text:
         return None
     effort = None
-    try:
-        text = transcript_path.read_text(encoding='utf-8', errors='replace')
-    except OSError:
-        return None
     for line in text.splitlines():
         s = line.strip()
         if not s:
@@ -557,14 +631,10 @@ def review(req, ctx):
     elif init_event is not None and isinstance(init_event.get('session_id'), str):
         session_id = init_event['session_id']
 
-    transcript_path = _find_session_transcript(req['tmp_root'], session_id)
-    resolved_effort = _read_effort_from_transcript(transcript_path)
-    if transcript_path is not None:
-        try:
-            transcript_text = transcript_path.read_text(encoding='utf-8', errors='replace')
-            _write_raw_file(raw_dir, 'transcript.jsonl', transcript_text, ctx.secrets, raw_files)
-        except OSError:
-            pass
+    transcript_text = _read_session_transcript(req['tmp_root'], session_id)
+    resolved_effort = _read_effort_from_text(transcript_text)
+    if transcript_text is not None:
+        _write_raw_file(raw_dir, 'transcript.jsonl', transcript_text, ctx.secrets, raw_files)
 
     usage = _extract_usage(result_event.get('usage')) if result_event is not None else _empty_usage()
     rounds = result_event.get('num_turns') if (result_event is not None and _is_int(result_event.get('num_turns'))) else None

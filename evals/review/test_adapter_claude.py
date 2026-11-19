@@ -648,9 +648,11 @@ class ReviewArgvTests(_ClaudeTestBase):
         self.assertEqual(settings['sandbox']['filesystem']['denyRead'], deny_paths)
         deny_rules = settings['permissions']['deny']
         for path in deny_paths:
-            self.assertIn(f'Read({path}/**)', deny_rules)
-            self.assertIn(f'Grep({path}/**)', deny_rules)
-            self.assertIn(f'Glob({path}/**)', deny_rules)
+            self.assertTrue(path.startswith('/'))
+            self.assertIn(f'Read(/{path}/**)', deny_rules)
+            self.assertIn(f'Grep(/{path}/**)', deny_rules)
+            self.assertIn(f'Glob(/{path}/**)', deny_rules)
+            self.assertNotIn(f'Read({path}/**)', deny_rules)
 
 
 class PluginCheckTests(_ClaudeTestBase):
@@ -863,6 +865,47 @@ class MappingTests(_ClaudeTestBase):
         self.assertIs(wrong_reply['skill_invoked'], False)
         self.assertTrue(wrong_reply['skill_evidence'].startswith('none'))
 
+    def test_tool_result_markup_does_not_count(self):
+        ctx = _make_ctx(self.stub_dir)
+        _set_stub_config(self.stub_dir, {'mode': 'tool-result-markup', 'command_name': '/bork:review'})
+        reply = claude_adapter.review(_make_review_req(self.tmp / 'trm-mode', skill='review'), ctx)
+        self.assertIs(reply['skill_invoked'], False)
+        self.assertTrue(reply['skill_evidence'].startswith('none'))
+
+        # Mid-sentence user text containing <command-name> (not at start) also does not count.
+        exp = self.tmp / 'trm-mid-exp'
+        exp.mkdir()
+        lines = [
+            {
+                'type': 'system', 'subtype': 'init', 'session_id': 's-mid', 'model': 'm',
+                'plugins': [{'name': 'bork', 'path': str(exp), 'source': 'bork@inline'}],
+                'skills': ['bork:review'], 'tools': [], 'mcp_servers': [],
+            },
+            {
+                'type': 'user',
+                'message': {'role': 'user', 'content': [{'type': 'text', 'text': 'Quoted: <command-name>/bork:review</command-name>'}]},
+            },
+            {
+                'type': 'result', 'subtype': 'success', 'is_error': False, 'result': 'done',
+                'num_turns': 1, 'session_id': 's-mid', 'usage': {'input_tokens': 1, 'output_tokens': 1},
+                'permission_denials': [],
+            },
+        ]
+        stream = ''.join(json.dumps(ev) + '\n' for ev in lines)
+
+        def fake_run_group(argv, **kw):
+            cb = kw.get('on_stdout_line')
+            if cb:
+                for ln in stream.splitlines(True):
+                    if cb(ln) is False:
+                        break
+            return subprocess.CompletedProcess(argv, 0, stream, '')
+
+        ctx_mid = _make_ctx(self.stub_dir, run_group=fake_run_group)
+        r_mid = claude_adapter.review(_make_review_req(self.tmp / 'trm-mid', export_dir=str(exp), skill='review'), ctx_mid)
+        self.assertIs(r_mid['skill_invoked'], False)
+        self.assertTrue(r_mid['skill_evidence'].startswith('none'))
+
 
 class FailureTests(_ClaudeTestBase):
     def setUp(self):
@@ -1034,9 +1077,11 @@ class GradeTests(_ClaudeTestBase):
         settings = json.loads(flags['--settings'])
         deny_rules = settings['permissions']['deny']
         for path in deny_paths:
-            self.assertIn(f'Read({path}/**)', deny_rules)
-            self.assertIn(f'Grep({path}/**)', deny_rules)
-            self.assertIn(f'Glob({path}/**)', deny_rules)
+            self.assertTrue(path.startswith('/'))
+            self.assertIn(f'Read(/{path}/**)', deny_rules)
+            self.assertIn(f'Grep(/{path}/**)', deny_rules)
+            self.assertIn(f'Glob(/{path}/**)', deny_rules)
+            self.assertNotIn(f'Read({path}/**)', deny_rules)
 
     def test_grade_sees_no_case_or_config_markers(self):
         _set_stub_config(self.stub_dir, {'mode': 'ok', 'record_full_env': True})
@@ -1183,41 +1228,45 @@ class IsolationCliTests(_ClaudeTestBase):
         wrong_export = self.tmp / 'wrong-export'
         wrong_export.mkdir()
         cases = (
-            ('extra-non-builtin-plugin', {
+            ('extra-non-builtin-plugin', 'plugins', {
                 'mode': 'ok', 'isolation': True,
                 'init_plugins': [
                     {'name': 'bork', 'path': str(self.export_dir), 'source': 'bork@inline'},
                     {'name': 'evil-plugin', 'path': '/tmp/evil', 'source': 'evil@user'},
                 ],
             }),
-            ('bork-wrong-path', {
+            ('bork-wrong-path', 'plugins', {
                 'mode': 'ok', 'isolation': True,
                 'init_plugins': [
                     {'name': 'bork', 'path': str(wrong_export), 'source': 'bork@skills'},
                 ],
             }),
-            ('non-empty-mcp', {
+            ('non-empty-mcp', 'mcp_servers', {
                 'mode': 'ok', 'isolation': True,
                 'mcp_servers': [{'name': 'rogue', 'status': 'connected'}],
             }),
-            ('hook-event', {
+            ('hook-event', 'hook_events', {
                 'mode': 'ok', 'isolation': True,
                 'emit_hook_event': True,
             }),
-            ('token-modified', {
+            ('non-none-api-key-source', 'api_key_source', {
+                'mode': 'ok', 'isolation': True,
+                'api_key_source': 'ANTHROPIC_API_KEY',
+            }),
+            ('token-modified', 'token_file_unchanged', {
                 'mode': 'ok', 'isolation': True,
                 'mutate_token_file': str(self.token_file),
             }),
-            ('tools-mismatch', {
+            ('tools-mismatch', 'tools', {
                 'mode': 'ok', 'isolation': True,
                 'init_tools': ['Bash', 'Read', 'Grep', 'Glob', 'Skill', 'Agent'],
             }),
-            ('outside-probe-written', {
+            ('outside-probe-written', 'sandbox_write', {
                 'mode': 'ok', 'isolation': True,
                 'write_outside_probe': True,
             }),
         )
-        for label, cfg in cases:
+        for label, check_name, cfg in cases:
             with self.subTest(violation=label):
                 # Restore token file before each subtest
                 self.token_file.write_text(FAKE_TOKEN + '\n', encoding='utf-8')
@@ -1228,6 +1277,7 @@ class IsolationCliTests(_ClaudeTestBase):
                 ])
                 self.assertEqual(run.returncode, 1, run.stdout + run.stderr)
                 self.assertIn('FAIL', run.stdout)
+                self.assertIn(f'check {check_name}: FAIL', run.stdout)
 
     def test_same_argv_and_env_as_review(self):
         _set_stub_config(self.stub_dir, {'mode': 'ok', 'isolation': True})
@@ -1301,6 +1351,50 @@ class IsolationCliTests(_ClaudeTestBase):
         self.assertEqual(stat.S_IMODE(after_stat.st_mode), stat.S_IMODE(before_stat.st_mode))
         self.assertEqual(after_stat.st_mtime_ns, before_stat.st_mtime_ns)
         outside.chmod(0o600)
+
+    def test_cleanup_survives_mid_walk_symlink_swap(self):
+        # Regression for Blocker 1 (repro-c-55): swapping a subdirectory for a symlink mid-walk
+        # must never traverse into or delete files inside the symlink target.
+        for hook_kind in ('scandir', 'open'):
+            with self.subTest(swap_at=hook_kind):
+                box = self.tmp / f'swap-{hook_kind}'
+                root = box / 'priv'
+                sub = root / 'sub'
+                sub.mkdir(parents=True)
+                (sub / 'a').write_text('x', encoding='utf-8')
+                outside = box / 'outside'
+                outside.mkdir()
+                victim = outside / 'victim.txt'
+                victim.write_text('keep me', encoding='utf-8')
+
+                swapped = {'done': False}
+                if hook_kind == 'scandir':
+                    real_scandir = os.scandir
+
+                    def racing_scandir(p):
+                        if str(p) == str(sub) and not swapped['done']:
+                            swapped['done'] = True
+                            os.rename(sub, str(sub) + '.moved')
+                            os.symlink(str(outside), str(sub))
+                        return real_scandir(p)
+
+                    with mock.patch.object(os, 'scandir', side_effect=racing_scandir):
+                        harnesses.remove_tree_link_safe(root, root)
+                else:
+                    real_open = os.open
+
+                    def racing_open(path, flags, *args, **kwargs):
+                        if path == 'sub' and 'dir_fd' in kwargs and not swapped['done']:
+                            swapped['done'] = True
+                            os.rename(sub, str(sub) + '.moved')
+                            os.symlink(str(outside), str(sub))
+                        return real_open(path, flags, *args, **kwargs)
+
+                    with mock.patch.object(os, 'open', side_effect=racing_open):
+                        harnesses.remove_tree_link_safe(root, root)
+
+                self.assertTrue(victim.exists(), f'victim deleted during {hook_kind} swap')
+                self.assertEqual(victim.read_text(encoding='utf-8'), 'keep me')
 
     def test_unobservable_conditions_are_not_checked(self):
         _set_stub_config(self.stub_dir, {
@@ -1389,6 +1483,17 @@ class ProcsCallbackTests(_ClaudeTestBase):
         pids = support.read_pids(pidfile, wait=5.0)
         self.assertTrue(support.pid_dead(pids['parent']))
         self.assertTrue(support.pid_dead(pids['child']))
+
+    def test_on_stdout_line_tight_loop_times_out(self):
+        script = 'import sys\nwhile True:\n    sys.stdout.write("tick\\n"); sys.stdout.flush()\n'
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            procs.run_group(
+                [sys.executable, '-c', script],
+                timeout=1.0,
+                on_stdout_line=lambda _line: True,
+            )
+        self.assertLess(time.monotonic() - started, 6.0)
 
 
 if __name__ == '__main__':

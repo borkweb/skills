@@ -395,8 +395,8 @@ def main(argv=None):
             session_id = result_event['session_id']
         elif init_event is not None and isinstance(init_event.get('session_id'), str):
             session_id = init_event['session_id']
-        transcript_path = claude_adapter._find_session_transcript(tmp_root, session_id)
-        transcript_effort = claude_adapter._read_effort_from_transcript(transcript_path)
+        transcript_text = claude_adapter._read_session_transcript(tmp_root, session_id)
+        transcript_effort = claude_adapter._read_effort_from_text(transcript_text)
         usage_match = _usage_matches_model_usage(result_event)
 
         for name, status, detail in checks:
