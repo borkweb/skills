@@ -188,9 +188,13 @@ class MakeSnapshotTests(Scratch):
         boundary = [s[1:] for s in git(src, 'rev-list', '--boundary', head, '^'+base).splitlines()
                     if s.startswith('-')]
         depth = 1 + max(int(git(src, 'rev-list', '--count', s+'..'+base)) for s in boundary)
-        self.assertEqual(snapshot.make_snapshot(src, base, head, self.dest, 10, max_depth=depth-1),
-                         (None, f'snapshot: too deep (D={depth})'))
+        marker = self.root/'fetch-seen'
+        path = self.wrapper(f"if 'fetch' in sys.argv: open({str(marker)!r}, 'w').write('fetch')")
+        with patch.dict(os.environ, {'PATH': path}):
+            self.assertEqual(snapshot.make_snapshot(src, base, head, self.dest, 10, max_depth=depth-1),
+                             (None, f'snapshot: too deep (D={depth})'))
         self.assertFalse(self.dest.exists())
+        self.assertFalse(marker.exists(), 'too-deep refusal must precede every fetch')
 
     def test_timeout_is_a_snapshot_error(self):
         path = self.wrapper("if 'init' in sys.argv: time.sleep(2)")
@@ -319,9 +323,9 @@ class ExportSkillsTests(Scratch):
                  'gemini-extension.json', 'skills/core/desk/board/.claude-plugin/plugin.json', 'symlink']
         for i, name in enumerate(paths):
             with self.subTest(name=name):
-                src = init(self.root/f'src{i}'); p = src/(name if name != 'symlink' else '.claude-plugin/plugin.json')
+                src = init(self.root/f'src{i}'); p = src/(name if name != 'symlink' else 'manifest-data.json')
                 p.parent.mkdir(parents=True, exist_ok=True); p.write_text('{"hooks": {}}')
-                if name == 'symlink': (src/'gemini-extension.json').symlink_to('.claude-plugin/plugin.json')
+                if name == 'symlink': (src/'gemini-extension.json').symlink_to('manifest-data.json')
                 git(src, 'add', '.'); git(src, 'commit', '-qm', 'manifest')
                 dest = self.root/'dest'
                 with self.assertRaisesRegex(snapshot.SnapshotError, 'hooks'):
