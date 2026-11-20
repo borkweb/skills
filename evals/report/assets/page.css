@@ -117,7 +117,7 @@ th[aria-sort="descending"] button.sort::after { content: " \2193"; }
 .tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
 .tag { font-size: 11px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--ink-2); }
 
-.status { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.status { display: inline-flex; align-items: center; gap: 5px; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .dot { width: 9px; height: 9px; border-radius: 2px; flex: none; display: inline-block; }
 .st-good { background: var(--st-good); } .st-partial { background: var(--st-partial); } .st-bad { background: var(--st-bad); }
 .st-warn { background: var(--st-warn); } .st-info { background: var(--st-info); } .st-neutral { background: var(--st-neutral); }

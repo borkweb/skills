@@ -23,6 +23,30 @@ The builder replay eval has its own format, case builder and runner: see [replay
 
 ## Eval report
 
+The [review eval](review/README.md) adds a runner and a grading-only command:
+
+```sh
+python3 evals/review/run_review_eval.py --help
+python3 evals/review/regrade_run.py --help
+```
+
+The runner takes `--matrix FILE --output NEW_DIR`, with `--spend`,
+`--resume RUN_DIR [--matrix FILE]`, `--retry-errors`, `--jobs N`, repeatable
+`--case ID`, and `--budget-usd X`. Regrade takes `RUN_DIR --grader
+HARNESS:MODEL:EFFORT --output NEW_DIR`, with `--spend`, `--current-cases`,
+`--jobs N` and `--budget-usd X`; `-` means null effort. Non-fake calls require
+`--spend`; all-fake runs need none. Work is private under
+`~/.borkweb-skills/eval-work/<run id>/` and is deleted after the run. An exclusive
+pid lock prevents concurrent writers. Exit 0 means success or plan-only, 2 means
+refusal, and 1 means execution failure or interruption. Q4 resume keeps graded
+reviews and errors, reruns missing, budget, rate-limit and snapshot failures,
+and grades missing or stale matches/extras without repeating ok reviews;
+`--retry-errors` also reruns errors. For M3 stop-and-resume, interrupt the runner
+pid while the match is in flight after its review was stored, then resume with
+`--resume RUN_DIR --spend`. Read the stored ledger and results to verify no
+second review ran. Until a non-blocking case exists, v1 verdict accuracy is
+"block sensitivity only": an always-blocking reviewer scores 100%.
+
 Any eval can write `results.json` in the `bork-eval-results/1` format (`report/check_results.py` checks it) and get a self-contained local HTML report. The report has no network loads, and it writes each page with mode 600, because run output can hold private code:
 
 ```sh

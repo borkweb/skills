@@ -12,6 +12,7 @@ import time
 import harnesses
 
 HARNESS = 'claude'
+SKILL_LOADING = ('plugin',)
 REVIEW_TOOLS = 'Bash,Read,Grep,Glob,Skill'
 SKILL_INVOKES = {
     'review': 'Use the Skill tool to run the `bork:review` skill',
@@ -178,7 +179,11 @@ def preflight(ctx):
                 harnesses.scrub(f'could not execute {binary}: {exc}', ctx.secrets)
             ) from None
     finally:
-        harnesses.remove_tree_link_safe(probe_root, probe_root)
+        import snapshot
+        try:
+            snapshot.remove_tree(probe_root, probe_root.parent)
+        except snapshot.SnapshotError as exc:
+            _log(ctx, _one_line(f'cleanup: {exc}'))
 
     if run.returncode != 0:
         detail = _one_line(harnesses.scrub(run.stderr or run.stdout, ctx.secrets))

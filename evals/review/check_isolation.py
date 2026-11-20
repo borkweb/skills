@@ -425,7 +425,11 @@ def main(argv=None):
         _emit('PASS')
         return 0
     finally:
-        harnesses.remove_tree_link_safe(priv, priv)
+        import snapshot
+        try:
+            snapshot.remove_tree(priv, priv.parent)
+        except snapshot.SnapshotError as exc:
+            _emit('cleanup: ' + ' '.join(harnesses.scrub(str(exc), ctx.secrets).split()))
 
 
 if __name__ == '__main__':
