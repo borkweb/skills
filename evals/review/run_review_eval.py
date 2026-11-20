@@ -397,6 +397,7 @@ class Engine:
                          cwd=cwd, tools=tools, model=g['model'], effort=g['effort']))
 
     def match(self, case, token, review, text, tmp):
+        case = check_cases.load(self.run_dir / 'cases' / (case['id'] + '.json'))
         cwd = tmp / 'empty'
         cwd.mkdir(mode=0o700)
         prompt, schema = grader.match_prompt(case, text)
@@ -572,7 +573,7 @@ class Engine:
         try:
             for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
                 handlers[sig] = signal.signal(sig, stop)
-            snapshot.export_skills(REPO, self.m.skills_ref, self.work / 'export')
+            snapshot.export_skills(REPO, self.manifest['skills_sha'], self.work / 'export')
             share = estimate(self.m.grader['model'], 'extras') / (len(self.m.configs) * self.m.trials)
             with ThreadPoolExecutor(max_workers=self.jobs) as pool:
                 for case in cases:
