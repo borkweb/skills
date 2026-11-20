@@ -609,8 +609,18 @@ os.close(fd)
 resource.setrlimit(resource.RLIMIT_NOFILE, (256, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))
 held = []
 if sys.argv[3] == 'hold':
-    while len(os.listdir('/dev/fd')) < 224:
+    def open_count():
+        count = 0
+        for candidate in range(256):
+            try:
+                os.fstat(candidate)
+            except OSError:
+                continue
+            count += 1
+        return count
+    while open_count() < 224:
         held.append(os.open('/dev/null', os.O_RDONLY))
+    assert open_count() == 224
 snapshot.remove_tree(tree, root)
 assert not tree.exists()
 for fd in held:
