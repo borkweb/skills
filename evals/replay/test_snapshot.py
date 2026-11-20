@@ -671,7 +671,72 @@ for fd in held:
 
 
 class RemoveTreeRaceTests(Scratch):
+    def test_refusal_message_has_one_prefix(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve(); tree = root / 'tree'; tree.mkdir()
+            with patch.object(os, 'open', side_effect=snapshot.SnapshotError('remove: refused directory')):
+                with self.assertRaises(snapshot.SnapshotError) as caught:
+                    snapshot.remove_tree(tree, root)
+            self.assertEqual(str(caught.exception), 'remove: refused directory')
+
+    def _nested_exchange_keeps_outside(self):
+        # A helper process exchanges a directory for a link during removal.
+        # Nested entries exercise descent after an ancestor's name changes.
+        import time
+        if not hasattr(ctypes.CDLL(None), 'renamex_np'):
+            self.skipTest('renamex_np unavailable')
+        helper = '''import ctypes,json,os,select,sys,time
+swap=ctypes.CDLL(None,use_errno=True).renamex_np
+swap.argtypes=[ctypes.c_char_p,ctypes.c_char_p,ctypes.c_uint]
+a,b=map(os.fsencode,sys.argv[1:])
+times=[]
+print('ready',flush=True)
+while not select.select([sys.stdin],[],[],0)[0]:
+    if swap(a,b,2)==0: times.append(time.monotonic_ns())
+print(json.dumps(times),flush=True)
+'''
+        landed = 0
+        for attempt in range(6):
+            with tempfile.TemporaryDirectory() as scratch:
+                root = Path(scratch).resolve(); tree = root / 'tree'; tree.mkdir()
+                inside = tree / 'd0'; inside.mkdir()
+                outside = root / 'outside'; outside.mkdir(mode=0o755)
+                for i in range(100):
+                    for directory in (inside, outside):
+                        child = directory / ('n' + str(i)); child.mkdir(mode=0o755)
+                        for j in range(4):
+                            file = child / str(j); file.write_bytes(b'outside must survive'); file.chmod(0o644)
+                before = {str(p.relative_to(outside)): (p.read_bytes(), stat.S_IMODE(p.stat().st_mode))
+                          for p in outside.rglob('*') if p.is_file()}
+                listing = sorted(str(p.relative_to(outside)) for p in outside.rglob('*'))
+                link = root / 'link'; link.symlink_to(outside, target_is_directory=True)
+                process = subprocess.Popen([sys.executable, '-c', helper, str(inside), str(link)],
+                                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                           text=True)
+                try:
+                    self.assertEqual(process.stdout.readline().strip(), 'ready')
+                    started = time.monotonic_ns()
+                    try:
+                        snapshot.remove_tree(tree, root)
+                    except snapshot.SnapshotError:
+                        pass
+                    ended = time.monotonic_ns()
+                finally:
+                    output, errors = process.communicate('\n', timeout=5)
+                self.assertEqual(process.returncode, 0, errors)
+                exchanges = json.loads(output)
+                if not any(started <= when <= ended for when in exchanges):
+                    continue
+                landed += 1
+                self.assertEqual(sorted(str(p.relative_to(outside)) for p in outside.rglob('*')), listing,
+                                 'outside listing changed during nested exchange')
+                self.assertEqual({str(p.relative_to(outside)): (p.read_bytes(), stat.S_IMODE(p.stat().st_mode))
+                                  for p in outside.rglob('*') if p.is_file()}, before,
+                                 'outside bytes or modes changed during nested exchange')
+        self.assertGreater(landed, 0, 'no exchange landed during removal within six attempts')
+
     def test_exchange_during_removal_keeps_outside(self):
+        self._nested_exchange_keeps_outside()
         # A helper process exchanges a directory for a link during removal.
         import time
         try:

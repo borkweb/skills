@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import hashlib
+import fcntl
 import json
 import math
 import os
@@ -186,6 +187,8 @@ def deny_paths(run_dir, cases_dir):
 
 
 def check_work_paths(run_dir, work_root, deny_read):
+    if work_root == run_dir or run_dir in work_root.parents:
+        raise harnesses.Refusal('work root is inside output')
     for denied in deny_read[1:]:
         for path in (run_dir, work_root):
             if path == denied or denied in path.parents:
@@ -199,6 +202,19 @@ class RunLock:
         self.owned = False
 
     def __enter__(self):
+        self.guard = os.open(self.path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            try:
+                fcntl.flock(self.guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise harnesses.Refusal('run lock is held by a live process') from None
+            return self.acquire()
+        except BaseException:
+            os.close(self.guard)
+            self.guard = None
+            raise
+
+    def acquire(self):
         for _ in range(3):
             try:
                 fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -223,8 +239,11 @@ class RunLock:
         raise harnesses.Refusal('could not acquire run lock')
 
     def __exit__(self, *exc):
-        if self.owned:
-            self.path.unlink()
+        try:
+            if self.owned:
+                self.path.unlink()
+        finally:
+            os.close(self.guard)
 
 
 def repair_tail(path):
@@ -302,9 +321,9 @@ class Budget:
         self.measured = {}
         self.lock = threading.Lock()
 
-    def reserve(self, token, estimate_cost):
+    def reserve(self, token, estimate_cost, prepaid=False):
         with self.lock:
-            if self.spent + sum(self.reserved.values()) + estimate_cost > self.limit + 1e-12:
+            if not prepaid and self.spent + sum(self.reserved.values()) + estimate_cost > self.limit + 1e-12:
                 return False
             self.reserved[token] = estimate_cost
             return True
@@ -314,10 +333,21 @@ class Budget:
             self.spent += cost or 0
             self.reserved[token] = max(0, self.reserved.get(token, 0) - (cost or 0))
 
-    def finish(self, token, cfg_key, cost, extras_share):
+    def finish(self, token, cfg_key, cost, extras_share, measured=False):
         with self.lock:
             self.reserved[token] = extras_share
-            self.measured.setdefault(cfg_key, []).append(cost)
+            if measured:
+                self.measured.setdefault(cfg_key, []).append(cost)
+
+    def reserve_extras(self, tokens, cost):
+        with self.lock:
+            held = sum(v for k, v in self.reserved.items() if k not in tokens)
+            allowed = self.spent + held + cost <= self.limit + 1e-12
+            for token in tokens:
+                self.reserved.pop(token, None)
+            if allowed:
+                self.reserved['extras'] = cost
+            return allowed
 
     def trial_estimate(self, cfg, grade_model, extras_share, review=True):
         with self.lock:
@@ -333,16 +363,28 @@ class Interrupted(Exception):
 
 
 class Engine:
-    def __init__(self, run_dir, manifest, m, ctx, jobs, retry_errors=False):
+    def __init__(self, run_dir, manifest, m, ctx, jobs, retry_errors=False, extra_deny_read=()):
         self.run_dir, self.manifest, self.m, self.ctx = run_dir, manifest, m, ctx
         self.work = Path(manifest['work_root'])
         self.jobs, self.retry_errors = jobs, retry_errors
         self.stopped = threading.Event()
         self.condition = threading.Condition()
         self.active, self.broken = {}, set()
-        self.deny_read = [str(p) for p in deny_paths(run_dir, m.cases_dir)]
+        self.deny_read = list(dict.fromkeys(str(p) for p in
+                             [*deny_paths(run_dir, m.cases_dir), *extra_deny_read]))
         self.ledger = None
         self.largest = 0
+        self.grading_failed = False
+
+    def grading_failure(self, reason):
+        message = one_line('grading incomplete: ' + reason, self.ctx.secrets)
+        self.ctx.log(message)
+        self.grading_failed = True
+        with self.condition:
+            notes = self.manifest.setdefault('notes', [])
+            if message not in notes:
+                notes.append(message)
+            write_json(self.run_dir / 'run.json', self.manifest)
 
     def call(self, harness, method, req):
         with self.condition:
@@ -426,6 +468,8 @@ class Engine:
             return
         run_review = review_needed(previous, self.retry_errors)
         match = state.matches.get(token)
+        if match:
+            write_json(self.run_dir / 'trials' / token / 'match.json', match)
         if not run_review and (previous['outcome'] != 'ok' or match and match['outcome'] == 'graded'):
             return
         if self.stopped.is_set():
@@ -436,13 +480,18 @@ class Engine:
             self.review_record(case, cfg, trial, token, outcome='env-unavailable', reason='rate-limit')
             return
         reservation = budget.trial_estimate(cfg, self.m.grader['model'], share, run_review)
-        if not budget.reserve(token, reservation):
+        if not budget.reserve(token, reservation, prepaid=not run_review and not self.regrade):
             if run_review:
                 self.review_record(case, cfg, trial, token, outcome='skipped', reason='budget')
+            else:
+                self.ledger.add('match', token, review_attempt=previous['attempt'], outcome='ungraded',
+                                reason='budget', reported=[], expected={}, verdict=None, verdict_method='grader',
+                                grader_usage=usage({}), grader_cost_usd=0.0)
+                self.grading_failure('budget')
             return
         tmp, copy = self.work / (token + '-tmp'), self.work / token
         tmp.mkdir(mode=0o700)
-        cost = 0
+        cost, measured = 0, False
         try:
             folder, raw = self.run_dir / 'trials' / token, self.run_dir / 'raw' / token
             if run_review:
@@ -478,6 +527,8 @@ class Engine:
                 match = self.match(case, token, previous, text, tmp)
                 cost += match['grader_cost_usd'] or 0
                 budget.charge(token, match['grader_cost_usd'])
+                measured = (run_review and match['outcome'] == 'graded' and
+                            previous['cost_usd'] is not None and match['grader_cost_usd'] is not None)
         except Interrupted:
             raise
         except Exception as exc:
@@ -490,9 +541,9 @@ class Engine:
         finally:
             clean(tmp, self.work, self.ctx)
             clean(copy, self.work, self.ctx)
-            budget.finish(token, cfg['key'], cost, share)
+            budget.finish(token, cfg['key'], cost, share, measured)
 
-    def extras(self, case, snap, budget):
+    def extras(self, case, snap, budget, snapshot_error=None):
         state = results.read_records(self.run_dir / 'trials.jsonl')
         reviews = {t: r for t, r in state.reviews.items() if r['case_id'] == case['id'] and r['outcome'] == 'ok'}
         tokens = sorted(reviews)
@@ -507,14 +558,20 @@ class Engine:
         tmp, cwd = self.work / 'extras-tmp', self.work / 'extras'
         tmp.mkdir(mode=0o700)
         try:
-            if claims:
+            refusal = snapshot_error if claims else None
+            if claims and not refusal and not budget.reserve_extras(tokens, estimate(self.m.grader['model'], 'extras')):
+                refusal = 'budget'
+            if refusal:
+                self.grading_failure(refusal)
+                reply, parsed = {'usage': {}}, None
+            elif claims:
                 snapshot.clone_copy(snap, cwd)
                 prompt, schema, order = grader.extras_prompt(case, claims, self.manifest['run_id'])
                 reply = self.grade(prompt, schema, cwd, tmp, 'read-only')
                 parsed = grader.parse_extras(reply.get('parsed') or reply.get('text'), order)
             else:
                 reply, parsed = {'usage': {}}, {'groups': []}
-            cost = price(self.m.grader['model'], reply.get('usage'))
+            cost = price(self.m.grader['model'], reply.get('usage')) if claims and not refusal else 0.0
             self.ledger.add('extras', case['id'], tokens=tokens, covers=covers,
                             outcome='graded' if parsed and not reply.get('error') and not reply.get('rate_limited') else 'ungraded',
                             groups=(parsed or {}).get('groups', []), grader_usage=usage(reply.get('usage')),
@@ -589,12 +646,12 @@ class Engine:
                                         t = matrix.token(case['id'], cfg['key'], trial)
                                         if review_needed(state.reviews.get(t), self.retry_errors):
                                             self.review_record(case, cfg, trial, t, outcome='env-unavailable', reason=error)
-                            continue
+                                continue
                         futures = [pool.submit(self.trial, case, cfg, trial, snap, mb, budget, share)
                                    for cfg in self.m.configs for trial in range(1, self.m.trials + 1)]
                         for future in futures:
                             future.result()
-                        self.extras(case, snap, budget)
+                        self.extras(case, snap, budget, error)
                     finally:
                         if snap:
                             clean(snap, self.work, self.ctx)
@@ -647,6 +704,7 @@ def positive_options(args):
 def main(argv=None):
     ctx = harnesses.Context(caselib.scrubbed_env(), procs.run_group, [],
                             lambda msg: print(one_line(msg, ctx.secrets), file=sys.stderr))
+    started = False
     try:
         args = parser().parse_args(argv)
         positive_options(args)
@@ -713,6 +771,7 @@ def main(argv=None):
         if not args.resume:
             run_dir.mkdir(mode=0o700, parents=True)
         with RunLock(run_dir, ctx.log):
+            started = True
             if not args.resume:
                 for name in ('cases', 'trials', 'raw'):
                     (run_dir / name).mkdir(mode=0o700)
@@ -723,9 +782,12 @@ def main(argv=None):
             engine.run(cases)
             finish(run_dir)
         return 0
-    except (harnesses.Refusal, matrix.MatrixError, check_cases.repos.RepoError, ValueError, OSError) as exc:
+    except (harnesses.Refusal, matrix.MatrixError, check_cases.repos.RepoError) as exc:
         print('refusing: ' + one_line(exc, ctx.secrets), file=sys.stderr)
         return 2
+    except (ValueError, OSError) as exc:
+        print(('failed: ' if started else 'refusing: ') + one_line(exc, ctx.secrets), file=sys.stderr)
+        return 1 if started else 2
     except Interrupted:
         print('interrupted: resume this run to finish pending work', file=sys.stderr)
         return 1

@@ -35,6 +35,33 @@ class RegradeCase(RunnerCase):
 
 
 class RegradeTests(RegradeCase):
+    def test_snapshot_failure_keeps_match_and_reports_ungraded_extras(self):
+        self.source_run()
+        with patch.object(run.shutil, 'disk_usage', return_value=type('Space', (), {'free': 0})()):
+            code = regrade_run.main([str(self.output), '--grader', 'claude:grade-model:-',
+                                     '--output', str(self.dest), '--spend'])
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.events('review')), 0)
+        self.assertEqual(len(self.events('grade')), 1)
+        state = self.state(self.dest)
+        self.assertEqual(next(iter(state.matches.values()))['outcome'], 'graded')
+        self.assertEqual(state.extras['case-a']['outcome'], 'ungraded')
+        self.assertTrue(any('snapshot:' in note for note in self.manifest(self.dest)['notes']))
+
+    def test_rejects_linked_trial_directories(self):
+        self.source_run(); token = next(iter(self.state().reviews))
+        for leaf in (token, 'trials'):
+            with self.subTest(leaf=leaf):
+                folder = self.output / 'trials' / token if leaf == token else self.output / 'trials'
+                outside = self.root / ('outside-' + leaf)
+                folder.rename(outside); folder.symlink_to(outside, target_is_directory=True)
+                before = {str(p.relative_to(outside)): p.read_bytes() for p in outside.rglob('*') if p.is_file()}
+                done = self.regrade(output=self.root / ('reject-' + leaf))
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertFalse(self.events())
+                self.assertEqual({str(p.relative_to(outside)): p.read_bytes() for p in outside.rglob('*') if p.is_file()}, before)
+                folder.unlink(); outside.rename(folder)
+
     def test_runs_no_review(self):
         self.source_run(); self.assert_ok(self.regrade(grader='claude:new-grader:high'))
         self.assertFalse(self.events('review')); self.assertEqual(len(self.events('grade')), 2)
@@ -59,9 +86,10 @@ class RegradeTests(RegradeCase):
     def test_source_untouched(self):
         self.source_run(); before = self.hashes(); self.assert_ok(self.regrade())
         self.assertEqual(self.hashes(), before)
-        with patch.object(run, 'finish', side_effect=RuntimeError('report failed')):
-            self.assertNotEqual(regrade_run.main([str(self.output), '--grader', 'fake:g:-',
-                                                 '--output', str(self.root / 'failed')]), 0)
+        for error in (RuntimeError, OSError, ValueError):
+            with self.subTest(error=error.__name__), patch.object(run, 'finish', side_effect=error('report failed')):
+                self.assertEqual(regrade_run.main([str(self.output), '--grader', 'fake:g:-',
+                                                   '--output', str(self.root / error.__name__)]), 1)
         self.assertEqual(self.hashes(), before); self.assertFalse((self.output / '.lock').exists())
 
     def test_current_cases(self):
@@ -107,9 +135,9 @@ class RegradeTests(RegradeCase):
             self.assertEqual(r['attempt'], attempts.get(key, 0) + 1)
             attempts[key] = r['attempt']
             if r['type'] == 'extras':
-                for token, attempts in r['covers'].items():
-                    self.assertIn(('review', token, attempts['review_attempt']), earlier)
-                    self.assertIn(('match', token, attempts['match_attempt']), earlier)
+                for token, covered in r['covers'].items():
+                    self.assertIn(('review', token, covered['review_attempt']), earlier)
+                    self.assertIn(('match', token, covered['match_attempt']), earlier)
             self.assertNotIn((r['type'], r['key'], r['attempt']), earlier)
             earlier.add((r['type'], r['key'], r['attempt']))
         for e in self.events('grade'):
@@ -117,11 +145,20 @@ class RegradeTests(RegradeCase):
             for marker in ('review-model', 'case-a', 'Private case title', 'claude|review-model'):
                 self.assertNotIn(marker, data)
             settings = json.loads(e['argv'][e['argv'].index('--settings') + 1])
-            for path in (self.dest, self.cases_dir, self.token_file.parent, self.home / 'git/skills-private'):
+            for path in (self.output, self.dest, self.cases_dir, self.token_file.parent, self.home / 'git/skills-private'):
                 self.assertIn('Read(/' + str(path) + '/**)', settings['permissions']['deny'])
 
 
 class RegradeCliTests(RegradeCase):
+    def test_refuses_output_inside_source(self):
+        self.source_run(); before = self.hashes()
+        for spend in (False, True):
+            with self.subTest(spend=spend):
+                done = self.regrade(spend=spend, output=self.output / 'nested')
+                self.assertEqual(done.returncode, 2, done.stderr)
+                self.assertFalse(self.events())
+                self.assertEqual(self.hashes(), before)
+
     def test_help(self):
         done = subprocess.run([sys.executable, str(HERE / 'regrade_run.py'), '--help'], env=self.env,
                               capture_output=True, text=True)

@@ -113,6 +113,8 @@ def remove_tree(path, root):
             os.close(current)
             current = parent
             frames.pop()
+    except SnapshotError:
+        raise
     except (OSError, RuntimeError) as exc:
         raise SnapshotError(f'remove: {" ".join(str(exc).splitlines())}') from exc
     finally:

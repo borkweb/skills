@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import sys
 import uuid
 
@@ -25,9 +26,50 @@ def parser():
     return p
 
 
+def source_files(source, reviews):
+    """Pin every directory before reading the frozen review artifacts."""
+    files = {}
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        root = os.open(source, flags)
+        try:
+            trials = os.open('trials', flags, dir_fd=root)
+        finally:
+            os.close(root)
+        try:
+            for token, review in reviews.items():
+                try:
+                    folder = os.open(token, flags, dir_fd=trials)
+                except FileNotFoundError:
+                    if review['outcome'] == 'ok':
+                        raise runner.harnesses.Refusal('missing source review') from None
+                    continue
+                try:
+                    for name in ('review.md', 'review-meta.json', 'stderr-tail.txt'):
+                        try:
+                            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=folder)
+                        except FileNotFoundError:
+                            if name == 'review.md' and review['outcome'] == 'ok':
+                                raise runner.harnesses.Refusal('missing source review') from None
+                            continue
+                        with os.fdopen(fd, 'rb') as stream:
+                            info = os.fstat(stream.fileno())
+                            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                                raise runner.harnesses.Refusal('unsafe source trial file')
+                            files[token, name] = stream.read()
+                finally:
+                    os.close(folder)
+        finally:
+            os.close(trials)
+    except OSError:
+        raise runner.harnesses.Refusal('unsafe source trial path') from None
+    return files
+
+
 def main(argv=None):
     ctx = runner.harnesses.Context(runner.caselib.scrubbed_env(), runner.procs.run_group, [],
                                   lambda msg: print(runner.one_line(msg, ctx.secrets), file=sys.stderr))
+    started = False
     try:
         args = parser().parse_args(argv)
         runner.positive_options(args)
@@ -42,6 +84,8 @@ def main(argv=None):
         if not callable(getattr(module, 'grade', None)):
             raise runner.harnesses.Refusal('grader harness cannot grade')
         source, dest = args.run_dir.resolve(), args.output.resolve()
+        if dest == source or source in dest.parents:
+            raise runner.harnesses.Refusal('output is inside source run')
         runner.output_allowed(dest)
         old = json.loads((source / 'run.json').read_text())
         state = runner.results.read_records(source / 'trials.jsonl')
@@ -51,6 +95,7 @@ def main(argv=None):
             token = record['key']
             if not re.fullmatch(r't[0-9a-f]{12}', token) or record['text_file'] != f'trials/{token}/review.md':
                 raise runner.harnesses.Refusal('unsafe source review path')
+        files = source_files(source, state.reviews)
         m = runner.stored_matrix(old['matrix'])
         cases, paths = runner.load_cases(source / 'cases')
         if args.current_cases:
@@ -71,7 +116,7 @@ def main(argv=None):
                         work_root=str((Path.home() / '.borkweb-skills/eval-work' / run_id).resolve()))
         if any(c.get('expected_verdict') not in (None, 'DO NOT LAND', 'FAIL', 'INCOMPLETE') for c in cases):
             manifest['notes'] = []
-        runner.check_work_paths(dest, Path(manifest['work_root']), runner.deny_paths(dest, m.cases_dir))
+        runner.check_work_paths(dest, Path(manifest['work_root']), [*runner.deny_paths(dest, m.cases_dir), source])
         count = sum(r['outcome'] == 'ok' for r in state.reviews.values())
         estimated = count * runner.estimate(m.grader['model'], 'match') + len(cases) * runner.estimate(m.grader['model'], 'extras')
         print(f'Configs: {len(m.configs)}; review calls: 0; match calls: {count}; extras calls: {len(cases)}; '
@@ -81,6 +126,7 @@ def main(argv=None):
         module.preflight(ctx)
         dest.mkdir(mode=0o700, parents=True)
         with runner.RunLock(dest, ctx.log):
+            started = True
             for name in ('cases', 'trials', 'raw'):
                 (dest / name).mkdir(mode=0o700)
             for cid, path in paths.items():
@@ -95,23 +141,23 @@ def main(argv=None):
                         fields = {k: v for k, v in record.items() if k not in runner.results.COMMON_FIELDS}
                         ledger.add('review', record['key'], **fields)
                 for token, review in state.reviews.items():
-                    src, out = source / 'trials' / token, dest / 'trials' / token
+                    out = dest / 'trials' / token
                     out.mkdir(mode=0o700)
                     for name in ('review.md', 'review-meta.json', 'stderr-tail.txt'):
-                        path = src / name
-                        if path.is_symlink() or (path.exists() and path.stat().st_nlink != 1):
-                            raise runner.harnesses.Refusal('unsafe source trial file')
-                        if path.exists():
-                            shutil.copyfile(path, out / name)
+                        if (token, name) in files:
+                            (out / name).write_bytes(files[token, name])
             finally:
                 ledger.close()
-            engine = runner.Engine(dest, manifest, m, ctx, args.jobs)
+            engine = runner.Engine(dest, manifest, m, ctx, args.jobs, extra_deny_read=(source,))
             engine.run(cases, regrade=True)
             runner.finish(dest)
-        return 0
-    except (runner.harnesses.Refusal, runner.results.ResultsError, ValueError, OSError) as exc:
+        return 1 if engine.grading_failed else 0
+    except (runner.harnesses.Refusal, runner.results.ResultsError) as exc:
         print('refusing: ' + runner.one_line(exc, ctx.secrets), file=sys.stderr)
         return 2
+    except (ValueError, OSError) as exc:
+        print(('failed: ' if started else 'refusing: ') + runner.one_line(exc, ctx.secrets), file=sys.stderr)
+        return 1 if started else 2
     except runner.Interrupted:
         print('interrupted: regrade output retains completed work', file=sys.stderr)
         return 1

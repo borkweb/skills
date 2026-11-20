@@ -34,8 +34,9 @@ name the case or config. The runner deletes the work root after completion or
 interruption, through the descriptor-relative `snapshot.remove_tree` helper.
 
 The run holds a `.lock` created with `O_EXCL`, containing its pid. A live holder
-refuses another runner; a dead holder is replaced with a stderr notice. Frozen
-case bytes, resolved matrix, skill commit and selected-case hash are in the run.
+refuses another runner; a dead holder is replaced with a stderr notice.
+Directory locking serializes stale-lock replacement for the run's lifetime.
+Frozen case bytes, resolved matrix, skill commit and selected-case hash are in the run.
 Resume refuses matrix, skills, case-set or grader drift before appending records.
 The ledger has a single writer and strictly increasing attempts. Review files
 and metadata are under `trials/<token>/`; raw streams stay under `raw/<token>/`.
@@ -77,6 +78,11 @@ copies; `--current-cases` uses the current files but refuses missing finding IDs
 The new run has a new id, the source start time and `regraded_from`; copied
 review files are byte-identical. The source is never locked or written. Extras
 use a fresh snapshot rebuilt at head, rather than any review's modified copy.
+The source run is denied to grader reads; output and work directories must be
+outside it. If rebuilding the snapshot fails, match grading still runs, extras
+with claims become ungraded, and regrade exits 1 with a stored note. New extras
+calls require available budget, including on resume. A normal resume completes
+the missing match for an already paid review under its original reservation.
 
 Both commands exit 0 on success or a plan-only run, 2 on a refusal or invalid
 CLI arguments, and nonzero (normally 1) on interruption or execution/report

@@ -170,7 +170,18 @@ def build(run_dir):
     matrix = manifest['matrix']
     configs = [_config(c, matrix['skill']) for c in matrix['configs']]
     config_ids = {c['id'] for c in configs}
-    calls = [r for r in state.records if r['type'] in ('match', 'extras')]
+    matches = {(r['key'], r['attempt']): r for r in state.records if r['type'] == 'match'}
+    calls = []
+    for record in state.records:
+        if record['type'] == 'match':
+            calls.append(record)
+        elif record['type'] == 'extras':
+            claims = any(f['names'] == ['extra'] for token, covered in record['covers'].items()
+                         for f in matches.get((token, covered['match_attempt']),
+                                              {'reported': [{'names': ['extra']}]})['reported'])
+            measured = any(v is not None for v in record.get('grader_usage', {}).values())
+            if claims and (record.get('grader_cost_usd') != 0.0 or measured):
+                calls.append(record)
     costs = [r['grader_cost_usd'] for r in calls if r.get('grader_cost_usd') is not None]
     run = {'id': manifest['run_id'], 'eval': 'review', 'eval_version': manifest['eval_version'],
            'started_at': manifest['started_at'], 'context': manifest['context'],

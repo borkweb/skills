@@ -289,6 +289,14 @@ class LayoutTests(RunnerCase):
 
 
 class CliTests(RunnerCase):
+    def test_refuses_work_root_inside_output(self):
+        output = self.home / '.borkweb-skills/eval-work'
+        done = self.cli(output=output)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertIn('refusing:', done.stderr)
+        self.assertFalse(output.exists())
+        self.assertFalse(self.events())
+
     def test_help(self):
         done = subprocess.run([sys.executable, str(HERE / 'run_review_eval.py'), '--help'],
                               capture_output=True, text=True, env=self.env)
@@ -347,19 +355,21 @@ class CliTests(RunnerCase):
             self.assertNotIn('hostile-marker', event['env'].values())
 
     def test_report_failure_exit(self):
-        for target in ('results', 'report'):
+        for target in ('results', 'report', 'oserror', 'valueerror'):
             with self.subTest(target=target):
                 dest = self.output; self.output = self.root / target
-                where, name = (run.results, 'write') if target == 'results' else (run.build_report, 'build_run')
-                module = 'r.results' if target == 'results' else 'r.build_report'
+                name = 'build_run' if target == 'report' else 'write'
+                module = 'r.build_report' if target == 'report' else 'r.results'
+                error = {'oserror': 'OSError', 'valueerror': 'ValueError'}.get(target, 'RuntimeError')
                 code = ('import runpy,sys; sys.path.insert(0,' + repr(str(HERE)) + '); '
                         'import run_review_eval as r; '
-                        f'{module}.{name} = lambda *a,**k: (_ for _ in ()).throw(RuntimeError("publish failed")); '
+                        f'{module}.{name} = lambda *a,**k: (_ for _ in ()).throw({error}("publish failed")); '
                         'sys.argv=[sys.argv[1],*sys.argv[2:]]; runpy.run_path(sys.argv[0],run_name="__main__")')
                 done = subprocess.run([sys.executable, '-c', code, str(HERE / 'run_review_eval.py'),
                                        '--matrix', str(self.matrix_file), '--output', str(self.output)],
                                       env=self.env, capture_output=True, text=True)
-                self.assertNotEqual(done.returncode, 0)
+                self.assertEqual(done.returncode, 1)
+                self.assertTrue(done.stderr.startswith('failed:'))
                 self.assertEqual(len(done.stderr.splitlines()), 1)
                 self.assertTrue(self.state().records)
                 self.output = dest
@@ -449,6 +459,22 @@ class WriterTests(RunnerCase):
 
 
 class ResumeTests(RunnerCase):
+    def test_resume_repairs_match_artifact(self):
+        self.configure(harness='claude', grader='claude')
+        self.assert_ok(self.cli(spend=True))
+        token, record = next(iter(self.state().matches.items()))
+        path = self.output / 'trials' / token / 'match.json'
+        before = len(self.events())
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                if missing:
+                    path.unlink()
+                else:
+                    path.write_text('{}')
+                self.assert_ok(self.cli(resume=True, spend=True))
+                self.assertEqual(json.loads(path.read_text()), record)
+                self.assertEqual(len(self.events()), before)
+
     def test_resume_repairs_ledger_tail(self):
         self.assert_ok(self.cli()); complete = (self.output / 'trials.jsonl').read_bytes()
         for kind in ('torn', 'unterminated'):
@@ -474,7 +500,7 @@ class ResumeTests(RunnerCase):
                 self.assertTrue(self.state().matches); self.assertTrue(self.state().extras)
 
     def test_resume_rerun_policy(self):
-        self.configure(harness='claude'); self.assert_ok(self.cli(spend=True))
+        self.configure(harness='claude', grader='claude'); self.assert_ok(self.cli(spend=True))
         original = self.state().records
         rows = [('ok', None, False), ('error', 'bad', False), ('env-unavailable', 'model fell back to x', False),
                 ('env-unavailable', 'effort fell back to x', False), ('env-unavailable', 'plugin loading unavailable', False),
@@ -503,7 +529,9 @@ class ResumeTests(RunnerCase):
                 self.rewrite_records(records); before = len(self.events('review')); grade = len(self.events('grade'))
                 self.assert_ok(self.cli(resume=True, spend=True))
                 self.assertEqual(len(self.events('review')), before)
-                self.assertGreater(len(self.state().matches), 0)
+                self.assertGreater(len(self.events('grade')), grade)
+                expected_attempt = 1 if kind == 'missing' else 2
+                self.assertEqual(next(iter(self.state().matches.values()))['attempt'], expected_attempt)
 
     def test_resume_refuses_manifest_drift(self):
         self.assert_ok(self.cli()); manifest = self.manifest()
@@ -551,6 +579,16 @@ class ResumeTests(RunnerCase):
                 self.assertEqual((self.output / 'trials.jsonl').read_bytes(), before)
                 self.assertFalse(self.events())
         proc = subprocess.Popen([sys.executable, '-c', 'pass'], env=self.env); proc.wait()
+        guard = os.open(self.output, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            run.fcntl.flock(guard, run.fcntl.LOCK_EX | run.fcntl.LOCK_NB)
+            lock.write_text(str(proc.pid))
+            done = self.cli(resume=True)
+            self.assertEqual(done.returncode, 2)
+            self.assertEqual(lock.read_text(), str(proc.pid))
+            self.assertEqual((self.output / 'trials.jsonl').read_bytes(), before)
+        finally:
+            os.close(guard)
         lock.write_text(str(proc.pid)); done = self.cli(resume=True); self.assert_ok(done)
         self.assertIn('replaced stale run lock', done.stderr); self.assertFalse(lock.exists())
 
@@ -601,6 +639,70 @@ class SchedulerTests(RunnerCase):
 
 
 class BudgetTests(RunnerCase):
+    def test_match_only_does_not_lower_reservation_mean(self):
+        self.configure(trials=2, budget_usd=.4)
+        self.assert_ok(self.cli())
+        review = next(r for r in self.state().reviews.values() if r['outcome'] == 'ok')
+        self.rewrite_records([dict(review, cost_usd=.2)])
+        fake = run.harnesses.load('fake')
+        with patch.object(fake, 'review', wraps=fake.review) as calls:
+            self.assertEqual(self.in_process('--jobs', '1', resume=True), 0)
+        self.assertEqual(calls.call_count, 0)
+        self.assertEqual(self.state().matches[review['key']]['outcome'], 'graded')
+        self.assertTrue(any(r['reason'] == 'budget' for r in self.state().reviews.values()))
+
+    def test_no_claim_extras_is_not_a_grader_call(self):
+        self.assert_ok(self.cli())
+        rows = self.state().records
+        for row in rows:
+            if row['type'] == 'extras':
+                row['grader_cost_usd'] = None
+        self.rewrite_records(rows)
+        run.results.write(self.output)
+        doc = run.results.check_results.load(self.output)
+        self.assertEqual(doc['run']['grader']['calls'], 1)
+        self.assertTrue(doc['run']['grader']['cost_complete'])
+
+    def test_resume_finishes_prepaid_match(self):
+        self.configure(harness='claude', grader='claude', budget_usd=1)
+        self.assert_ok(self.cli(spend=True))
+        review = next(iter(self.state().reviews.values()))
+        self.rewrite_records([dict(review, cost_usd=.999)])
+        before_review, before_grade = len(self.events('review')), len(self.events('grade'))
+        self.assert_ok(self.cli(resume=True, spend=True))
+        self.assertEqual(len(self.events('review')), before_review)
+        self.assertEqual(len(self.events('grade')), before_grade + 1)
+        self.assertEqual(self.state().matches[review['key']]['outcome'], 'graded')
+
+    def test_resume_extras_respects_remaining_budget(self):
+        self.configure(harness='claude', grader='claude', budget_usd=1)
+        common.configure(self.bin, reported=[dict(n=1, file='file.txt', lines='1', severity='IMPORTANT',
+                                                 summary='an extra claim', names=['extra'])])
+        self.assert_ok(self.cli(spend=True))
+        rows = [r for r in self.state().records if r['type'] != 'extras']
+        rows[0]['cost_usd'] = 1.0
+        self.rewrite_records(rows)
+        before = len(self.events('grade'))
+        done = self.cli(resume=True, spend=True)
+        self.assert_ok(done)
+        self.assertEqual(len(self.events('grade')), before)
+        self.assertEqual(self.state().extras['case-a']['outcome'], 'ungraded')
+        self.assertIn('budget', done.stderr)
+
+    def test_failed_review_does_not_lower_reservation_mean(self):
+        self.configure(trials=8, budget_usd=.30)
+        fake = run.harnesses.load('fake'); original = fake.review
+        calls = []
+        def review(req, ctx):
+            calls.append(req)
+            reply = original(req, ctx)
+            reply.update(error='failed call', usage={'input_tokens': 5000, 'output_tokens': 4000})
+            return reply
+        with patch.object(fake, 'review', side_effect=review):
+            self.assertEqual(self.in_process('--jobs', '1'), 0)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(any(r['reason'] == 'budget' for r in self.state().reviews.values()))
+
     def test_reservation_is_atomic(self):
         count = 6
         cfg = dict(harness='claude', model='unpriced', effort=None)
