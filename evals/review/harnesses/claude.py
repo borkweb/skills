@@ -243,8 +243,10 @@ def _deny_read_rules(deny_read):
     return rules
 
 
-def build_review_settings(trial_copy, tmp_root, deny_read):
-    """Build the sandbox and read-denial settings JSON object for a review session."""
+def build_review_settings(trial_copy, tmp_root, deny_read, skill='review'):
+    """Build the sandbox and permission settings JSON object for a review session."""
+    if skill not in SKILL_INVOKES:
+        raise harnesses.Refusal(f'unknown skill {skill!r}')
     deny_list = [str(p) for p in (deny_read or ())]
     return {
         'sandbox': {
@@ -262,18 +264,24 @@ def build_review_settings(trial_copy, tmp_root, deny_read):
             },
         },
         'permissions': {
+            'allow': [f'Skill(bork:{skill})', 'Read', 'Grep', 'Glob'],
             'deny': _deny_read_rules(deny_list),
         },
     }
 
 
-def build_grade_settings(deny_read):
-    """Build the read-denial settings JSON object for a grader session (no Bash)."""
-    return {
-        'permissions': {
+def build_grade_settings(deny_read, tools='none'):
+    """Build the permission settings JSON object for a grader session (no Bash)."""
+    if tools == 'none':
+        permissions = {'deny': _deny_read_rules(deny_read or ())}
+    elif tools == 'read-only':
+        permissions = {
+            'allow': ['Read', 'Grep', 'Glob'],
             'deny': _deny_read_rules(deny_read or ()),
-        },
-    }
+        }
+    else:
+        raise harnesses.Refusal(f'invalid grade tools {tools!r}: expected "none" or "read-only"')
+    return {'permissions': permissions}
 
 
 def build_review_argv(
@@ -286,10 +294,11 @@ def build_review_argv(
     tmp_root,
     deny_read,
     max_budget_usd,
+    skill='review',
     extra_flags=(),
 ):
     """Shared argv builder for both `review()` and `check_isolation.py`."""
-    settings = build_review_settings(trial_copy, tmp_root, deny_read)
+    settings = build_review_settings(trial_copy, tmp_root, deny_read, skill=skill)
     argv = [
         str(binary),
         '-p',
@@ -487,6 +496,7 @@ def review(req, ctx):
         tmp_root=req['tmp_root'],
         deny_read=req.get('deny_read', ()),
         max_budget_usd=req['max_budget_usd'],
+        skill=skill,
     )
 
     init_checked = False
@@ -753,7 +763,7 @@ def grade(req, ctx):
     _register_secret(ctx, token)
     binary, _ = _resolve_binary_and_version(ctx)
     env = build_child_env(ctx, req['tmp_root'], token)
-    settings = build_grade_settings(req.get('deny_read', ()))
+    settings = build_grade_settings(req.get('deny_read', ()), tools=tools)
 
     argv = [
         str(binary),
