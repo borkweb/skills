@@ -1453,5 +1453,153 @@ class ProcsCallbackTests(_ClaudeTestBase):
         self.assertLess(time.monotonic() - started, 6.0)
 
 
+class SkillPermissionTests(_ClaudeTestBase):
+    def setUp(self):
+        self._init_box()
+        os.environ['BORK_EVAL_CLAUDE_TOKEN_FILE'] = str(self.token_file)
+
+    def test_review_settings_allow_rules(self):
+        trial_copy = str(self.tmp / 'trial_copy')
+        tmp_root = str(self.tmp / 'tmp_root')
+        deny_paths = [str(self.tmp / 'secret-run'), str(self.tmp / 'secret-cases')]
+        expected_deny = []
+        for path in deny_paths:
+            expected_deny.extend([
+                f'Read(/{path}/**)',
+                f'Grep(/{path}/**)',
+                f'Glob(/{path}/**)',
+            ])
+
+        for skill, qualified in (
+            ('review', 'bork:review'),
+            ('review-security', 'bork:review-security'),
+        ):
+            with self.subTest(skill=skill):
+                settings = claude_adapter.build_review_settings(
+                    trial_copy,
+                    tmp_root,
+                    deny_paths,
+                    skill=skill,
+                )
+                self.assertEqual(
+                    settings['permissions']['allow'],
+                    [f'Skill({qualified})', 'Read', 'Grep', 'Glob'],
+                )
+                self.assertEqual(settings['permissions']['deny'], expected_deny)
+                self.assertEqual(settings['sandbox']['filesystem']['denyRead'], deny_paths)
+                self.assertEqual(
+                    settings['sandbox']['filesystem']['allowWrite'],
+                    [trial_copy, tmp_root],
+                )
+
+        with self.assertRaises(harnesses.Refusal):
+            claude_adapter.build_review_settings(trial_copy, tmp_root, deny_paths, skill='unknown-skill')
+
+    def test_grade_settings_allow_rules(self):
+        deny_paths = [str(self.tmp / 'run-secret'), str(self.tmp / 'cases-secret')]
+        expected_deny = []
+        for path in deny_paths:
+            expected_deny.extend([
+                f'Read(/{path}/**)',
+                f'Grep(/{path}/**)',
+                f'Glob(/{path}/**)',
+            ])
+
+        ro_settings = claude_adapter.build_grade_settings(deny_paths, tools='read-only')
+        self.assertEqual(ro_settings['permissions']['allow'], ['Read', 'Grep', 'Glob'])
+        self.assertEqual(ro_settings['permissions']['deny'], expected_deny)
+
+        none_settings = claude_adapter.build_grade_settings(deny_paths, tools='none')
+        self.assertNotIn('allow', none_settings['permissions'])
+        self.assertEqual(none_settings['permissions']['deny'], expected_deny)
+
+        with self.assertRaises(harnesses.Refusal):
+            claude_adapter.build_grade_settings(deny_paths, tools='write-all')
+
+        # End-to-end through grade() argv for both tools modes.
+        ctx = _make_ctx(self.stub_dir)
+        for tools, expected_allow in (
+            ('read-only', ['Read', 'Grep', 'Glob']),
+            ('none', None),
+        ):
+            with self.subTest(grade_tools=tools):
+                _clear_calls(self.stub_dir)
+                req = _make_grade_req(self.tmp / f'gperm-{tools}', tools=tools, deny_read=deny_paths)
+                reply = claude_adapter.grade(req, ctx)
+                self.assertIsNone(reply['error'])
+                flags = _parse_flags(['claude'] + _read_calls(self.stub_dir)[0]['argv'])
+                parsed = json.loads(flags['--settings'])
+                if expected_allow is None:
+                    self.assertNotIn('allow', parsed['permissions'])
+                else:
+                    self.assertEqual(parsed['permissions']['allow'], expected_allow)
+                self.assertEqual(parsed['permissions']['deny'], expected_deny)
+
+    def test_review_argv_carries_allow_rules(self):
+        _set_stub_config(self.stub_dir, {'mode': 'ok', 'enforce_skill_permission': True})
+        deny_paths = [str(self.tmp / 'secret-run'), str(self.tmp / 'secret-cases')]
+        expected_deny = []
+        for path in deny_paths:
+            expected_deny.extend([
+                f'Read(/{path}/**)',
+                f'Grep(/{path}/**)',
+                f'Glob(/{path}/**)',
+            ])
+
+        for skill, qualified in (
+            ('review', 'bork:review'),
+            ('review-security', 'bork:review-security'),
+        ):
+            with self.subTest(skill=skill):
+                seen_argvs = []
+
+                def recording_run_group(*args, **kwargs):
+                    seen_argvs.append(list(args[0]))
+                    return procs.run_group(*args, **kwargs)
+
+                _clear_calls(self.stub_dir)
+                ctx = _make_ctx(self.stub_dir, run_group=recording_run_group)
+                req = _make_review_req(
+                    self.tmp / f'rev-perm-{skill}',
+                    skill=skill,
+                    deny_read=deny_paths,
+                )
+                reply = claude_adapter.review(req, ctx)
+                self.assertIsNone(reply['error'])
+                self.assertIs(reply['skill_invoked'], True)
+                self.assertEqual(reply['skill_evidence'], f'tool-use:Skill({qualified})')
+
+                self.assertEqual(len(seen_argvs), 1)
+                calls = _read_calls(self.stub_dir)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(seen_argvs[0][1:], calls[0]['argv'])
+                flags = _parse_flags(seen_argvs[0])
+                settings = json.loads(flags['--settings'])
+                self.assertEqual(
+                    settings['permissions']['allow'],
+                    [f'Skill({qualified})', 'Read', 'Grep', 'Glob'],
+                )
+                self.assertEqual(settings['permissions']['deny'], expected_deny)
+
+        # Verify the stub actually enforces the Skill allow rule under dontAsk when absent.
+        def strip_skill_allow_run_group(argv, **kwargs):
+            mutated = list(argv)
+            idx = mutated.index('--settings') + 1
+            settings = json.loads(mutated[idx])
+            settings['permissions']['allow'] = [
+                r for r in settings['permissions']['allow'] if not r.startswith('Skill(')
+            ]
+            mutated[idx] = json.dumps(settings, separators=(',', ':'))
+            return procs.run_group(mutated, **kwargs)
+
+        ctx_stripped = _make_ctx(self.stub_dir, run_group=strip_skill_allow_run_group)
+        denied_reply = claude_adapter.review(
+            _make_review_req(self.tmp / 'rev-perm-denied', skill='review', deny_read=deny_paths),
+            ctx_stripped,
+        )
+        self.assertIs(denied_reply['skill_invoked'], False)
+        self.assertEqual(denied_reply['skill_evidence'], 'none:Skill(bork:review) denied')
+
+
 if __name__ == '__main__':
     unittest.main()

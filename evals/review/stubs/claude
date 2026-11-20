@@ -118,6 +118,23 @@ def _detect_skill_from_stdin(stdin_text):
     return 'bork:review'
 
 
+def _skill_allowed_by_settings(argv, skill_name):
+    if _flag_value(argv, '--permission-mode', '') != 'dontAsk':
+        return True
+    raw_settings = _flag_value(argv, '--settings', None)
+    if not raw_settings:
+        return False
+    try:
+        settings = json.loads(raw_settings)
+    except ValueError:
+        return False
+    perms = settings.get('permissions') if isinstance(settings, dict) else None
+    allow = perms.get('allow') if isinstance(perms, dict) else None
+    if not isinstance(allow, list):
+        return False
+    return f'Skill({skill_name})' in allow
+
+
 def _handle_grade(cfg, argv, stdin_text):
     token = os.environ.get('CLAUDE_CODE_OAUTH_TOKEN', '')
     echo = cfg.get('echo_token') is True
@@ -310,6 +327,9 @@ def main():
 
     served_model = cfg.get('served_model', 'claude-sonnet-5-5-fallback' if mode == 'fallback-model' else init_model)
     configured_skill = cfg.get('invoked_skill', _detect_skill_from_stdin(stdin_text))
+    enforced_denial = bool(
+        cfg.get('enforce_skill_permission') and not _skill_allowed_by_settings(argv, configured_skill)
+    )
 
     if mode == 'command-markup':
         cmd_name = cfg.get('command_name', f'/{configured_skill}')
@@ -398,8 +418,12 @@ def main():
                 {
                     'type': 'tool_result',
                     'tool_use_id': tool_use_id,
-                    'is_error': bool(cfg.get('skill_tool_result_error', False)),
-                    'content': f'skill loaded{leak}',
+                    'is_error': bool(cfg.get('skill_tool_result_error', False) or enforced_denial),
+                    'content': (
+                        f"Permission to use Skill has been denied because Claude Code is running in don't ask mode. Execute skill: {configured_skill}{leak}"
+                        if enforced_denial
+                        else f'skill loaded{leak}'
+                    ),
                 }
             ]
             if cfg.get('isolation') or 'outside-probe.txt' in stdin_text:
@@ -485,7 +509,7 @@ def main():
     _emit({'type': 'rate_limit_event', 'rate_limit_info': rl_info})
 
     denials = []
-    if cfg.get('deny_skill'):
+    if cfg.get('deny_skill') or enforced_denial:
         denials.append({
             'tool_name': 'Skill',
             'tool_use_id': 'toolu_skill_01',
