@@ -176,7 +176,8 @@ def build(run_dir):
         if record['type'] == 'match':
             calls.append(record)
         elif record['type'] == 'extras':
-            claims = any(f['names'] == ['extra'] for token, covered in record['covers'].items()
+            covers = record.get('covers')
+            claims = not covers or any(f['names'] == ['extra'] for token, covered in covers.items()
                          for f in matches.get((token, covered['match_attempt']),
                                               {'reported': [{'names': ['extra']}]})['reported'])
             measured = any(v is not None for v in record.get('grader_usage', {}).values())
