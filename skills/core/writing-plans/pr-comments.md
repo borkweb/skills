@@ -150,4 +150,5 @@ File-by-file notes, design decisions, trade-offs, test commands and results, and
 - Keep each section approachable. Explain a domain term the first time, or use a simpler word.
 - If the repository has a PR template, keep its headings. Put a short What, Why and How at the top of the matching sections, and put depth in a Details block.
 - Keep issue links, testing steps the reviewer must run, and breaking-change warnings visible. Do not hide them in Details. The check does not count a section whose heading names testing.
+- For each new test, name the break it catches that no other test does. With no new test, say why in one line. That line is a complete answer; never add a test only to satisfy a reviewer rule that asks for tests.
 - When you update a description, keep the edits that the author made. Change only the parts that the new commits make wrong.

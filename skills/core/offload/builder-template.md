@@ -26,9 +26,13 @@ BUILD
 TEST BAR
 - A new or changed test must fail when the behavior it names breaks, and keep passing when only the implementation changes.
 - It fails that bar when its expected value comes from the code under test, when a mock or fixture supplies the result the code should produce, or when it asserts calls between internal parts instead of what the code returns, stores or sends.
-- A test is redundant when an existing test already fails for the same break. Search first and name the closest one; extend it, add a table row, or cite it for a criterion. Test a shared helper once, where it lives; a caller gets one test proving it calls it.
+- Before writing a test, look for the repo's own test-writing guide (a test skill under `.agents/skills/` or `.claude/skills/`, the test section of `AGENTS.md`) and load it; run its checker before you report.
+- A test is redundant when an existing test already fails for the same break. Search first, and again after a rebase, and name the closest one; extend it, add a table row, or cite it for a criterion. When the class already has a data-driven test for that code path, add a row, not a method. Test a shared helper once, where it lives; a caller gets one test proving it calls it.
 - New logic with a branch, loop, parser, money or security gets one such test. A trivial change needs none. Beyond the main path, test only the bug being fixed, the error a caller branches on, and failures that lose data, money, access or security; one table row per distinct outcome.
-- Build an expensive fixture (site, database, server) once per class when cases can restore what they change.
+- Build an expensive fixture (site, database, server) once per class when cases can restore what they change. Turn off side effects no assertion reads (emails, notifications, real network round-trips, bulk rows created through hooks).
+- Shared setup must pass in default, reverse and random order. Change a copy of any object a registry or cache hands out, restore every global and static value a test changes in teardown or `finally`, and have a cleanup assertion count only what its own test created.
+- For generated text (messages, emails, issue bodies), assert the parts code depends on (links, IDs, commands, field values), not the whole text.
+- Report, for each new test, the break it catches that no other test does; with no new test, give the one-line reason.
 - The repo's own test guidance and checker, when present, decide how many tests to write.
 - Add no production export, flag, wrapper or hook that only tests use when the real entry point can drive the behavior.
 

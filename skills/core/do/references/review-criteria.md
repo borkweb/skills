@@ -106,8 +106,8 @@ Enforced by: prose only
 
 ## 15. Tests that add cost but no protection
 
-Seen as: per-caller rows that repeat a shared helper's own test; re-assertions of flags other tests in the file already check; edge cases that run one branch to one outcome; a site built per test that pushes a CI group near its time limit.
+Seen as: per-caller rows that repeat a shared helper's own test; re-assertions of flags other tests in the file already check; edge cases that run one branch to one outcome; a site built per test that pushes a CI group near its time limit; a test method that repeats an existing data-driven test with new literals; a real email, pingback or follow round-trip no assertion reads; an exact match on a whole generated message that breaks on every wording change; shared setup that passes only in the default order because a test changed a registry's object instead of a copy, left global or static state changed, or counted a shared directory.
 
-Criterion: each new test names a break no existing test catches; shared helpers are tested once where they live; expensive fixtures are built once per class. Check: one mutation of the protected line fails the new test and no existing test.
+Criterion: each new test names a break no existing test catches; shared helpers are tested once where they live; expensive fixtures are built once per class and pass in default, reverse and random order; a new case for an existing data-driven test is a row; generated text is asserted on the parts code depends on. Check: one mutation of the protected line fails the new test and no existing test; the changed classes pass under the runner's reverse and random order.
 
 Enforced by: prose only
