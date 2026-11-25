@@ -8,6 +8,7 @@
 	},
 	"skills": [
 		"./skills/core/agents-md-lint",
+		"./skills/core/audit-tests",
 		"./skills/core/auto-scope",
 		"./skills/core/caveman",
 		"./skills/core/complete",
@@ -29,6 +30,7 @@
 		"./skills/core/writing-commits",
 		"./skills/core/writing-plans",
 		"./skills/core/writing-sql",
+		"./skills/core/writing-tests",
 		"./skills/gstack/design-consultation",
 		"./skills/gstack/design-review",
 		"./skills/gstack/investigate",

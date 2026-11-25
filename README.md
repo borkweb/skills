@@ -50,6 +50,7 @@ startup instructions already in the conversation.
 | Skill | Description |
 |-------|-------------|
 | **agents-md-lint** | Audits AI agent instruction files (AGENTS.md, CLAUDE.md, etc.) and removes facts discoverable from code alone to save context tokens. |
+| **audit-tests** | Adversarial test-suite audit that makes a suite better, not bigger: a decision framework and smell catalog sort each test into delete, rewrite, keep or add, with a structured report. Diff mode reviews only the tests a branch or PR adds, searches for existing coverage first, and questions setup or teardown that repeats a reset the harness already runs. Loads the repo's own test rules and checkers, and never changes an expected value to make a test pass. |
 | **auto-scope** | Proactively scopes a coding task before implementation — names the handful of relevant files (read/edit these), the areas to leave alone, and open scope questions, so work doesn't start by reading the whole repo. Tool-agnostic discovery (grepika / graphify / grep); self-skips trivial or single-file work. |
 | **caveman** | Ultra-compressed response mode that drops articles, filler, and hedging to cut tokens ~75% while preserving technical accuracy. Intensity levels: lite / full / ultra (and wenyan variants). |
 | **complete** | Drives a goal with two or more slices to **merge-ready** through delegated builders, with frozen gates, an independent review per slice, a persistent ledger and a final integration review. Works from Claude Code (builders through `offload`) or Codex (native subagents). One slice goes to `offload`. Merges only when explicitly authorized. |
@@ -71,6 +72,7 @@ startup instructions already in the conversation.
 | **writing-commits** | Analyzes staged changes and generates conventional commit messages matching repository style. |
 | **writing-plan-documents** (`skills/core/writing-plans/`) | Writes plan documents and product specs in ASD-STE100 Simplified Technical English — strips filler, bans inflated adjectives, requires structured decisions. Its `ste100.md` rules also govern `review` reports and PR bodies and comments. |
 | **writing-sql** | Enforces strict vertical SQL formatting conventions for raw files, inline PHP, migrations, and framework query builders. |
+| **writing-tests** | Writes or reviews the fewest unit tests that would catch a realistic regression (PHPUnit, Jest, Vitest). Every kept test names the regression it catches and is proven able to fail; no mocks without approval; happy path plus one to three high-impact flows; zero tests is a valid result with a one-line reason. Defers to the repo's own test-writing skill when one exists. |
 
 ## Gstack ports (`skills/gstack/`)
 
