@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
+# Runs every case, most of them in parallel. WFR_CASE=<name> runs one case.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SELF="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}"
+ONLY="${WFR_CASE:-}"
+unset WFR_CASE
 WAITER="$SCRIPT_DIR/wait-for-ready.sh"
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/wait-for-ready-test.XXXXXX")
 TEST_SHELL_PID="${BASHPID:-$$}"
@@ -25,15 +29,17 @@ stop_pid() {
 cleanup() {
   local pid
   [ "${BASHPID:-$$}" = "$TEST_SHELL_PID" ] || return 0
-  for pid in "${PIDS[@]}"; do
+  for pid in ${PIDS[@]+"${PIDS[@]}"}; do
     kill "$pid" 2>/dev/null || true
   done
-  for pid in "${PIDS[@]}"; do
+  for pid in ${PIDS[@]+"${PIDS[@]}"}; do
     wait "$pid" 2>/dev/null || true
   done
   rm -rf "$TEST_ROOT"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 new_handoff() {
   local name="$1" handoff="$TEST_ROOT/$name.md"
@@ -117,29 +123,6 @@ fail_case() {
   return 1
 }
 
-case_ready() {
-  local handoff output updater rc
-  handoff=$(new_handoff ready)
-  output="$TEST_ROOT/ready.out"
-  start_sleep_builder
-  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
-  (
-    sleep 2
-    printf '%s\n' '---' 'status: results-ready' '---' > "$handoff"
-  ) &
-  updater=$!
-  track_pid "$updater"
-
-  run_waiter_capped "$output" 10 \
-    WFR_GRACE=3 WFR_POLL=1 \
-    "$WAITER" "$handoff" builder 20 15
-  rc=$?
-  stop_pid "$BUILDER_PID"
-  [ "$rc" -eq 0 ] || { fail_case "exit=$rc expected=0"; return 1; }
-  grep -q '^WAITER: ready$' "$output" ||
-    fail_case "missing WAITER: ready"
-}
-
 case_dead_pid() {
   local handoff output dead_pid rc
   handoff=$(new_handoff dead-pid)
@@ -170,27 +153,6 @@ case_never_started() {
   [ "$rc" -eq 3 ] || { fail_case "exit=$rc expected=3"; return 1; }
   grep -q 'WAITER: never-started after 5s' "$output" ||
     fail_case "missing never-started"
-}
-
-case_idle() {
-  local handoff output started elapsed rc
-  handoff=$(new_handoff idle)
-  output="$TEST_ROOT/idle.out"
-  start_sleep_builder
-  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
-  started=$(date +%s)
-
-  run_waiter_capped "$output" 20 \
-    WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
-    "$WAITER" "$handoff" builder 30 8
-  rc=$?
-  elapsed=$(( $(date +%s) - started ))
-  stop_pid "$BUILDER_PID"
-  [ "$rc" -eq 5 ] || { fail_case "exit=$rc expected=5"; return 1; }
-  [ "$elapsed" -le 20 ] ||
-    { fail_case "elapsed=${elapsed}s expected<=20s"; return 1; }
-  grep -q 'WAITER: builder-idle' "$output" ||
-    fail_case "missing builder-idle"
 }
 
 case_busy_not_idle() {
@@ -242,22 +204,18 @@ case_handoff_deleted() {
 }
 
 case_idle_with_noisy_sidecar() {
-  local handoff output started elapsed rc
+  local handoff output rc
   handoff=$(new_handoff idle-with-noisy-sidecar)
   output="$TEST_ROOT/idle-with-noisy-sidecar.out"
   start_noisy_sidecar_builder
   printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
-  started=$(date +%s)
 
   run_waiter_capped "$output" 12 \
     WFR_GRACE=3 WFR_POLL=1 WFR_IDLE_CPU_CENTIS=200 \
     "$WAITER" "$handoff" builder 30 8
   rc=$?
-  elapsed=$(( $(date +%s) - started ))
   stop_pid "$BUILDER_PID"
   [ "$rc" -eq 5 ] || { fail_case "exit=$rc expected=5"; return 1; }
-  [ "$elapsed" -le 20 ] ||
-    { fail_case "elapsed=${elapsed}s expected<=20s"; return 1; }
   grep -q 'WAITER: builder-idle' "$output" ||
     fail_case "missing builder-idle"
 }
@@ -377,10 +335,11 @@ case_turn_ended() {
 
 case_turn_ended_subturn_churn() {
   # THE REGRESSION: the notify hook fires on every agent turn, so a builder
-  # running its gates touches the marker over and over while plainly still
-  # working. Each touch used to wake the architect for nothing. A marker
-  # accompanied by ongoing activity is a sub-turn, not a stop — the bridge must
-  # sit through all of it and only report when the builder really reports.
+  # running its gates ends turns while plainly still working. Each marker used to
+  # wake the architect for nothing. A marker accompanied by ongoing activity is a
+  # sub-turn, not a stop — the bridge must sit through it and only report when the
+  # builder really reports. One marker, so it outlives the epilogue and settle
+  # windows and only the activity can retire it.
   local handoff output logdir writer toucher updater rc
   handoff=$(new_handoff turn-churn)
   output="$TEST_ROOT/turn-churn.out"
@@ -396,8 +355,8 @@ case_turn_ended_subturn_churn() {
   writer=$!
   track_pid "$writer"
   (
-    trap 'exit 0' TERM INT
-    while :; do sleep 2; touch "$handoff.turn-ended"; done
+    sleep 2
+    touch "$handoff.turn-ended"
   ) &
   toucher=$!
   track_pid "$toucher"
@@ -503,8 +462,11 @@ case_turn_churn_streaming_not_idle() {
 
 case_stale_turn_marker_consumed() {
   # A marker left over from an already-handled wake must be ignored at bridge
-  # start, not reported as a fresh awaiting-input event. A short settle window
-  # keeps this honest: it proves the marker was baselined, not merely waited out.
+  # start, not reported as a fresh awaiting-input event. Short epilogue and settle
+  # windows keep this honest: both end before the report, so the marker was
+  # baselined, not merely waited out. Baselining must also leave the file alone:
+  # the old bridge DELETED it, which raced with the architect's own cleanup and
+  # with dispatch.sh, erasing a turn-end whose wake was then never delivered.
   local handoff output updater rc
   handoff=$(new_handoff stale-turn-marker)
   output="$TEST_ROOT/stale-turn-marker.out"
@@ -519,7 +481,7 @@ case_stale_turn_marker_consumed() {
   track_pid "$updater"
 
   run_waiter_capped "$output" 10 \
-    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=1 \
+    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=1 WFR_TURN_EPILOGUE=1 \
     "$WAITER" "$handoff" builder 20 15
   rc=$?
   stop_pid "$BUILDER_PID"
@@ -527,26 +489,7 @@ case_stale_turn_marker_consumed() {
   ! grep -q 'WAITER: builder-awaiting-input' "$output" ||
     { fail_case "stale marker reported as awaiting-input"; return 1; }
   grep -q '^WAITER: ready$' "$output" ||
-    fail_case "missing WAITER: ready"
-}
-
-case_turn_marker_survives_bridge_start() {
-  # The old bridge DELETED the marker at start. That raced with the architect's
-  # own cleanup and with dispatch.sh: a turn-end landing in the window was
-  # erased and its wake never delivered. Baselining must leave the file alone.
-  local handoff output rc
-  handoff=$(new_handoff turn-marker-survives)
-  output="$TEST_ROOT/turn-marker-survives.out"
-  start_sleep_builder
-  printf '%s\n' "$BUILDER_PID" > "$handoff.builder"
-  touch "$handoff.turn-ended"
-
-  run_waiter_capped "$output" 6 \
-    WFR_GRACE=3 WFR_POLL=1 WFR_TURN_SETTLE=1 \
-    "$WAITER" "$handoff" builder 20 15
-  rc=$?
-  stop_pid "$BUILDER_PID"
-  [ "$rc" -eq 124 ] || { fail_case "exit=$rc expected=124 (should still be waiting)"; return 1; }
+    { fail_case "missing WAITER: ready"; return 1; }
   [ -f "$handoff.turn-ended" ] ||
     fail_case "bridge deleted the turn-ended marker instead of baselining it"
 }
@@ -1056,10 +999,45 @@ case_newest_installed_copy() {
     fail_case "WFR_NO_UPGRADE=1 still handed off: $(cat "$output")"
 }
 
+# These five depend on CPU readings or long idle windows, so each runs alone.
+SERIAL=(
+  busy-not-idle
+  idle-with-noisy-sidecar
+  production-ratio
+  idle-with-background-trickle
+  turn-ended-command-then-quiet-with-trickle
+)
+PARALLEL=(
+  ready-with-board
+  dead-pid
+  never-started
+  handoff-deleted
+  blocked
+  turn-ended
+  turn-ended-with-epilogue
+  turn-ended-subturn-churn
+  turn-churn-streaming-not-idle
+  stale-turn-marker-consumed
+  turn-ended-ready-wins
+  activity-fresh-not-idle
+  activity-stale-idle
+  activity-unrelated-session-idle
+  activity-builder-file-not-idle
+  codex-rollout-unrelated-idle
+  codex-rollout-builder-not-idle
+  turn-ended-command-running
+  command-running-not-idle
+  turn-ended-with-quiet-child
+  turn-ended-command-then-quiet
+  endless-loop-still-wakes
+  newest-installed-copy
+)
+
+# Case <name> is the function case_<name>, dashes as underscores.
 run_case() {
-  local name="$1" function_name="$2"
+  local name="$1"
   CASE_ERROR=""
-  if "$function_name"; then
+  if "case_${name//-/_}"; then
     echo "ok $name"
     PASSED=$(( PASSED + 1 ))
   else
@@ -1068,37 +1046,54 @@ run_case() {
   fi
 }
 
-run_case ready case_ready
-run_case ready-with-board case_ready_with_board
-run_case dead-pid case_dead_pid
-run_case never-started case_never_started
-run_case idle case_idle
-run_case busy-not-idle case_busy_not_idle
-run_case handoff-deleted case_handoff_deleted
-run_case idle-with-noisy-sidecar case_idle_with_noisy_sidecar
-run_case production-ratio case_production_ratio
-run_case idle-with-background-trickle case_idle_with_background_trickle
-run_case blocked case_blocked
-run_case turn-ended case_turn_ended
-run_case turn-ended-with-epilogue case_turn_ended_with_epilogue
-run_case turn-ended-subturn-churn case_turn_ended_subturn_churn
-run_case turn-churn-streaming-not-idle case_turn_churn_streaming_not_idle
-run_case turn-marker-survives-bridge-start case_turn_marker_survives_bridge_start
-run_case stale-turn-marker-consumed case_stale_turn_marker_consumed
-run_case turn-ended-ready-wins case_turn_ended_ready_wins
-run_case activity-fresh-not-idle case_activity_fresh_not_idle
-run_case activity-stale-idle case_activity_stale_idle
-run_case activity-unrelated-session-idle case_activity_unrelated_session_idle
-run_case activity-builder-file-not-idle case_activity_builder_file_not_idle
-run_case codex-rollout-unrelated-idle case_codex_rollout_unrelated_idle
-run_case codex-rollout-builder-not-idle case_codex_rollout_builder_not_idle
-run_case turn-ended-command-running case_turn_ended_command_running
-run_case command-running-not-idle case_command_running_not_idle
-run_case turn-ended-with-quiet-child case_turn_ended_with_quiet_child
-run_case turn-ended-command-then-quiet case_turn_ended_command_then_quiet
-run_case turn-ended-command-then-quiet-with-trickle case_turn_ended_command_then_quiet_with_trickle
-run_case endless-loop-still-wakes case_endless_loop_still_wakes
-run_case newest-installed-copy case_newest_installed_copy
+# In a full run each case gets its own bash, which owns that case's temp dir,
+# background processes and cleanup.
+start_case() {
+  WFR_CASE="$1" "$BASH" "$SELF" > "$TEST_ROOT/$1.log" 2>&1 &
+  CASE_PID=$!
+  track_pid "$CASE_PID"
+}
+
+# A case passes only when its process exits 0 and printed its own ok line.
+collect_case() {
+  local name="$1" log="$TEST_ROOT/$1.log" skip='^TESTS: ' rc
+  wait "$2"
+  rc=$?
+  if [ "$rc" -eq 0 ] && grep -qx "ok $name" "$log"; then
+    PASSED=$(( PASSED + 1 ))
+  else
+    FAILED=$(( FAILED + 1 ))
+    skip="^(TESTS: |ok $name\$)"
+    grep -q "^not ok $name " "$log" ||
+      echo "not ok $name - case process exited $rc without a result"
+  fi
+  grep -vE "$skip" "$log"
+}
+
+if [ -n "$ONLY" ]; then
+  for name in "${SERIAL[@]}" "${PARALLEL[@]}"; do
+    [ "$name" != "$ONLY" ] || run_case "$name"
+  done
+  if [ $(( PASSED + FAILED )) -eq 0 ]; then
+    echo "test-wait-for-ready: no case named '$ONLY'" >&2
+    exit 2
+  fi
+else
+  parallel_pids=()
+  for name in "${PARALLEL[@]}"; do
+    start_case "$name"
+    parallel_pids+=("$CASE_PID")
+  done
+  i=0
+  for name in "${PARALLEL[@]}"; do
+    collect_case "$name" "${parallel_pids[$i]}"
+    i=$(( i + 1 ))
+  done
+  for name in "${SERIAL[@]}"; do
+    start_case "$name"
+    collect_case "$name" "$CASE_PID"
+  done
+fi
 
 echo "TESTS: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ]

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import caselib  # noqa: E402
 import fixture  # noqa: E402
 import support  # noqa: E402
 
@@ -33,29 +34,32 @@ class CaseFormatTests(unittest.TestCase):
         self.assertIn('synthetic', run.stdout)
 
     def test_missing_required_field_is_rejected_by_name_without_adapter_call(self):
-        for field in REQUIRED:
-            with self.subTest(field=field):
-                self.setUp()
-                self.edit_case(lambda c: c.pop(field))
-                marker = self.tmp / 'marker'
-                builder = support.write_stub(self.tmp / 'b.py', support.STUB_BUILDER)
-                grader = support.write_stub(self.tmp / 'g.py', support.STUB_GRADER)
-                run = support.run_cli(support.RUNNER, [
-                    '--cases', self.fx.cases_dir, '--output', self.tmp / 'out', '--current-ref', support.BASE_REF,
-                    '--revised-ref', 'HEAD', '--revised-skills-repo', self.fx.skills_repo, '--spend',
-                    '--builder-adapter', builder, '--grader-adapter', grader, '--gate-env', 'STUB_MARKER'],
-                    env={'STUB_MARKER': str(marker)})
-                self.assertNotEqual(run.returncode, 0)
-                self.assertIn(f'missing required field {field}', run.stderr)
-                self.assertFalse(marker.exists())
+        self.edit_case(lambda c: c.pop('goal'))
+        marker = self.tmp / 'marker'
+        builder = support.write_stub(self.tmp / 'b.py', support.STUB_BUILDER)
+        grader = support.write_stub(self.tmp / 'g.py', support.STUB_GRADER)
+        run = support.run_cli(support.RUNNER, [
+            '--cases', self.fx.cases_dir, '--output', self.tmp / 'out', '--current-ref', support.BASE_REF,
+            '--revised-ref', 'HEAD', '--revised-skills-repo', self.fx.skills_repo, '--spend',
+            '--builder-adapter', builder, '--grader-adapter', grader, '--gate-env', 'STUB_MARKER'],
+            env={'STUB_MARKER': str(marker)})
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn('missing required field goal', run.stderr)
+        self.assertFalse(marker.exists())
 
-    def test_base_commit_must_be_a_full_hex_object_id(self):
-        for bad in ['HEAD', 'main', '', 'abc']:
-            with self.subTest(base=bad):
-                self.edit_case(lambda c: c.update(base_commit=bad))
-                run = self.check()
-                self.assertNotEqual(run.returncode, 0)
-                self.assertIn('base_commit', run.stderr)
+    def test_validate_case_rejects_each_bad_field_in_process(self):
+        good = json.loads(self.fx.case_path.read_text())
+        self.assertEqual(caselib.validate_case(dict(good)), good)  # positive control
+        plain = self.tmp / 'plain'
+        plain.mkdir()
+        bad = [(f'missing required field {field}', {k: v for k, v in good.items() if k != field}) for field in REQUIRED]
+        bad += [('base_commit', dict(good, base_commit=sha)) for sha in ['HEAD', 'main', '', 'abc']]
+        bad += [('repo', dict(good, repo=dict(good['repo'], path=path)))
+                for path in [str(self.tmp / 'nowhere'), str(plain)]]
+        for named, case in bad:
+            with self.subTest(named=named, base=case.get('base_commit'), repo=case.get('repo')):
+                with self.assertRaisesRegex(caselib.CaseError, named):
+                    caselib.validate_case(case)
 
     def test_missed_id_must_lead_a_criteria_line(self):
         self.edit_case(lambda c: c.update(missed_ids=['C9']))
@@ -72,16 +76,6 @@ class CaseFormatTests(unittest.TestCase):
         run = self.check()
         self.assertNotEqual(run.returncode, 0)
         self.assertIn('criteria', run.stderr)
-
-    def test_repo_path_must_exist_and_be_a_git_repo(self):
-        plain = self.tmp / 'plain'
-        plain.mkdir()
-        for path in [str(self.tmp / 'nowhere'), str(plain)]:
-            with self.subTest(path=path):
-                self.edit_case(lambda c: c['repo'].update(path=path))
-                run = self.check()
-                self.assertNotEqual(run.returncode, 0)
-                self.assertIn('repo', run.stderr)
 
     def test_gate_command_must_come_from_gates_text(self):
         self.edit_case(lambda c: c.update(gate_commands=['rm -rf nothing']))

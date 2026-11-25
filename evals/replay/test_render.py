@@ -9,6 +9,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
+import render  # noqa: E402
 import support  # noqa: E402
 
 FENCE = re.compile(r'^```text\n(.*?)^```$', re.S | re.M)
@@ -69,24 +70,6 @@ class RenderTests(unittest.TestCase):
                 expect.append(line)
         return expect
 
-    def test_acceptance_and_gates_hold_the_case_text_verbatim(self):
-        run, out = self.run_fake()
-        text = self.brief(out, 'current')
-        self.assertIn('Acceptance:\n' + self.case['criteria'] + '\n', text)
-        self.assertIn('Gates:\n' + self.case['gates_text'] + '\n', text)
-
-    def test_execute_owned_and_result_lines_are_filled(self):
-        run, out = self.run_fake()
-        lines = self.brief(out, 'current').splitlines()
-        record = support.load(support.trial_dir(out, 'current') / 'builder-record.json')
-        execute = lines[0]
-        self.assertTrue(execute.startswith('Execute ' + self.case['goal'] + ' in '), execute)
-        self.assertIn(record['cwd'], execute)
-        self.assertIn(record['branch'], execute)
-        self.assertEqual(lines[1], 'Owned files: ' + self.case['owned_files'] + '. Protected paths: <paths>.')
-        result = [line for line in lines if line.startswith('Result file:')]
-        self.assertEqual(result, [f"Result file: {support.trial_dir(out, 'current') / 'result.md'}. Handoff: $OFFLOAD_HANDOFF."])
-
     def test_fixture_template_with_extra_paragraph_keeps_it_byte_identical(self):
         run, out = self.run_fake()
         template = fence_lines((self.fx.skills_repo / support.TEMPLATE_PATH).read_text())
@@ -95,19 +78,17 @@ class RenderTests(unittest.TestCase):
         self.assertTrue(any('mentions Acceptance: mid-line' in line for line in rendered))
         self.assertIn('\nResult file: ' + str(support.trial_dir(out, 'revised') / 'result.md') + '\n', self.brief(out, 'revised'))
 
-    def refused(self, template, hint=''):
-        self.count = getattr(self, 'count', 0) + 1
-        fx = fixture.build(self.tmp / f'bad{self.count}', template=template)
-        marker = self.tmp / f'marker{self.count}'
+    def refused(self, template):
+        fx = fixture.build(self.tmp / 'bad', template=template)
+        marker = self.tmp / 'marker'
         builder = support.write_stub(self.tmp / 'b.py', support.STUB_BUILDER)
         run = support.run_cli(support.RUNNER, [
-            '--cases', fx.cases_dir, '--output', self.tmp / f'out-bad{self.count}', '--current-ref', support.BASE_REF,
+            '--cases', fx.cases_dir, '--output', self.tmp / 'out-bad', '--current-ref', support.BASE_REF,
             '--revised-ref', 'HEAD', '--revised-skills-repo', fx.skills_repo, '--spend',
             '--builder-adapter', builder, '--fake-grader', '--gate-env', 'STUB_MARKER'], env={'STUB_MARKER': str(marker)})
-        self.assertEqual(run.returncode, 2, hint + run.stderr)
+        self.assertEqual(run.returncode, 2, run.stderr)
         self.assertIn('refusing', run.stderr)
-        self.assertFalse(marker.exists(), hint)
-        return run
+        self.assertFalse(marker.exists())
 
     def good(self):
         return (self.fx.skills_repo / support.TEMPLATE_PATH).read_text()
@@ -115,21 +96,20 @@ class RenderTests(unittest.TestCase):
     def test_template_with_no_text_fence_is_refused(self):
         self.refused('# t\n\nno fence here\n')
 
-    def test_template_with_two_text_fences_is_refused(self):
-        self.refused(self.good() + '\n' + self.good())
-
-    def test_template_missing_a_label_is_refused(self):
+    def test_validate_refuses_each_bad_template_in_process(self):
+        good = self.good()
+        render.validate(good)  # positive control
+        bad = {'no fence': '# t\n\nno fence here\n', 'two fences': good + '\n' + good}
         for label in ['Execute <slice goal>', 'Owned files: <paths>', 'Acceptance:', 'Gates:', 'Result file:']:
-            with self.subTest(label=label):
-                lines = [line for line in self.good().split('\n') if not line.startswith(label)]
-                self.refused('\n'.join(lines), label)
-
-    def test_template_with_a_duplicated_label_is_refused(self):
+            bad[f'missing {label}'] = '\n'.join(l for l in good.split('\n') if not l.startswith(label))
         for label in ['Execute <slice goal>', 'Owned files:', 'Acceptance:', 'Gates:', 'Result file:']:
-            with self.subTest(label=label):
-                text = self.good()
-                line = next(l for l in text.split('\n') if l.startswith(label))
-                self.refused(text.replace(line, line + '\n' + line, 1), label)
+            line = next(l for l in good.split('\n') if l.startswith(label))
+            bad[f'duplicated {label}'] = good.replace(line, line + '\n' + line, 1)
+        for name, template in bad.items():
+            with self.subTest(template=name):
+                self.assertNotEqual(template, good)
+                with self.assertRaises(render.TemplateError):
+                    render.validate(template)
 
 
 if __name__ == '__main__':

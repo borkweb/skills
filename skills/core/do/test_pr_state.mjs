@@ -4,10 +4,11 @@
 import assert from 'node:assert';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { classify } from './pr-state.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(HERE, 'pr-state.mjs');
@@ -76,13 +77,15 @@ const resp = (o = {}) => {
 };
 
 function goodEnv(box, extra = {}) {
-  const e = { HOME: box.home, PATH: '/usr/bin:/bin', PR_STATE_GH: box.stub, ...extra };
+  // The stub runs as node's argument: macOS checks each newly written executable on its first run, which costs more
+  // than the test. C6r and C24 still run the stub, or a copy of it, as an executable.
+  const e = { HOME: box.home, PATH: '/usr/bin:/bin', PR_STATE_GH: `${process.execPath} ${box.stub}`, ...extra };
   for (const k of Object.keys(e)) if (e[k] === undefined) delete e[k];
   return e;
 }
-function pr(box, urls, cfg, extra = {}) {
+function pr(box, urls, cfg, extra = {}, nodeArgs = [SCRIPT]) {
   if (cfg) writeFileSync(box.cfg, JSON.stringify(cfg));
-  const r = spawnSync(process.execPath, [SCRIPT, ...urls], { env: goodEnv(box, extra), encoding: 'utf8', timeout: 60000 });
+  const r = spawnSync(process.execPath, [...nodeArgs, ...urls], { env: goodEnv(box, extra), encoding: 'utf8', timeout: 60000 });
   const lines = r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l)); // every stdout line must be a JSON object (C6s)
   for (const l of lines) assert.ok(l && typeof l === 'object' && !Array.isArray(l));
   return { code: r.status, lines, err: r.stderr, out: r.stdout };
@@ -108,53 +111,49 @@ test('C6b an argument that is not a PR URL exits 2 before any gh call', () => {
   }
 });
 
-// ---- tiers (C6c-C6l, C23) -----------------------------------------------------------------------------------------
+// ---- tiers (C6c-C6l, C23): classify() on what inspect() hands it ----------------------------------------------------
 
-const PASS = [run('COMPLETED', 'SUCCESS')];
+const classified = (o) => {
+  const pull = resp(o).data.repository.pullRequest;
+  const rollup = pull.commits.nodes[0].commit.statusCheckRollup;
+  return classify(pull, pull.reviewThreads.nodes, rollup, rollup ? rollup.contexts.nodes : []);
+};
+
 const TABLE = [
-  // [name, response options, tier, exit]
-  ['CLEAN is ready', {}, 'ready', 0],
-  ['HAS_HOOKS is ready', { merge: 'HAS_HOOKS' }, 'ready', 0],
-  ['UNSTABLE with every check passing is ready', { merge: 'UNSTABLE' }, 'ready', 0],
-  ['APPROVED is ready', { review: 'APPROVED' }, 'ready', 0],
-  ['NEUTRAL and SKIPPED conclusions pass', { checks: [run('COMPLETED', 'NEUTRAL'), run('COMPLETED', 'SKIPPED'), ctx('SUCCESS')] }, 'ready', 0],
-  ['DIRTY is a conflict', { merge: 'DIRTY' }, 'conflict', 3],
-  ['BEHIND is a conflict', { merge: 'BEHIND' }, 'conflict', 3],
-  ['mergeable CONFLICTING is a conflict', { mergeable: 'CONFLICTING' }, 'conflict', 3],
-  ['one unresolved thread', { threads: [{ isResolved: true }, { isResolved: false }] }, 'threads', 4],
-  ...['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'].map((c) => [`CheckRun ${c} is failing`, { checks: [run('COMPLETED', c)] }, 'ci-failing', 5]),
-  ...['FAILURE', 'ERROR'].map((s) => [`StatusContext ${s} is failing`, { checks: [ctx(s)] }, 'ci-failing', 5]),
-  ['rollup FAILURE alone is failing', { checks: [], rollupState: 'FAILURE' }, 'ci-failing', 5],
-  ...['QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED'].flatMap((s) => [
-    [`CheckRun ${s} (null conclusion) is pending`, { checks: [run(s, null)] }, 'ci-pending', 7],
-    [`CheckRun ${s} (empty conclusion) is pending`, { checks: [run(s, '')] }, 'ci-pending', 7],
-  ]),
-  ...['PENDING', 'EXPECTED'].map((s) => [`StatusContext ${s} is pending`, { checks: [ctx(s)] }, 'ci-pending', 7]),
-  ['a null statusCheckRollup is pending', { rollup: null }, 'ci-pending', 7],
-  ['mergeStateStatus UNKNOWN is pending', { merge: 'UNKNOWN' }, 'ci-pending', 7],
-  ['mergeable UNKNOWN is pending', { mergeable: 'UNKNOWN' }, 'ci-pending', 7],
-  ['isDraft', { isDraft: true }, 'draft-or-changes-requested', 6],
-  ['mergeStateStatus DRAFT', { merge: 'DRAFT' }, 'draft-or-changes-requested', 6],
-  ['CHANGES_REQUESTED', { review: 'CHANGES_REQUESTED' }, 'draft-or-changes-requested', 6],
-  ['REVIEW_REQUIRED', { review: 'REVIEW_REQUIRED' }, 'draft-or-changes-requested', 6],
-  ['BLOCKED with nothing else wrong', { merge: 'BLOCKED' }, 'draft-or-changes-requested', 6],
+  // [name, response options, tier]
+  ['CLEAN is ready', {}, 'ready'],
+  ['HAS_HOOKS is ready', { merge: 'HAS_HOOKS' }, 'ready'],
+  ['UNSTABLE with every check passing is ready', { merge: 'UNSTABLE' }, 'ready'],
+  ['APPROVED is ready', { review: 'APPROVED' }, 'ready'],
+  ['NEUTRAL and SKIPPED conclusions pass', { checks: [run('COMPLETED', 'NEUTRAL'), run('COMPLETED', 'SKIPPED'), ctx('SUCCESS')] }, 'ready'],
+  ['DIRTY is a conflict', { merge: 'DIRTY' }, 'conflict'],
+  ['BEHIND is a conflict', { merge: 'BEHIND' }, 'conflict'],
+  ['mergeable CONFLICTING is a conflict', { mergeable: 'CONFLICTING' }, 'conflict'],
+  ['one unresolved thread', { threads: [{ isResolved: true }, { isResolved: false }] }, 'threads'],
+  ...['FAILURE', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'STALE'].map((c) => [`CheckRun ${c} is failing`, { checks: [run('COMPLETED', c)] }, 'ci-failing']),
+  ...['FAILURE', 'ERROR'].map((s) => [`StatusContext ${s} is failing`, { checks: [ctx(s)] }, 'ci-failing']),
+  ['rollup FAILURE alone is failing', { checks: [], rollupState: 'FAILURE' }, 'ci-failing'],
+  ...['QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED'].map((s) => [`CheckRun ${s} (null conclusion) is pending`, { checks: [run(s, null)] }, 'ci-pending']),
+  // gh can send '' for a run with no conclusion yet; the status, not the conclusion, says whether it finished.
+  ['CheckRun QUEUED (empty conclusion) is pending', { checks: [run('QUEUED', '')] }, 'ci-pending'],
+  ...['PENDING', 'EXPECTED'].map((s) => [`StatusContext ${s} is pending`, { checks: [ctx(s)] }, 'ci-pending']),
+  ['a null statusCheckRollup is pending', { rollup: null }, 'ci-pending'],
+  ['mergeStateStatus UNKNOWN is pending', { merge: 'UNKNOWN' }, 'ci-pending'],
+  ['mergeable UNKNOWN is pending', { mergeable: 'UNKNOWN' }, 'ci-pending'],
+  ['isDraft', { isDraft: true }, 'draft-or-changes-requested'],
+  ['mergeStateStatus DRAFT', { merge: 'DRAFT' }, 'draft-or-changes-requested'],
+  ['CHANGES_REQUESTED', { review: 'CHANGES_REQUESTED' }, 'draft-or-changes-requested'],
+  ['REVIEW_REQUIRED', { review: 'REVIEW_REQUIRED' }, 'draft-or-changes-requested'],
+  ['BLOCKED with nothing else wrong', { merge: 'BLOCKED' }, 'draft-or-changes-requested'],
   // priority: the highest blocker wins (C6k)
-  ['DIRTY + thread + failing + draft -> conflict', { merge: 'DIRTY', threads: [{ isResolved: false }], checks: [ctx('FAILURE')], isDraft: true }, 'conflict', 3],
-  ['thread + failing -> threads', { threads: [{ isResolved: false }], checks: [ctx('FAILURE')] }, 'threads', 4],
-  ['failing + pending + draft -> ci-failing', { checks: [ctx('FAILURE'), run('QUEUED')], isDraft: true }, 'ci-failing', 5],
-  ['draft + pending -> draft-or-changes-requested', { isDraft: true, checks: [run('IN_PROGRESS')] }, 'draft-or-changes-requested', 6],
-  ['BLOCKED + pending -> ci-pending (BLOCKED is only the fallback)', { merge: 'BLOCKED', checks: [run('QUEUED')] }, 'ci-pending', 7],
+  ['DIRTY + thread + failing + draft -> conflict', { merge: 'DIRTY', threads: [{ isResolved: false }], checks: [ctx('FAILURE')], isDraft: true }, 'conflict'],
+  ['thread + failing -> threads', { threads: [{ isResolved: false }], checks: [ctx('FAILURE')] }, 'threads'],
+  ['failing + pending + draft -> ci-failing', { checks: [ctx('FAILURE'), run('QUEUED')], isDraft: true }, 'ci-failing'],
+  ['draft + pending -> draft-or-changes-requested', { isDraft: true, checks: [run('IN_PROGRESS')] }, 'draft-or-changes-requested'],
+  ['BLOCKED + pending -> ci-pending (BLOCKED is only the fallback)', { merge: 'BLOCKED', checks: [run('QUEUED')] }, 'ci-pending'],
 ];
-for (const [name, opts, tier, code] of TABLE) {
-  test(`tier: ${name}`, () => {
-    const r = one({ head: 'f'.repeat(40), ...opts });
-    assert.equal(r.code, code, `${r.err}`);
-    assert.equal(r.lines.length, 1);
-    assert.equal(r.lines[0].tier, tier);
-    assert.equal(r.lines[0].url, U1);
-    assert.equal(r.lines[0].head, 'f'.repeat(40));
-    assert.equal(r.lines[0].mergeStateStatus, opts.merge ?? 'CLEAN', 'the raw mergeStateStatus is always printed');
-  });
+for (const [name, opts, tier] of TABLE) {
+  test(`tier: ${name}`, () => assert.equal(classified(opts).tier, tier));
 }
 
 test('C30 C31 every line carries integer checksPending and checksFailing counts, whatever the tier', () => {
@@ -169,18 +168,14 @@ test('C30 C31 every line carries integer checksPending and checksFailing counts,
     [{ contexts: page([]) }, 1, 0, 'ci-pending'], // C31: a rollup whose contexts.nodes is []
     [{ checks: [], rollup: null }, 1, 0, 'ci-pending'], // no checks reported yet (null rollup): one pending, so a watcher waits
     [{ checks: [], rollupState: 'SUCCESS' }, 1, 0, 'ci-pending'], // a rollup with zero contexts: same
-    [{ contexts: page([run('QUEUED')], 'c1') }, 'paged', 'paged', 'ci-failing'], // page 2 adds one failing and one in progress
   ];
   for (const [opts, pending, failing, tier] of cases) {
-    const box = makeBox();
-    const r = pr(box, [U1], { '*': { main: resp(opts), checksPages: [page([run('COMPLETED', 'FAILURE'), run('IN_PROGRESS')])] } });
-    const l = r.lines[0];
+    const got = classified(opts);
+    const l = got.signals;
     assert.ok(Number.isInteger(l.checksPending) && Number.isInteger(l.checksFailing), JSON.stringify(l));
-    assert.equal(l.tier, tier);
-    if (pending === 'paged') { assert.equal(l.checksPending, 2, 'counts cover every page'); assert.equal(l.checksFailing, 1); } else {
-      assert.equal(l.checksPending, pending, JSON.stringify(opts));
-      assert.equal(l.checksFailing, failing, JSON.stringify(opts));
-    }
+    assert.equal(got.tier, tier);
+    assert.equal(l.checksPending, pending, JSON.stringify(opts));
+    assert.equal(l.checksFailing, failing, JSON.stringify(opts));
   }
 });
 
@@ -190,12 +185,104 @@ test('C6i an unrecognized value never yields ready or exit 0', () => {
     { checks: [run('COMPLETED', 'FUTURE_VALUE')] }, { checks: [run('SOMETHING_NEW')] }, { checks: [ctx('NEW_STATE')] },
     { checks: [run('COMPLETED', null)] }, { checks: [{ __typename: 'Other' }] }, { checks: [], rollupState: 'NEW_ROLLUP' },
   ];
-  for (const c of cases) {
-    const r = one(c);
-    assert.equal(r.code, 1, JSON.stringify(c));
-    assert.ok(r.lines.every((l) => l.tier !== 'ready'));
-    assert.match(r.err, /unrecognized|o\/r\/pull\/1/);
+  for (const c of cases) assert.throws(() => classified(c), /unrecognized/, JSON.stringify(c));
+});
+
+// ---- end to end: one row per exit code, the script run by its path -------------------------------------------------
+
+for (const [name, opts, tier, code] of [
+  ['a ready PR exits 0', {}, 'ready', 0],
+  ['a conflict exits 3', { merge: 'DIRTY' }, 'conflict', 3],
+  ['an unresolved thread exits 4', { threads: [{ isResolved: false }] }, 'threads', 4],
+  ['a failing check exits 5', { checks: [run('COMPLETED', 'FAILURE')] }, 'ci-failing', 5],
+  ['a draft exits 6', { merge: 'DRAFT' }, 'draft-or-changes-requested', 6],
+  ['a pending check exits 7', { checks: [run('QUEUED')] }, 'ci-pending', 7],
+]) {
+  test(`e2e: ${name}`, () => {
+    const r = one({ head: 'f'.repeat(40), ...opts });
+    assert.equal(r.code, code, `${r.err}`);
+    assert.equal(r.lines.length, 1);
+    assert.equal(r.lines[0].tier, tier);
+    assert.equal(r.lines[0].url, U1);
+    assert.equal(r.lines[0].head, 'f'.repeat(40));
+    assert.equal(r.lines[0].mergeStateStatus, opts.merge ?? 'CLEAN', 'the raw mergeStateStatus is always printed');
+  });
+}
+
+test('e2e: an unrecognized value exits 1', () => {
+  const r = one({ merge: 'NEW_STATE' });
+  assert.equal(r.code, 1, r.out);
+  assert.equal(r.out, '', 'a PR that cannot be classified prints no tier line');
+  assert.ok(r.err.includes(U1), r.err);
+  assert.match(r.err, /unrecognized/);
+});
+
+test('e2e: a head with no reported checks counts one pending check', () => {
+  const r = one({ rollup: null });
+  assert.equal(r.code, 7, r.err);
+  assert.equal(r.lines[0].checksPending, 1);
+});
+
+test('C31 counts cover every page of checks', () => {
+  const box = makeBox();
+  const r = pr(box, [U1], { '*': { main: resp({ contexts: page([run('QUEUED')], 'c1') }), checksPages: [page([run('COMPLETED', 'FAILURE'), run('IN_PROGRESS')])] } });
+  const l = r.lines[0];
+  assert.ok(Number.isInteger(l.checksPending) && Number.isInteger(l.checksFailing), JSON.stringify(l));
+  assert.equal(l.tier, 'ci-failing');
+  assert.equal(l.checksPending, 2, 'counts cover every page');
+  assert.equal(l.checksFailing, 1);
+});
+
+// ---- starting the CLI (C6u) and importing the module (C6v) -----------------------------------------------------------
+// A start path that skips main exits 0, which the host watcher reads as "every PR ready".
+
+function pendingRun(box, nodeArgs) {
+  const r = pr(box, [U1], { '*': { main: resp({ checks: [run('QUEUED')] }) } }, {}, nodeArgs);
+  assert.equal(r.code, 7, r.err);
+  assert.deepEqual(r.lines.map((l) => l.tier), ['ci-pending']);
+}
+const linkedScript = (box) => {
+  const link = join(box.dir, 'link.mjs');
+  symlinkSync(SCRIPT, link);
+  return link;
+};
+
+test('C6u run by its own path, a pending PR exits 7', () => pendingRun(makeBox(), [SCRIPT]));
+
+test('C6u run through a symlink, a pending PR exits 7', () => {
+  const box = makeBox();
+  pendingRun(box, [linkedScript(box)]);
+});
+
+test('C6u run through a symlinked directory whose path has a space, a pending PR exits 7', (t) => {
+  const dirLink = join(root, 'dir link');
+  symlinkSync(HERE, dirLink);
+  t.after(() => unlinkSync(dirLink)); // gone before the temp root is removed: it points at the real source dir
+  pendingRun(makeBox(), [join(dirLink, 'pr-state.mjs')]);
+  // That link resolves to a path without the space. A copy in a real directory with one fails a comparison of unencoded URL text.
+  const real = join(root, 'real dir');
+  mkdirSync(real);
+  copyFileSync(SCRIPT, join(real, 'pr-state.mjs'));
+  pendingRun(makeBox(), [join(real, 'pr-state.mjs')]);
+});
+
+test('C6u run through a symlink with --preserve-symlinks-main, a pending PR exits 7', () => {
+  const box = makeBox();
+  pendingRun(box, ['--preserve-symlinks-main', linkedScript(box)]);
+});
+
+test('C6v importing pr-state.mjs runs no CLI: no gh call, no output, exitCode unset', () => {
+  const box = makeBox();
+  writeFileSync(box.cfg, JSON.stringify({ '*': { main: resp() } }));
+  const code = `await import(${JSON.stringify(pathToFileURL(SCRIPT).href)}); if (process.exitCode !== undefined) process.exit(9);`;
+  const importer = join(box.dir, 'importer.mjs');
+  writeFileSync(importer, code);
+  // with no process.argv[1] (node -e), and from another script that was itself given a PR URL
+  for (const args of [['--input-type=module', '-e', code], [importer, U1]]) {
+    const r = spawnSync(process.execPath, args, { env: goodEnv(box), encoding: 'utf8', timeout: 60000 });
+    assert.deepEqual([r.status, r.stdout, r.stderr], [0, '', ''], args[0]);
   }
+  assert.deepEqual(calls(box), []);
 });
 
 // ---- pagination (C6f) ------------------------------------------------------------------------------------------------

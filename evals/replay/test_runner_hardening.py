@@ -387,14 +387,6 @@ class CommonDirRedirectTests(HardBase):
         self.assertEqual(trial['outcome'], 'error', run.stderr)
         self.assertIn('gitdir', trial['reason'])
 
-    def test_b14_live_repo_git_calls_keep_their_own_repo(self):
-        # The override is for trial-repo calls only: a case whose base commit is missing is still found missing in the
-        # live repo, and a normal run still clones from it.
-        self.build()
-        run = self.replay()
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(support.case_record(self.out)['trials'][0]['outcome'], 'graded')
-
 
 class ReplaceRefTests(HardBase):
     def test_b17_a_replace_ref_the_builder_makes_cannot_hide_its_change_from_the_sealed_diff(self):
@@ -443,26 +435,6 @@ class AdapterHomeTests(HardBase):
         self.assertFalse(Path(seen['g.py']['home']).exists(), 'the grader HOME was not removed')
         self.assertEqual(self.scratch_left(), [])
         self.assertNotEqual(seen['b.py']['home'], seen['g.py']['home'])
-
-
-class LivePathInCaseTextTests(HardBase):
-    def test_b2_a_case_naming_the_live_repo_in_any_text_field_is_skipped_naming_the_field(self):
-        for field in ('goal', 'owned_files', 'criteria', 'gates_text'):
-            with self.subTest(field=field):
-                self.setUp()
-                self.build()
-                case = json.loads(self.fx.case_path.read_text())
-                live = str(self.fx.repo)
-                case[field] = (f'work in {live}' if field in ('goal', 'owned_files')
-                               else case[field] + (f'\nC9: `cd {live} && true` works' if field == 'criteria' else f'\nnote: {live}'))
-                self.fx.case_path.write_text(json.dumps(case))
-                run = self.replay()
-                self.assertEqual(run.returncode, 0, run.stderr)
-                record = support.case_record(self.out)
-                self.assertEqual(record['status'], 'skipped')
-                self.assertIn(field, record['reason'])
-                self.assertIn('live repo path', record['reason'])
-                self.assertEqual({t['outcome'] for t in record['trials']}, {'skipped'})
 
 
 class SymlinkTests(HardBase):

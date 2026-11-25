@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -15,18 +16,53 @@ PR_REVIEW = 'skills/core/pr-review/SKILL.md'
 UNLISTED_BIG = 'skills/core/do/SKILL.md'
 TEMPLATE = 'skills/core/offload/builder-template.md'
 COMMAND = 'commands/pre-push.md'
+PERSONAL = 'see /Users/' + 'jdoe/x/\n'
+GIT = shutil.which('git')
+# What uv needs to run the validator. Nothing else of this process's environment reaches it.
+UV_NEEDS = ('PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'LC_CTYPE', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'UV_CACHE_DIR',
+            'UV_PYTHON', 'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_DOWNLOADS', 'UV_PYTHON_PREFERENCE', 'UV_OFFLINE',
+            'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'SSL_CERT_FILE')
+
+
+def git(repo, home, *args):
+    env = {'PATH': os.environ.get('PATH', os.defpath), 'HOME': str(home), 'GIT_CONFIG_GLOBAL': os.devnull,
+           'GIT_CONFIG_NOSYSTEM': '1'}
+    return subprocess.run([GIT, '-C', str(repo), *args], env=env, capture_output=True, check=True)
+
+
+def copy_repo(source, dest, home):
+    """Copy the files git shows for `source`: tracked, plus untracked and not ignored. A link is copied as a link."""
+    source = Path(source).resolve()
+    listed = git(source, home, 'ls-files', '-z', '--cached', '--others', '--exclude-standard').stdout
+    dest.mkdir()
+    for rel in (os.fsdecode(raw) for raw in listed.split(b'\0') if raw):
+        path = source / rel
+        # Left out: deleted and not staged, a directory, a path under a link, and a hard link.
+        if path.parent.resolve() != path.parent or not (path.is_symlink() or path.is_file() and path.lstat().st_nlink == 1):
+            continue
+        (dest / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest / rel, follow_symlinks=False)
 
 
 class ValidateSkillsTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name) / 'repo'
-        shutil.copytree(REPO, self.root, symlinks=True, ignore=shutil.ignore_patterns('.git', 'node_modules', '__pycache__'))
+        self.tmp = Path(tmp.name).resolve()
+        self.home = self.tmp / 'home'; self.home.mkdir()
+        self.root = self.tmp / 'repo'
+        copy_repo(REPO, self.root, self.home)
 
-    def validate(self):
+    def validate(self, **extra):
+        env = {**{k: os.environ[k] for k in UV_NEEDS if k in os.environ}, **extra}
         done = subprocess.run([UV, 'run', '--quiet', '--script', str(self.root / 'scripts/validate-skills.py')], stdout=subprocess.PIPE,
-                              stderr=subprocess.STDOUT, universal_newlines=True)
+                              stderr=subprocess.STDOUT, universal_newlines=True, env=env)
         return done.returncode, done.stdout
+
+    def git(self, *args): git(self.root, self.home, *args)
+
+    def plant(self, rel, text=PERSONAL):
+        (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / rel).write_text(text)
 
     def read(self, rel): return (self.root / rel).read_bytes()
     def write(self, rel, data): (self.root / rel).write_bytes(data)
@@ -171,6 +207,98 @@ class ValidateSkillsTests(unittest.TestCase):
     def test_a_baseline_entry_with_no_unpinned_spawn_must_go(self):
         self.edit_text('scripts/git-spawn-baseline.txt', lambda t: t + 'skills/core/do/memory-store.mjs 1\n')
         self.assertFails('skills/core/do/memory-store.mjs has no unpinned git spawn; remove its entry')
+
+    def test_copy_keeps_tracked_symlinks_as_links(self):
+        for rel, target in (('plugins/bork', '..'), ('gemini-extension.json', '.claude-plugin/plugin.json')):
+            self.assertEqual(os.readlink(REPO / rel), target)
+            self.assertTrue(os.path.islink(self.root / rel), rel)
+            self.assertEqual(os.readlink(self.root / rel), target)
+        # a source tree with a symlink and a hard link to an outside file, and a tracked file deleted but not staged
+        work = self.tmp / 'links'
+        source, dest, outside = work / 'source', work / 'dest', work / 'outside.txt'
+        source.mkdir(parents=True)
+        outside.write_text('outside\n')
+        (source / 'kept.md').write_text('kept\n')
+        (source / 'gone.md').write_text('gone\n')
+        os.symlink(outside, source / 'link')
+        os.link(outside, source / 'hard')
+        git(source, self.home, 'init', '-q')
+        git(source, self.home, 'add', 'kept.md', 'gone.md', 'link', 'hard')
+        (source / 'gone.md').unlink()
+        state = lambda: (outside.read_bytes(), outside.stat().st_mode, outside.stat().st_mtime_ns, outside.stat().st_nlink)
+        before = state()
+        copy_repo(source, dest, self.home)
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), ['kept.md', 'link'])
+        self.assertEqual(os.readlink(dest / 'link'), str(outside))
+        self.assertEqual(state(), before)
+        self.assertEqual(sorted(p.name for p in work.iterdir()), ['dest', 'outside.txt', 'source'])
+
+    def test_gitignored_paths_are_not_scanned(self):
+        self.git('init', '-q')
+        self.plant('output/x/bad.md')
+        self.plant('output/nested/bad.md')  # git names a repository inside an ignored dir as `output/nested/`
+        git(self.root / 'output/nested', self.home, 'init', '-q')
+        self.plant('scripts/output/bad.mjs', "execFileSync('git', ['status']);\n")  # the git spawn check skips it too
+        code, out = self.validate()
+        self.assertEqual(code, 0, out)
+
+    def test_tracked_file_with_personal_path_still_fails_in_a_git_checkout(self):
+        self.git('init', '-q')
+        self.plant('zz-tracked.md')
+        self.git('add', 'zz-tracked.md')
+        self.assertFails('zz-tracked.md:1: personal path')
+
+    def test_untracked_unignored_file_with_personal_path_still_fails(self):
+        self.git('init', '-q')
+        self.plant('scripts/zz-probe.md')
+        self.assertFails('scripts/zz-probe.md:1: personal path')
+
+    def test_force_added_file_under_an_ignored_dir_still_fails(self):
+        self.git('init', '-q')
+        self.plant('output/x/bad.md')
+        self.git('add', '-f', 'output/x/bad.md')
+        self.assertFails('output/x/bad.md:1: personal path')
+
+    def test_git_failure_scans_everything(self):
+        self.plant('scripts/zz-probe.md')
+        self.plant('output/x/bad.md')
+        both = ('scripts/zz-probe.md:1: personal path', 'output/x/bad.md:1: personal path')
+        with self.subTest('not a git work tree'):
+            self.assertFails(*both)
+        with self.subTest('inside a repository that ignores this whole tree'):
+            git(self.tmp, self.home, 'init', '-q')
+            (self.tmp / '.gitignore').write_text('repo/\n')
+            self.assertFails(*both)
+        with self.subTest('git is not on PATH'):
+            self.git('init', '-q')
+            tools = self.tmp / 'tools'; tools.mkdir()
+            os.symlink(shutil.which(UV), tools / 'uv')
+            os.symlink(sys.executable, tools / 'python3')
+            self.assertIsNone(shutil.which('git', path=str(tools)))
+            code, out = self.validate(PATH=str(tools))
+            self.assertEqual(code, 1, out)
+            self.assertNotIn('Traceback', out)
+            for name in both: self.assertIn(name, out)
+
+    def test_hostile_git_env_does_not_change_what_is_scanned(self):
+        self.git('init', '-q')
+        self.plant('output/x/bad.md')
+        # a git first on PATH that records the environment the validator gives it, then runs the real one
+        spy, seen = self.tmp / 'spy', self.tmp / 'git-env.txt'
+        spy.mkdir()
+        (spy / 'git').write_text(f'#!/bin/sh\n/usr/bin/env > "{seen}"\nexec "{GIT}" "$@"\n')
+        (spy / 'git').chmod(0o755)
+        hostile = {'GIT_DIR': '/nonexistent', 'GIT_WORK_TREE': '/', 'GIT_INDEX_FILE': '/nonexistent', 'ZZ_CANARY': '1',
+                   'PATH': f'{spy}{os.pathsep}{os.environ["PATH"]}'}
+        code, out = self.validate(**hostile)
+        self.assertEqual(code, 0, out)
+        for name in ('GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'ZZ_CANARY', 'HOME'):
+            self.assertNotRegex(seen.read_text(), rf'(?m)^{name}=')
+        self.plant('zz-tracked.md')
+        self.git('add', 'zz-tracked.md')
+        code, out = self.validate(**hostile)
+        self.assertEqual(code, 1, out)
+        self.assertIn('zz-tracked.md:1: personal path', out)
 
 
 if __name__ == '__main__':

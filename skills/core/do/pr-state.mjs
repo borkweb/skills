@@ -17,7 +17,9 @@
 //
 // Node builtins only, no package.json.
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 // The only hosts a PR URL may name. Any other host would get a gh request, and gh sends a GitHub Enterprise token to it.
 const HOSTS = new Set(['github.com', 'github.a8c.com']);
@@ -192,4 +194,8 @@ function main(urls) {
   return failed.length ? Math.min(...failed) : 0;
 }
 
-process.exitCode = main(process.argv.slice(2));
+export { classify, checkSignal };
+
+// Run the CLI only when node was started with this file, not when it is imported. Both paths are realpath'd: through a
+// symlink, with or without --preserve-symlinks-main, a skipped main would exit 0, which a watcher reads as every PR ready.
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) process.exitCode = main(process.argv.slice(2));

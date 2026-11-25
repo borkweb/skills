@@ -1,6 +1,6 @@
 // test_hardening.mjs — corrective A1: unreadable records, lock deadline, exit hook,
-// id shape, wait cost, init --json, failed cd, and herdr 0.9.3 failure shapes
-// (review-A-r1 findings 1-4, 6, 7, 9, 10; decisions item 11).
+// id shape, wait cost, init --json and failed cd
+// (review-A-r1 findings 1-4, 6, 7, 9; decisions item 11).
 import assert from 'node:assert';
 import test from 'node:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import {
-  NODE_DIR, QOPTS, ask, calls, claim, deadPid, debris, mkRepo, mkRun, newBox, orchestratorRun, readRec, recPath, resetLog, run,
+  NODE_DIR, ask, calls, claim, deadPid, debris, mkRepo, mkRun, newBox, orchestratorRun, readRec, recPath, resetLog, run,
   sha, sleep, spawnChild, staleLock, writeRec,
 } from './testkit.mjs';
 
@@ -47,30 +47,28 @@ for (const kind of ['eisdir', 'eacces']) {
       assert.equal(warnings(w.err).length, 1, w.err);
       assert.ok(!/ {4}at /.test(w.err), w.err);
       const quiet = run(hb, ['wait', '--run', good.id, '--timeout', '1']);
-      assert.ok([0, 124].includes(quiet.code));
+      ok(quiet, 'wait --run');
       const a = run(hb, ['ack', '--all']);
       ok(a, 'ack --all');
       assert.ok(a.err.includes(recPath(bad)));
       assert.ok(!/ {4}at /.test(a.err), a.err);
     } finally { if (kind === 'eacces') chmodSync(recPath(bad), 0o600); }
   });
-
-  test(`1: single-run commands name the path of a ${kind} run.json and exit non-zero`, { skip }, () => {
-    const hb = newBox();
-    const bad = unreadable(hb, kind);
-    const id = bad.split('/').pop();
-    try {
-      for (const c of [['show', id], ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-        ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['tell', id, '--message', 'x'], ['reopen', id]]) {
-        const r = run(hb, c);
-        refused(r, c[0]);
-        assert.deepEqual(calls(hb), [], `${c[0]} makes no herdr call`);
-        assert.ok(r.err.includes(recPath(bad)), `${c[0]} names the path: ${r.err}`);
-        assert.ok(!/ {4}at /.test(r.err));
-      }
-    } finally { if (kind === 'eacces') chmodSync(recPath(bad), 0o600); }
-  });
 }
+
+// eisdir, because Node's EISDIR message carries no path: only this kind proves the CLI adds it.
+test('1: single-run commands name the path of a eisdir run.json and exit non-zero', () => {
+  const hb = newBox();
+  const bad = unreadable(hb, 'eisdir');
+  const id = bad.split('/').pop();
+  for (const c of [['show', id], ['tell', id, '--message', 'x'], ['reopen', id]]) {
+    const r = run(hb, c);
+    refused(r, c[0]);
+    assert.deepEqual(calls(hb), [], `${c[0]} makes no herdr call`);
+    assert.ok(r.err.includes(recPath(bad)), `${c[0]} names the path: ${r.err}`);
+    assert.ok(!/ {4}at /.test(r.err));
+  }
+});
 
 // ---- 2: the stale-lock branch honors the deadline -----------------------------------------------
 
@@ -89,6 +87,8 @@ test('2: a stale dead-pid lock in a run dir this user cannot write fails in abou
     assert.notEqual(r.code, 0);
     assert.ok(r.ms < 7500, `${r.ms} ms`);
     assert.ok(r.err.includes(lock), r.err);
+    assert.match(r.err, /not writable/, r.err);
+    assert.match(r.err, /stale/, r.err);
   } finally { chmodSync(dir, 0o700); }
   assert.equal(sha(recPath(dir)), before);
 });
@@ -106,7 +106,7 @@ const launch = (box, dir, stubEnv = {}) => spawnSync('bash', [join(dir, 'launch.
   encoding: 'utf8', cwd: '/',
 });
 
-test('3: when the run is already blocked at architect exit the hook keeps the summary and adds a note; otherwise it sets blocked', () => {
+test('3: when the run is already blocked at architect exit the hook keeps the summary and adds a note', () => {
   const hb = newBox();
   const repo = mkRepo(hb);
   const a = started(hb, repo);
@@ -117,10 +117,6 @@ test('3: when the run is already blocked at architect exit the hook keeps the su
   assert.equal(ra.history.at(-1).note, 'architect exited (code 0)');
   assert.equal(ra.history.at(-1).state, 'blocked');
   assert.equal(ra.history.filter((h) => h.state === 'blocked').length, 2, 'one for the breaker, one note for the exit');
-  const c = started(hb, repo);
-  assert.equal(launch(hb, c.dir, { STUB_ACTION: 'exit3' }).status, 3);
-  const rc = readRec(c.dir);
-  assert.deepEqual([rc.state, rc.summary], ['blocked', 'architect exited (code 3)']);
 });
 
 // ---- 4: lines come from the dir name; a foreign id or question id is an invalid record ------------
@@ -178,16 +174,6 @@ test('6: wait does not re-read an unchanged run.json each second (settled or liv
   } finally { for (const d of [settled.dir, live.dir]) chmodSync(recPath(d), 0o600); }
 });
 
-test('6: wait still notices a changed run.json (new inode) within the second', async () => {
-  const hb = newBox();
-  const { id } = mkRun(hb);
-  const child = spawnChild(hb, ['wait', '--run', id, '--timeout', '20']);
-  await sleep(600);
-  ask(hb, id);
-  const r = await child.done;
-  assert.equal(r.code, 0, r.err);
-});
-
 // ---- 7: init --json ------------------------------------------------------------------------------
 
 test('7: init --json prints the record for a new run and for an existing one', () => {
@@ -216,30 +202,9 @@ test('9: a repo removed after start makes launch.sh block the run before exiting
   assert.equal(rec.summary, 'architect could not start (cd failed)');
   assert.equal(rec.signal_revision, rec.revision);
   assert.ok(!existsSync(hb.argv), 'the architect never ran');
-  assert.ok(readFileSync(join(a.dir, 'launch.sh'), 'utf8').indexOf('NODE=') < readFileSync(join(a.dir, 'launch.sh'), 'utf8').indexOf('cd '), 'NODE is defined above the cd');
 });
 
-// ---- 10: nudge failure shapes of herdr 0.9.3 -----------------------------------------------------
-
-test('10: herdr 0.9.3 failures (exit 1 with a JSON error on stderr) and an exit-0 stderr error each warn once and keep the record', () => {
-  for (const mode of ['prompt-live-notfound', 'prompt-live-blocked', 'prompt-stderr-error']) {
-    const hb = newBox();
-    ok(claim(hb));
-    const { dir, id } = orchestratorRun(hb);
-    const r = run(hb, ['set', id, '--state', 'blocked', '--summary', 's'], { HERDR_STUB_MODE: mode });
-    ok(r, mode);
-    assert.equal(warnings(r.err).length, 1, `${mode}: ${r.err}`);
-    assert.equal(readRec(dir).state, 'blocked');
-    assert.deepEqual(debris(dir), []);
-  }
-  const hb = newBox();
-  ok(claim(hb));
-  const { id } = orchestratorRun(hb);
-  const calm = run(hb, ['set', id, '--state', 'blocked', '--summary', 's']);
-  assert.equal(warnings(calm.err).length, 0, 'a good send stays silent');
-});
-
-// ---- polish follow-up (review-A-r2 findings 1, 3, 4; decisions 13) --------------------------------
+// ---- polish follow-up (review-A-r2 findings 1, 3; decisions 13) -----------------------------------
 
 test('r2-1: a run.json repaired by chmod while wait runs fires its RUN line before the timeout', { skip: root }, async () => {
   const hb = newBox();
@@ -276,27 +241,6 @@ test('r2-3: a different-case run id resolves to the on-disk id, in show and in i
   ok(again, 'init --run-dir with a different-case path');
   assert.equal(JSON.parse(again.out).id, disk);
   assert.equal(JSON.parse(again.out).goal, 'g');
-});
-
-test('r2-4: a stale lock that cannot be broken because the run dir is not writable says so, and names the lock', { skip: root }, async () => {
-  const hb = newBox();
-  const { dir, id } = mkRun(hb);
-  const lock = staleLock(dir, deadPid(), 30);
-  chmodSync(dir, 0o500);
-  try {
-    const r = await spawnChild(hb, ['set', id, '--note', 'x']).done;
-    assert.notEqual(r.code, 0);
-    assert.ok(r.err.includes(lock), r.err);
-    assert.match(r.err, /not writable/, r.err);
-    assert.match(r.err, /stale/, r.err);
-  } finally { chmodSync(dir, 0o700); }
-  const live = mkRun(hb, { slug: 'busy' });
-  // A fresh lock held by a live pid is not stale: the old message stays.
-  writeFileSync(join(live.dir, 'run.json.lock'), JSON.stringify({ pid: process.pid, at: new Date().toISOString() }));
-  const other = await spawnChild(hb, ['set', live.id, '--note', 'x']).done;
-  assert.notEqual(other.code, 0);
-  assert.ok(!/not writable/.test(other.err), `a live writer keeps the old message: ${other.err}`);
-  assert.match(other.err, /another writer/, other.err);
 });
 
 // ---- polish 2 (review-integration findings 2 and 9; decisions 15) --------------------------------

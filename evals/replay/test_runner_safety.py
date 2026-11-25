@@ -8,9 +8,11 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fixture  # noqa: E402
+import run_replay  # noqa: E402
 import support  # noqa: E402
 
 
@@ -87,27 +89,34 @@ class GateTests(RunnerBase):
         self.assertFalse((self.fx.repo / 'LEAK').exists())
         skipped = support.load(self.out / 'summary.json')['skipped_cases']
         self.assertIn('live repo path', skipped[0]['reason'])
+        record = support.case_record(self.out)
+        self.assertEqual(record['status'], 'skipped')
+        self.assertEqual({t['outcome'] for t in record['trials']}, {'skipped'})
 
-    def test_tilde_and_home_forms_of_the_live_path_are_refused(self):
-        for form in ('~', '$HOME', '${HOME}'):
-            with self.subTest(form=form):
-                self.setUp()
-                self.build(gates=(f'touch {form}/repo/LEAK'.replace('{', '{{').replace('}', '}}'),))
-                run = support.replay(self.fx, self.out, env={'HOME': str(self.fx.root)})
-                self.assertFalse((self.fx.repo / 'LEAK').exists())
-                self.assertIn('live repo path', support.load(self.out / 'summary.json')['skipped_cases'][0]['reason'])
-
-    def test_another_worktree_of_the_repo_counts_as_the_live_path(self):
+    def test_case_skip_reason_matrix_in_process(self):
         self.build(gates=('echo x',))
+        case = json.loads(self.fx.case_path.read_text())
+        live = str(self.fx.repo)
         other = self.fx.root / 'other'
         support.git(self.fx.repo, 'worktree', 'add', '-q', '--detach', str(other))
-        case = json.loads(self.fx.case_path.read_text())
-        command = f'touch {other}/LEAK'
-        case.update(gate_commands=[command], gates_text=f'Gates:\n- G1 `{command}`')
-        self.fx.case_path.write_text(json.dumps(case))
-        support.replay(self.fx, self.out)
-        self.assertFalse((other / 'LEAK').exists())
-        self.assertIn('live repo path', support.load(self.out / 'summary.json')['skipped_cases'][0]['reason'])
+        self.assertIsNone(run_replay.case_skip_reason(case))  # positive control
+        absent = fixture.build(self.tmp / 'fx-absent', missing_commit=True)
+        self.assertIn('base commit', run_replay.case_skip_reason(json.loads(absent.case_path.read_text())) or '')
+        commands = {f'{form}/repo form': {'gate_commands': [f'touch {form}/repo/LEAK']}
+                    for form in ('~', '$HOME', '${HOME}')}
+        commands['another worktree'] = {'gate_commands': [f'touch {other}/LEAK']}
+        commands['setup command'] = {'setup_commands': [f'touch {live}/LEAK']}
+        with patch.dict(os.environ, {'HOME': str(self.fx.root)}):
+            for name, change in commands.items():
+                with self.subTest(command=name):
+                    self.assertIn('live repo path', run_replay.case_skip_reason(dict(case, **change)) or '')
+        for field in ('goal', 'owned_files', 'criteria', 'gates_text'):
+            with self.subTest(field=field):
+                text = (f'work in {live}' if field in ('goal', 'owned_files')
+                        else case[field] + (f'\nC9: `cd {live} && true` works' if field == 'criteria' else f'\nnote: {live}'))
+                reason = run_replay.case_skip_reason(dict(case, **{field: text})) or ''
+                self.assertIn(field, reason)
+                self.assertIn('live repo path', reason)
 
     def test_builder_that_leaves_uncommitted_changes_is_a_dirty_tree_error(self):
         self.build()
@@ -159,11 +168,6 @@ class GateTests(RunnerBase):
         self.assertEqual(arm['graded'], 0)
         self.assertEqual(arm['not_graded']['env-unavailable'], 1)
         self.assertIsNone(arm['rate'])
-
-    def test_setup_naming_the_live_repo_path_is_refused(self):
-        self.build(setup_commands=('touch {repo}/LEAK',))
-        support.replay(self.fx, self.out)
-        self.assertFalse((self.fx.repo / 'LEAK').exists())
 
 
 class CleanupTests(RunnerBase):
@@ -349,17 +353,14 @@ class SpendGuardTests(RunnerBase):
         self.assertNotEqual(run.returncode, 0)
         self.assertFalse(marker.exists())
         self.assertIn('--spend', out + run.stderr)
+        self.assertIn('6 builder calls', out + run.stderr)
+        self.assertIn('6 grader calls', out + run.stderr)
 
     def test_non_fake_grader_is_refused_without_spend(self):
         run, marker, out = self.run_guard(spend=False, builder_fake=True)
         self.assertNotEqual(run.returncode, 0)
         self.assertFalse(marker.exists())
         self.assertIn('--spend', out + run.stderr)
-
-    def test_refusal_prints_the_planned_counts(self):
-        run, marker, out = self.run_guard(spend=False, grader_fake=True)
-        self.assertIn('6 builder calls', out + run.stderr)
-        self.assertIn('6 grader calls', out + run.stderr)
 
     def test_with_spend_the_count_prints_before_the_first_adapter_call(self):
         run, marker, out = self.run_guard(spend=True, grader_fake=True)

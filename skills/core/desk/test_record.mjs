@@ -105,14 +105,16 @@ test('ids that fail the id rule, and unknown ids, are refused by every id-taking
     wait: (id) => ['wait', '--run', id, '--timeout', '1'],
     tell: (id) => ['tell', id, '--message', 'x'],
     reopen: (id) => ['reopen', id],
+    escape: (id) => ['escape', id, '--kind', 'revert', '--ref', 'abc1234'],
   };
+  // Every command gets the traversal id (a command that skips the id rule) and the unknown id (a command that treats a
+  // missing run as success). The id rule is shared, so each of its other forms needs one row.
+  const rows = [...Object.keys(cmds).flatMap((name) => [[name, '../x'], [name, 'no-such-run']]), ['show', '..'], ['show', '.h'], ['show', 'a..b']];
   resetLog(b);
-  for (const id of ['..', '../x', '.h', 'a..b', 'no-such-run']) {
-    for (const [name, mk] of Object.entries(cmds)) {
-      const r = run(b, mk(id));
-      refused(r, `${name} ${id}`);
-      if (id !== 'no-such-run') assert.match(r.err, /invalid run id/, `${name} ${id} fails the id rule itself, not only the realpath check`);
-    }
+  for (const [name, id] of rows) {
+    const r = run(b, cmds[name](id));
+    refused(r, `${name} ${id}`);
+    if (id !== 'no-such-run') assert.match(r.err, /invalid run id/, `${name} ${id} fails the id rule itself, not only the realpath check`);
   }
   assert.equal(sha(recPath(victim)), vsha, 'a traversal id must not touch a dir outside the home');
   assert.deepEqual(calls(b), [], 'every refusal, tell and reopen included, comes before any herdr call');
@@ -129,7 +131,7 @@ test('a run dir must be a direct child of the home by realpath', () => {
   symlinkSync(outside, join(b.runs, 'link-out'));
   refused(run(b, ['show', join(b.runs, 'link-out')]), 'symlink out');
   refused(run(b, ['show', 'link-out']), 'symlink out by id');
-  refused(run(b, ['show', outside]), 'plain outside dir');
+  assert.equal(run(b, ['show', outside]).code, 1, 'plain outside dir: a refusal exits 1, not the usage code');
   mkdirSync(join(dir, 'sub'));
   writeFileSync(recPath(join(dir, 'sub')), JSON.stringify(readRec(dir)));
   refused(run(b, ['show', join(dir, 'sub')]), 'nested dir');
@@ -153,22 +155,25 @@ function plantBad(name, body) {
 }
 
 test('an invalid run.json makes every command exit non-zero naming the path, bytes untouched', () => {
-  for (const [name, body] of Object.entries(BAD)) {
-    const dir = plantBad(name, body);
-    const id = dir.split('/').pop();
+  // One row per command, and every BAD kind is used at least once.
+  const rows = [
+    ['malformed json', (id) => ['set', id, '--state', 'blocked']],
+    ['missing state', (id) => ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A']],
+    ['unknown state', (id) => ['answer', id, 'Q1', '--answer', 'A', '--by', 'user']],
+    ['questions not a list', (id) => ['withdraw', id, 'Q1']],
+    ['newer schema', (id) => ['ack', id]],
+    ['malformed json', (id) => ['show', id]],
+    ['missing state', (id, dir) => ['init', '--goal', 'g', '--run-dir', dir]],
+  ];
+  for (const [name, args] of rows) {
+    const dir = plantBad(name, BAD[name]);
     const before = sha(recPath(dir));
-    const cmds = [
-      ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
-      ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['show', id],
-      ['init', '--goal', 'g', '--run-dir', dir],
-    ];
-    for (const c of cmds) {
-      const r = run(b, c);
-      refused(r, `${name}: ${c[0]}`);
-      assert.ok(r.err.includes(recPath(dir)), `${name}: ${c[0]} names the path: ${r.err}`);
-    }
-    assert.equal(sha(recPath(dir)), before, name);
-    assert.deepEqual(debris(dir), [], name);
+    const c = args(dir.split('/').pop(), dir);
+    const r = run(b, c);
+    refused(r, `${name}: ${c[0]}`);
+    assert.ok(r.err.includes(recPath(dir)), `${name}: ${c[0]} names the path: ${r.err}`);
+    assert.equal(sha(recPath(dir)), before, `${name}: ${c[0]}`);
+    assert.deepEqual(debris(dir), [], `${name}: ${c[0]}`);
   }
 });
 
@@ -220,14 +225,15 @@ test('with OFFLOAD_HANDOFF set every writing command is refused and bytes stay; 
   const [rs, os] = [sha(recPath(dir)), sha(oj)];
   const B = { OFFLOAD_HANDOFF: '/tmp/x' };
   const runsBefore = readdirSync(wb.runs).join(',');
+  const esc = ['escape', id, '--kind', 'revert', '--ref', 'abc1234'];
   const writers = [
     ['init', '--goal', 'g'], ['set', id, '--state', 'blocked'], ['ask', id, '--question', 'q', '--options', QOPTS, '--recommendation', 'A'],
     ['answer', id, 'Q1', '--answer', 'A', '--by', 'user'], ['withdraw', id, 'Q1'], ['ack', id], ['ack', '--all'],
     ['claim', '--pane', 'tw:p4'], ['release'], ['start', '--repo', repo, '--goal', 'g'],
-    ['tell', id, '--message', 'x'], ['reopen', id],
+    ['tell', id, '--message', 'x'], ['reopen', id], esc,
   ];
   for (const w of writers) refused(run(wb, w, B), w[0]);
-  for (const w of [['tell', id, '--message', 'x'], ['reopen', id]]) {
+  for (const w of [['tell', id, '--message', 'x'], ['reopen', id], esc]) {
     const r = run(wb, w, B);
     assert.equal(r.code, 1, w[0]);
     assert.match(r.err, /refused: OFFLOAD_HANDOFF is set/, w[0]);
@@ -239,7 +245,7 @@ test('with OFFLOAD_HANDOFF set every writing command is refused and bytes stay; 
   assert.equal(readdirSync(wb.runs).join(','), runsBefore);
   ok(run(wb, ['show', id], B));
   ok(run(wb, ['list'], B));
-  assert.ok([0, 124].includes(run(wb, ['wait', '--timeout', '1'], B).code), 'wait still works');
+  ok(run(wb, ['wait', '--timeout', '1'], B), 'wait still works');
 });
 
 test('runs.mjs never touches backlog.md, coordination.sqlite or assignments/', () => {
@@ -438,6 +444,8 @@ test('a young lock, or an old lock held by a live pid, fails the writer in about
     assert.notEqual(r.code, 0);
     assert.ok(r.ms < 9000, `gave up in ${r.ms} ms`);
     assert.ok(r.err.includes(lock), r.err);
+    assert.match(r.err, /another writer/, r.err);
+    assert.ok(!/not writable/.test(r.err), `a lock that is not stale keeps this message: ${r.err}`);
     assert.equal(sha(recPath(dir)), before);
     rmSync(lock);
     assert.deepEqual(debris(dir), []);
@@ -465,19 +473,6 @@ test('show prints state, summary, delivery, open questions with options and reco
   ok(s);
   for (const need of ['needs-me', 'sum-line', 'deliv-line', 'pick one?', 'A', 'da', 'B', 'db', 'recommendation', dir, 'w9:t7']) assert.ok(s.out.includes(need), `show has ${need}\n${s.out}`);
   assert.equal(run(b, ['show', dir]).out, s.out);
-});
-
-test('architect gone is flagged only when the pane is set and herdr reports no agent', () => {
-  const { dir, id } = mkRun(b);
-  const rows = [['w9:p7', undefined, true], ['w9:p7', 'w9:p7', false], [null, undefined, false]];
-  for (const [pane, agents, gone] of rows) {
-    writeRec(dir, { architect: { harness: 'claude', session_id: null, frontend: 'herdr', tab: 't', pane } });
-    resetLog(b);
-    const s = run(b, ['show', id], { HERDR_STUB_AGENTS: agents });
-    const l = run(b, ['list'], { HERDR_STUB_AGENTS: agents });
-    for (const o of [s.out, l.out]) assert.equal(/architect gone/.test(o), gone, `${pane}/${agents}: ${o}`);
-    if (pane === null) assert.deepEqual(calls(b), [], 'no herdr call without a pane');
-  }
 });
 
 test('stale flags a running run idle for 25 h, not 23 h, not a blocked run; the file is untouched', () => {

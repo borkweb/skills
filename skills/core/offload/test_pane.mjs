@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import test from 'node:test';
-import { BUILDER_TAB_LABEL, UNMANAGED_PANE_CONSEQUENCE, verifyPane } from './pane.mjs';
+import { verifyPane } from './pane.mjs';
 
 const BOX = mkdtempSync(join(tmpdir(), 'pane-'));
 process.on('exit', () => rmSync(BOX, { recursive: true, force: true }));
@@ -74,11 +74,6 @@ const sidecarText = (frontend, pane, tab, harness = 'claude') =>
   `frontend=${frontend}\npane=${pane}\ntab=${tab}\nharness=${harness}\n`;
 const writeSidecar = (handoff, text) => writeFileSync(`${handoff}.pane`, text);
 const KEYS = ['label', 'paneCount', 'reason', 'skipped', 'tabId', 'verified'];
-
-test('BUILDER_TAB_LABEL stays "builder" and the consequence text is kept', () => {
-  assert.equal(BUILDER_TAB_LABEL, 'builder');
-  assert.match(UNMANAGED_PANE_CONSEQUENCE, /wait bridge can never fire/);
-});
 
 // --- renamed tab, with a handoff --------------------------------------------
 

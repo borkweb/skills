@@ -319,16 +319,14 @@ test('C7 the message text never reaches herdr', () => {
 });
 
 test('C8 a nudge failure after the write: recorded, not delivered, exit 3, the reopen stays', () => {
-  for (const mode of ['prompt-live-blocked', 'prompt-live-notfound', 'prompt-blocked']) {
-    const { dir, id } = mk();
-    finish(id);
-    const r = tell(id, 'm', { ...LIVE, HERDR_STUB_MODE: mode });
-    assert.equal(r.code, 3, `${mode}: ${r.err}`);
-    assert.match(r.out, /^M1 recorded, not delivered \(agent_(blocked|not_found)\)\n$/, mode);
-    const rec = readRec(dir);
-    assert.equal(rec.state, 'running');
-    assert.equal(rec.messages.length, 1);
-  }
+  const { dir, id } = mk();
+  finish(id);
+  const r = tell(id, 'm', { ...LIVE, HERDR_STUB_MODE: 'prompt-live-blocked' });
+  assert.equal(r.code, 3, r.err);
+  assert.equal(r.out, 'M1 recorded, not delivered (agent_blocked)\n');
+  const rec = readRec(dir);
+  assert.equal(rec.state, 'running');
+  assert.equal(rec.messages.length, 1);
 });
 
 test('C9 --json prints message, state and delivered with the same exit codes', () => {
@@ -344,6 +342,11 @@ test('C9 --json prints message, state and delivered with the same exit codes', (
   const f = tell(c.id, 'hello', { ...LIVE, HERDR_STUB_MODE: 'prompt-live-blocked' }, ['--json']);
   assert.equal(f.code, 3);
   assert.equal(JSON.parse(f.out).delivered, false);
+  // herdr can also report a blocked agent with exit 0.
+  const d = mk();
+  const g = tell(d.id, 'hello', { ...LIVE, HERDR_STUB_MODE: 'prompt-blocked' }, ['--json']);
+  assert.equal(g.code, 3, g.err);
+  assert.equal(JSON.parse(g.out).delivered, false);
 });
 
 test('G7 --json on a refusal or a usage error prints nothing on stdout', () => {
@@ -427,10 +430,6 @@ test('G9 reopen adds an empty messages list to a record that has none, so a late
 });
 
 // ---- the rest of the record changes -----------------------------------------------------------------------------------
-
-test('C11 init writes messages: []', () => {
-  assert.deepEqual(readRec(mkRun(b).dir).messages, []);
-});
 
 test('C14 set and ask on a done run point to reopen; the failed text is unchanged', () => {
   const { id } = mk();

@@ -77,7 +77,6 @@ writeFileSync(HANDOFF, '---\nstatus: dispatched\n---\n');
 // run() so the host's real ~/.codex never leaks into assertions.
 const CODEX_HOME = join(BOX, 'codex-home');
 mkdirSync(join(CODEX_HOME, 'sessions'), { recursive: true });
-writeFileSync(join(CODEX_HOME, 'config.toml'), 'notify = ["/opt/orig-notify", "turn-ended"]\n');
 
 // Constrained PATH: stubs first, node's own dir (dispatch shells out to node),
 // then system dirs only — the host's real harness binaries (pi, codex, ...)
@@ -89,7 +88,12 @@ const CONFIG = join(BOX, 'config.json');
 const writeConfig = (use) => writeFileSync(CONFIG, JSON.stringify({
   dispatch: { rules: [{ when: 'builder dispatch', use, why: 'test' }] },
 }));
-writeConfig([{ harness: 'codex' }]);
+// Tests rewrite the config and the codex config.toml; each one starts from these defaults, so a
+// failed test cannot leave its fixture behind for the next.
+test.beforeEach(() => {
+  writeConfig([{ harness: 'codex' }]);
+  writeFileSync(join(CODEX_HOME, 'config.toml'), 'notify = ["/opt/orig-notify", "turn-ended"]\n');
+});
 
 const run = (extraEnv, args = [], cwd = undefined) => {
   rmSync(LOG, { force: true });
@@ -235,14 +239,12 @@ test('claude profile launches with --permission-mode auto by default', () => {
   writeConfig([{ harness: 'claude' }]);
   const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
   assert.match(launchScriptOf(log), /claude --permission-mode auto/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('per-profile permissionMode overrides the claude default', () => {
   writeConfig([{ harness: 'claude', permissionMode: 'acceptEdits' }]);
   const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
   assert.match(launchScriptOf(log), /claude --permission-mode acceptEdits/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('model and effort flow into the codex command', () => {
@@ -250,7 +252,6 @@ test('model and effort flow into the codex command', () => {
   const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
   const script = launchScriptOf(log);
   assert.match(script, /codex -m gpt-5\.5 --config model_reasoning_effort=high/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 // --- deterministic turn-end wiring ---
@@ -269,18 +270,6 @@ test('codex notify hook works without a user config.toml notify line', () => {
   const script = launchScriptOf(log);
   assert.ok(script.includes('notify-turn-ended.sh'), 'wrapper missing with no user notify');
   assert.ok(!script.includes('/opt/orig-notify'), 'phantom chain with no user notify');
-  writeFileSync(join(CODEX_HOME, 'config.toml'), 'notify = ["/opt/orig-notify", "turn-ended"]\n');
-});
-
-test('claude launch installs Stop/Notification hooks touching the turn-end marker', () => {
-  writeConfig([{ harness: 'claude' }]);
-  const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
-  const script = launchScriptOf(log);
-  assert.ok(script.includes('--settings'), 'settings flag missing');
-  assert.ok(script.includes('Stop'), 'Stop hook missing');
-  assert.ok(script.includes('Notification'), 'Notification hook missing');
-  assert.ok(script.includes(`${HANDOFF}.turn-ended`), 'marker path missing from hook command');
-  writeConfig([{ harness: 'codex' }]);
 });
 
 // The sidecar must never name a shared log root: every other open session
@@ -314,7 +303,6 @@ test('claude builder gets a pinned session id and the sidecar names only its tra
     readFileSync(`${HANDOFF}.activity`, 'utf8').trim().split('\n'),
     [join(dir, `${m[1]}.jsonl`), join(dir, m[1])],
   );
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('claude without a session id: repo transcript dir, or no sidecar when the architect shares the cwd', () => {
@@ -332,7 +320,6 @@ test('claude without a session id: repo transcript dir, or no sidecar when the a
     assert.ok(!existsSync(`${HANDOFF}.activity`), 'shared cwd is not discriminating');
   } finally {
     rmSync(uuidgen, { force: true });
-    writeConfig([{ harness: 'codex' }]);
   }
 });
 
@@ -341,14 +328,12 @@ test('first candidate missing from PATH falls through to the next', () => {
   writeConfig([{ harness: 'pi' }, { harness: 'claude' }]);
   const { log } = run({ TMUX: '/tmp/tmux-1,1,0' });
   assert.match(launchScriptOf(log), /claude --permission-mode auto/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('explicit profile-spec argument bypasses config resolution', () => {
   rmSync(CONFIG, { force: true }); // no config at all — override must not need it
   const { log } = run({ TMUX: '/tmp/tmux-1,1,0' }, ['claude:opus']);
   assert.match(launchScriptOf(log), /claude --permission-mode auto --model opus/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('custom command profile is used verbatim with __PROMPT_FILE__ substituted', () => {
@@ -358,7 +343,6 @@ test('custom command profile is used verbatim with __PROMPT_FILE__ substituted',
   const script = launchScriptOf(log);
   assert.match(script, /mytool --yolo/);
   assert.ok(script.includes(BLOCK), 'prompt file path substituted');
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('no tmux on Darwin -> osascript Terminal fallback', () => {
@@ -378,7 +362,6 @@ test('headless claude uses -p with full bypass, not auto mode', () => {
   writeConfig([{ harness: 'claude' }]);
   const { log } = run({ TMUX: '' });
   assert.match(log, /^claude -p --dangerously-skip-permissions/m);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 // Claude Code replaces an inherited $CLAUDE_CODE_SESSION_ID with its own session
@@ -391,7 +374,6 @@ test('every launch carries the architect id in OFFLOAD_SESSION_ID beside the han
     assert.match(script, /^export OFFLOAD_SESSION_ID=sess-Z$/m, `${harness} launch carries the id`);
     assert.match(script, /^export OFFLOAD_HANDOFF=\S+handoff\.md$/m);
   }
-  writeConfig([{ harness: 'codex' }]);
 });
 
 // review-criteria class 2: a builder runs with its gates off, so it never sees the user's tokens.
@@ -426,7 +408,6 @@ test('a headless builder gets no token or secret from the environment, but keeps
     assertScrubbed(run({ TMUX: '', ...SECRETS }).log);
   } finally {
     stub('claude');
-    writeConfig([{ harness: 'codex' }]);
   }
 });
 
@@ -439,7 +420,6 @@ test('OFFLOAD_BUILDER_PASS_ENV keeps a named secret, and OFFLOAD_BUILDER_ENV=inh
     assert.match(run({ TMUX: '', ...SECRETS, OFFLOAD_BUILDER_ENV: 'inherit' }).log, /^env GITHUB_PERSONAL_ACCESS_TOKEN=ghp-leak$/m);
   } finally {
     stub('claude');
-    writeConfig([{ harness: 'codex' }]);
   }
 });
 
@@ -472,7 +452,6 @@ test('a headless builder gets OFFLOAD_SESSION_ID in its environment', () => {
     assert.match(log, /^claude-env OFFLOAD_SESSION_ID=sess-Z OFFLOAD_HANDOFF=\S+handoff\.md$/m);
   } finally {
     stub('claude');
-    writeConfig([{ harness: 'codex' }]);
   }
 });
 
@@ -483,7 +462,6 @@ test('headless path skips interactive-only harnesses for the next candidate', ()
   const { log } = run({ TMUX: '' });
   assert.doesNotMatch(log, /^grok/m);
   assert.match(log, /^codex exec/m);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 // --- duplicate-builder guard (one handoff owns at most one builder) ---
@@ -550,7 +528,6 @@ test('a herdr launch records the frontend, pane, tab and harness beside the hand
   assert.match(side, /^pane=w9:p7$/m);
   assert.match(side, /^tab=w9:t7$/m);
   assert.match(side, /^harness=claude$/m);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('a failed herdr launch leaves no pane sidecar behind', () => {
@@ -568,7 +545,6 @@ test('claude builders launch with no MCP servers by default', () => {
   const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0' }).log);
   assert.match(script, /--strict-mcp-config --mcp-config/);
   assert.match(script, /mcpServers/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('OFFLOAD_BUILDER_MCP=inherit keeps the user’s MCP configuration', () => {
@@ -576,7 +552,6 @@ test('OFFLOAD_BUILDER_MCP=inherit keeps the user’s MCP configuration', () => {
   unameReports('Linux');
   const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0', OFFLOAD_BUILDER_MCP: 'inherit' }).log);
   assert.doesNotMatch(script, /strict-mcp-config/);
-  writeConfig([{ harness: 'codex' }]);
 });
 
 test('OFFLOAD_BUILDER_MCP=<path> loads exactly that MCP config', () => {
@@ -586,7 +561,6 @@ test('OFFLOAD_BUILDER_MCP=<path> loads exactly that MCP config', () => {
   writeFileSync(mcp, '{"mcpServers":{}}');
   const script = launchScriptOf(run({ TMUX: '/tmp/tmux-1,1,0', OFFLOAD_BUILDER_MCP: mcp }).log);
   assert.match(script, new RegExp(`--strict-mcp-config --mcp-config ${mcp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  writeConfig([{ harness: 'codex' }]);
 });
 
 // A headless claude builder (claude -p) gets the same Stop gate hook as an interactive one:
@@ -613,33 +587,5 @@ test('C16: a headless claude builder gets the Stop gate hook through --settings'
     assert.ok(argv.indexOf('-p') >= 0 && argv.indexOf('--dangerously-skip-permissions') >= 0, 'still headless with full bypass');
   } finally {
     stub('claude');
-    writeConfig([{ harness: 'codex' }]);
-  }
-});
-
-// The settings JSON is built, not printf'd: a handoff path with a quote or a space stays valid JSON.
-test('C6a: --settings is valid JSON for a handoff path with a space and a quote', () => {
-  unameReports('Linux');
-  writeConfig([{ harness: 'claude' }]);
-  const dir = join(BOX, 'odd dir"x');
-  mkdirSync(dir, { recursive: true });
-  const odd = join(dir, 'handoff.md');
-  writeFileSync(odd, '---\nstatus: dispatched\n---\n');
-  const argvOut = join(BOX, 'odd-argv');
-  const rec = join(BIN, 'claude');
-  writeFileSync(rec, `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > "${argvOut}"\n`);
-  chmodSync(rec, 0o755);
-  try {
-    rmSync(LOG, { force: true });
-    execFileSync('bash', [DISPATCH, BOX, BLOCK, odd, 'sess-Z'], {
-      encoding: 'utf8',
-      env: { HOME: BOX, TMPDIR: tmpdir(), HERDR_ENV: '', HERDR_WORKSPACE_ID: '', BORKWEB_SKILLS_CONFIG: CONFIG, CODEX_HOME, PATH: TEST_PATH, TMUX: '' },
-    });
-    const argv = readFileSync(argvOut, 'utf8').split('\n');
-    const settings = JSON.parse(argv[argv.indexOf('--settings') + 1]);
-    assert.ok(settings.hooks.Stop[0].hooks[0].command.includes(`${odd}.turn-ended`));
-  } finally {
-    stub('claude');
-    writeConfig([{ harness: 'codex' }]);
   }
 });

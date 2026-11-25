@@ -120,22 +120,19 @@ class SentinelGuard(unittest.TestCase):
 
     # -- setup -----------------------------------------------------------------------------------------
 
-    def test_a_sentinel_that_is_not_running_is_refused_before_the_child_runs(self):
-        marker = os.path.join(self.tmp, "ran")
-        proc = self.guard("open(%r, 'w').write('x')" % marker, {"TEST_ALL_SENTINEL_STATE": "done"})
-        self.assertNotEqual(proc.returncode, 0)
-        self.assertIn("not running", proc.stdout)
-        self.assertFalse(os.path.exists(marker), "the child must not run against a dead sentinel")
-
     def test_a_sentinel_state_outside_the_fixed_list_is_refused_and_a_crafted_one_cannot_forge_running(self):
         marker = os.path.join(self.tmp, "ran")
         crafted = 'running",\n  "state": "done'
-        for value in (crafted, "bogus", "failed", "done", 'running"', "running\n", ""):
-            if value == "":
-                continue  # unset and empty both mean the default, running
+        for value in (crafted, "bogus", "failed", "done", 'running"', "running\n"):
             proc = self.guard("open(%r, 'w').write('x')" % marker, {"TEST_ALL_SENTINEL_STATE": value})
             self.assertNotEqual(proc.returncode, 0, "state %r must be refused: %s" % (value, proc.stdout))
             self.assertFalse(os.path.exists(marker), "the child must not run for state %r" % value)
+            if value == "done":  # a listed word that is not live: refused by the liveness check, not the list
+                self.assertIn("not running", proc.stdout)
+        # unset and empty both mean the default, running
+        proc = self.guard("open(%r, 'w').write('x')" % marker, {"TEST_ALL_SENTINEL_STATE": ""})
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue(os.path.exists(marker), "an empty state is the default, so the child runs")
         proc = self.guard("pass", {"TEST_ALL_SENTINEL_STATE": "running"})
         self.assertEqual(proc.returncode, 0, proc.stdout)
 

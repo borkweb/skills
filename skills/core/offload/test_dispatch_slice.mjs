@@ -459,34 +459,21 @@ test('a one-slice corrective records --verdict', () => {
   assert.equal(s.history[3].verdict, 'gates green; review = DO NOT LAND: drag bug (named C3) checkable: lint');
 });
 
-// X1: a review-only verdict without `checkable:` is refused on every corrective
-// path that records a rejection, before the brief changes or anything is sent.
-for (const [label, prep] of [
-  ['results-ready', () => {}],
-  ['accepted', (R) => hoff(['ledger', 'set', R, '1', '--state', 'accepted', '--verdict', 'SAFE TO LAND'])],
-]) {
-  test(`C1c: --corrective --verdict without a checkable tag is refused on a ${label} row`, () => {
-    const { R, WT, doc } = reported(`feat/x1-${label}`);
-    prep(R);
-    const before = hoff(['section', 'get', doc, 'Next slice']);
-    const ledgerBefore = readFileSync(hoff(['ledger', 'path', R]));
-    const r = runFail([R, WT, `feat/x1-${label}`, FIX, '--corrective', '--verdict', 'DO NOT LAND unnamed: x']);
-    assert.notEqual(r.status, 0);
-    assert.match(r.stderr, /checkable: <tool>/);
-    assert.match(r.stderr, /checkable: no/);
-    assert.equal(r.log, '', 'nothing was sent and nothing was launched');
-    assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'Next slice unchanged');
-    assert.equal(row(R, '1').state, label);
-    assert.ok(ledgerBefore.equals(readFileSync(hoff(['ledger', 'path', R]))), 'ledger bytes unchanged');
-  });
-}
-
-test('C1d: --corrective --verdict accepts checkable: <tool>, checkable: no and checkable:lint', () => {
-  for (const [i, tag] of ['checkable: grep-ratchet', 'checkable: no', 'checkable:lint'].entries()) {
-    const { R, WT } = reported(`feat/x1-ok-${i}`);
-    run([R, WT, `feat/x1-ok-${i}`, FIX, '--corrective', '--verdict', `review = DO NOT LAND: x (unnamed) ${tag}`]);
-    assert.equal(row(R, '1').history.find((h) => h.state === 'rejected').verdict.endsWith(tag), true, tag);
-  }
+// X1: a review-only verdict without `checkable:` is refused before the brief changes
+// or anything is sent (the results-ready arm: 'an unrecordable verdict ...' below).
+test('C1c: --corrective --verdict without a checkable tag is refused on a accepted row', () => {
+  const { R, WT, doc } = reported('feat/x1-accepted');
+  hoff(['ledger', 'set', R, '1', '--state', 'accepted', '--verdict', 'SAFE TO LAND']);
+  const before = hoff(['section', 'get', doc, 'Next slice']);
+  const ledgerBefore = readFileSync(hoff(['ledger', 'path', R]));
+  const r = runFail([R, WT, 'feat/x1-accepted', FIX, '--corrective', '--verdict', 'DO NOT LAND unnamed: x']);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /checkable: <tool>/);
+  assert.match(r.stderr, /checkable: no/);
+  assert.equal(r.log, '', 'nothing was sent and nothing was launched');
+  assert.equal(hoff(['section', 'get', doc, 'Next slice']), before, 'Next slice unchanged');
+  assert.equal(row(R, '1').state, 'accepted');
+  assert.ok(ledgerBefore.equals(readFileSync(hoff(['ledger', 'path', R]))), 'ledger bytes unchanged');
 });
 
 test('a corrective without --id applies to the most recently updated row with this handoff', () => {
@@ -521,33 +508,34 @@ test('a corrective for a pre-ledger slice adds a row from the doc status, then r
 test('an unrecordable verdict exits non-zero and sends nothing', () => {
   const { R, WT, doc } = reported('feat/c2');
   const before = hoff(['section', 'get', doc, 'Next slice']);
+  const ledgerBefore = readFileSync(hoff(['ledger', 'path', R]));
   const r = runFail([R, WT, 'feat/c2', FIX, '--corrective', '--verdict', 'review = DO NOT LAND: race']);
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /provenance tag/);
-  assert.doesNotMatch(r.log, /pane run|tab create/);
+  assert.equal(r.log, '', 'nothing was sent and nothing was launched');
   assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
   assert.equal(row(R, '1').state, 'results-ready');
+  assert.ok(ledgerBefore.equals(readFileSync(hoff(['ledger', 'path', R]))), 'ledger bytes unchanged');
 });
 
 // Declared change (decisions.md 10): `rejected` left this table. A verdict on an
 // already rejected row is recorded as a note, not refused (see below). Declared
 // change (dream 2026-11-13): `accepted` left it too, because a verdict there is a
 // later review sending accepted work back (tested above). The other states exit
-// 2 with or without --id.
-for (const state of ['returned', 'specced', 'blocked', 'merged', 'abandoned']) {
-  for (const idArgs of [[], ['--id', '1']]) {
-    test(`--verdict on a ${state} row exits 2 and sends nothing${idArgs.length ? ' (with --id)' : ''}`, () => {
-      const { R, WT, doc } = reported(`feat/v-${state}${idArgs.length ? '-id' : ''}`);
-      hoff(['ledger', 'set', R, '1', '--state', state]);
-      const before = hoff(['section', 'get', doc, 'Next slice']);
-      const r = runFail([R, WT, `feat/v-${state}${idArgs.length ? '-id' : ''}`, FIX, '--corrective', ...idArgs, '--verdict', 'g2 failed 3/5']);
-      assert.equal(r.status, 2);
-      assert.match(r.stderr, new RegExp(`\\b${state}\\b`));
-      assert.doesNotMatch(r.log, /pane run|tab create/);
-      assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
-      assert.equal(row(R, '1').state, state);
-    });
-  }
+// 2 with or without --id: they share one case arm, so one row each way. The
+// no --id row is terminal, so only the "most recently updated" pick reaches it.
+for (const [state, idArgs] of [['merged', []], ['returned', ['--id', '1']]]) {
+  test(`--verdict on a ${state} row exits 2 and sends nothing${idArgs.length ? ' (with --id)' : ''}`, () => {
+    const { R, WT, doc } = reported(`feat/v-${state}`);
+    hoff(['ledger', 'set', R, '1', '--state', state]);
+    const before = hoff(['section', 'get', doc, 'Next slice']);
+    const r = runFail([R, WT, `feat/v-${state}`, FIX, '--corrective', ...idArgs, '--verdict', 'g2 failed 3/5']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, new RegExp(`\\b${state}\\b`));
+    assert.doesNotMatch(r.log, /pane run|tab create/);
+    assert.equal(hoff(['section', 'get', doc, 'Next slice']), before);
+    assert.equal(row(R, '1').state, state);
+  });
 }
 
 // --- an already rejected row (decisions.md 10) ---
@@ -606,7 +594,7 @@ test('a round-cap refusal re-run with the same --verdict plus --past-cap succeed
 test('the dispatch env is an allowlist: no run pointer, round cap or session id beyond the test’s own', () => {
   // Replaces the two cases that set an ambient OFFLOAD_ROUND_CAP, OFFLOAD_UNATTENDED_TURN
   // and BORK_RUN_DIR in process.env and checked they did not leak. The env is now
-  // built from nothing ambient, so the leak cannot exist; C11c's sentinel run checks it.
+  // built from nothing ambient, and this key list goes red if env() is widened.
   assert.deepEqual(Object.keys(env()).sort(), [
     'AGENT_HANDOFFS_DIR', 'BORKWEB_SKILLS_CONFIG', 'CLAUDE_CODE_SESSION_ID', 'HERDR_ENV',
     'HERDR_WORKSPACE_ID', 'HOME', 'PATH', 'TMPDIR', 'TMUX',
@@ -743,18 +731,6 @@ test('a fresh dispatch freezes every ID-first block line verbatim, and freeze an
   assert.equal(cov.code, 4);
 });
 
-test('freeze and coverage agree on joined IDs, ranges, indentation and a CRLF block', () => {
-  const R = repo();
-  const WT = join(BOX, 'wt-freeze-shapes');
-  const lines = ['C10: a', '  - C11: indented', 'C1a-C2: range', 'C12–C13: en dash range', 'C3, C5b: list', 'C1/C2: slash',
-    'C1 and C2: and', 'c14: lowercase', '**C15 Diff scope.**'];
-  run([R, WT, 'feat/shapes', blockFile('shapes-block.md', `${lines.join('\r\n')}\r\n`)]);
-  const doc = hoff(['path', WT, 'arch']);
-  assert.ok(!frozenOf(doc).includes('\r'), 'no carriage returns are frozen');
-  assert.deepEqual(coverage(doc).ids, ['C10', 'C11', 'C15']);
-  assert.deepEqual(frozenOf(doc).split('\n').filter((l) => /C\d/.test(l)), ['C10: a', '  - C11: indented', '**C15 Diff scope.**']);
-});
-
 test('a section that already holds the same IDs is left byte-identical; different IDs refuse the dispatch', () => {
   const R = repo();
   const WT = join(BOX, 'wt-freeze-keep');
@@ -808,11 +784,13 @@ test('--corrective never writes Frozen gates: the warm pane send and the cold re
 test('a failed launch restores Frozen gates so a revised block can freeze again', () => {
   const R = repo();
   const WT = join(BOX, 'wt-freeze-fail');
-  const r = runFail([R, WT, 'feat/fz-fail', blockFile('fz-fail.md', freezeBlock())], { HERDR_STUB_MODE: 'fail-create' });
+  const block = freezeBlock([...FREEZE_LINES, 'L1: local: true']);
+  const r = runFail([R, WT, 'feat/fz-fail', blockFile('fz-fail.md', block)], { HERDR_STUB_MODE: 'fail-create' });
   assert.notEqual(r.status, 0);
   const doc = hoff(['path', WT, 'arch']);
   assert.equal(status(doc), 'specced');
   assert.ok(!/C1: x/.test(frozenOf(doc)), 'the failed dispatch left no criteria behind');
+  assert.ok(!/L1: local/.test(frozenOf(doc)), 'the failed dispatch left a local line behind');
   assert.match(frozenOf(doc), /Success criteria, frozen BEFORE results exist/, 'the template comment is kept');
   headLine(doc);
   assert.equal(coverage(doc).code, 0);
@@ -863,31 +841,42 @@ test('the header documents the freeze and the no-ID warning', () => {
   assert.match(head, /no criterion IDs|no IDs/);
 });
 
-test('a <!-- inside a criterion line hides no later criterion from the freeze', () => {
-  const R = repo();
-  const WT = join(BOX, 'wt-freeze-midline');
-  const lines = ['C1: uses `<!--` here', 'C2: second', 'C3: ends with `-->`', 'C4: opener <!-- note', 'x -->C5: not an ID line', 'C6 C7: joined', 'C8: last'];
-  run([R, WT, 'feat/midline', blockFile('midline-block.md', `${lines.join('\n')}\n`)]);
-  const doc = hoff(['path', WT, 'arch']);
-  assert.deepEqual(frozenOf(doc).split('\n').filter((l) => /^C\d/.test(l)), ['C1: uses `<!--` here', 'C2: second', 'C3: ends with `-->`', 'C4: opener <!-- note', 'C8: last']);
-  assert.deepEqual(coverage(doc).ids, ['C1', 'C2', 'C3', 'C4', 'C8']);
-});
+// [line, is it frozen?] — one table for the ID rule, the comment rule and CRLF.
+const ID_TABLE = [
+  ['C10: a', true], ['  - C11: indented', true], ['C1a-C2: range', false], ['C12–C13: en dash range', false], ['C3, C5b: list', false], ['C1/C2: slash', false],
+  ['C1 and C2: and', false], ['c14: lowercase', false], ['**C15 Diff scope.**', true],
+  ['C1: uses `<!--` here', true], ['C2: second', true], ['C3: ends with `-->`', true], ['C4: opener <!-- note', true], ['x -->C5: not an ID line', false],
+  ['C6 C7: joined', false], ['C8: last', true],
+  // The unclosed opener stays last: any later `-->` would close it.
+  ['C1: plain', true], ['- C2: bullet', true], ['<!-- C90: one-line comment -->', false],
+  ['<!--', false], ['C91: in a closed multi-line comment', false], ['', false], ['C92: after a blank line inside it', false], ['-->', false],
+  ['C3: uses `<!--` here', true], ['C4: opener <!-- note', true], ['C5: closes later -->', true], ['x -->C93: joined onto a closer', false],
+  ['C6 C7: joined', false], ['C8; C9: joined', false], ['C10 to C12: range', false], ['C13-C14: range', false], ['C15/C16: slash', false], ['C17 and C18: and', false],
+  ['   <!-- C94: indented comment -->', false], ['C19: after', true],
+  ['<!-- unclosed', false], ['C95: hidden by the unclosed comment', false], ['', false], ['C20: after the blank line', true], ['', false],
+];
 
-test('the freeze copy and handoff.mjs return the same IDs for the same text', () => {
-  const text = [
-    'C1: plain', '- C2: bullet', '<!-- C90: one-line comment -->', '<!--', 'C91: in a closed multi-line comment', '', 'C92: after a blank line inside it', '-->',
-    'C3: uses `<!--` here', 'C4: opener <!-- note', 'C5: closes later -->', 'x -->C93: joined onto a closer', 'C6 C7: joined', 'C8; C9: joined', 'C10 to C12: range',
-    'C13-C14: range', 'C15/C16: slash', 'C17 and C18: and', '   <!-- C94: indented comment -->', 'C19: after', '<!-- unclosed', 'C95: hidden by the unclosed comment', '', 'C20: after the blank line', '',
-  ].join('\n');
-  const R = repo();
-  const WT = join(BOX, 'wt-same-ids');
-  run([R, WT, 'feat/same-ids', blockFile('same-ids-block.md', text)]);
-  const frozen = frozenOf(hoff(['path', WT, 'arch'])).split('\n').map((l) => /C\d+[a-z]?/.exec(l)?.[0]).filter(Boolean);
-  const other = join(BOX, 'wt-same-ids-doc');
-  const doc = hoff(['init', other, 'arch', 'same ids']);
-  hoff(['section', 'set', doc, 'Frozen gates', '--text', text]);
-  assert.deepEqual(frozen, coverage(doc).ids, 'shell freeze and handoff.mjs read the same IDs');
-  assert.deepEqual(frozen, ['C1', 'C2', 'C3', 'C4', 'C5', 'C19', 'C20']);
+test('the freeze copy and handoff.mjs return the same IDs for the same text, LF and CRLF, and the freeze copies each ID line verbatim', () => {
+  const verbatim = ID_TABLE.filter(([, frozen]) => frozen).map(([line]) => line);
+  const ids = ['C10', 'C11', 'C15', 'C1', 'C2', 'C3', 'C4', 'C8', 'C5', 'C19', 'C20'];
+  for (const [name, eol] of [['lf', '\n'], ['crlf', '\r\n']]) {
+    const text = ID_TABLE.map(([line]) => `${line}${eol}`).join('');
+    const R = repo();
+    const WT = join(BOX, `wt-same-ids-${name}`);
+    run([R, WT, `feat/same-ids-${name}`, blockFile(`same-ids-${name}.md`, text)]);
+    const dispatched = hoff(['path', WT, 'arch']);
+    const frozen = frozenOf(dispatched);
+    assert.ok(!frozen.includes('\r'), `${name}: no carriage returns are frozen`);
+    const lines = frozen.split('\n').filter((l) => l && !l.startsWith('<!-- Success criteria'));
+    assert.deepEqual(lines, verbatim, `${name}: the ID lines are copied verbatim`);
+    // The same text in a doc the freeze never touched: handoff.mjs's own reading of it.
+    const doc = hoff(['init', join(BOX, `wt-same-ids-doc-${name}`), 'arch', 'same ids']);
+    hoff(['section', 'set', doc, 'Frozen gates', '--text', text]);
+    const frozenIds = [...new Set(lines.map((l) => /C\d+[a-z]?/.exec(l)?.[0]).filter(Boolean))];
+    assert.deepEqual(frozenIds, coverage(doc).ids, `${name}: shell freeze and handoff.mjs read the same IDs`);
+    assert.deepEqual(coverage(dispatched).ids, ids, `${name}: handoff.mjs reads the frozen copy the same way`);
+    assert.deepEqual(frozenIds, ids, name);
+  }
 });
 
 test('--corrective writes nothing when Frozen gates holds no IDs yet', () => {
@@ -1171,33 +1160,36 @@ test('C1b: the freeze copy and handoff.mjs read the same local lines (table, wit
   }
 });
 
-test('C1b: the freeze and handoff.mjs both refuse the same malformed lines', () => {
-  for (const [what, lines] of [['empty command', ['L1: local:']], ['spaces only', ['L1: local:    ']], ['duplicate id', ['L1: local: true', 'L1: local: true']], ['no colon after local', ['L1: local true']],
-    ['decorated id', ['**L1**: local: make']], ['backticked line', ['`L1: local: make`']], ['table row', ['| L1: local: make |']], ['bold list form', ['- **L1: local:** make']], ['Local in another case', ['L1: Local: make']]]) {
+// [name, lines, near-miss line the refusal must name]. An empty or repeated line is not
+// checked in stderr: the syntax hint already prints `L1: local:`.
+const MALFORMED = [
+  ['empty command', ['L1: local:']],
+  ['spaces only', ['L1: local:    ']],
+  ['duplicate id, same command', ['L1: local: true', 'L1: local: true']],
+  ['duplicate id, different commands', ['L1: local: true', 'L1: local: echo again']],
+  ['no colon after local', ['L1: local true']],
+  ...[['decorated id', '**L1**: local: make'], ['backticked line', '`L1: local: make`'], ['table row', '| L1: local: make |'],
+    ['bold list form', '- **L1: local:** make'], ['Local in another case', 'L1: Local: make']].map(([name, line]) => [name, [line], line]),
+];
+
+test('C1b/C1g/C1h/K1: the freeze and handoff.mjs refuse the same malformed lines; the freeze names a near-miss line, launches nothing and leaves Frozen gates untouched', () => {
+  for (const [i, [what, lines, named]] of MALFORMED.entries()) {
     const R = repo();
-    const WT = join(BOX, `wt-bad-${what.replace(/\W/g, '')}`);
-    const r = runFail([R, WT, `feat/bad-${what.replace(/\W/g, '')}`, blockFile(`bad-${what.replace(/\W/g, '')}.md`, blockWith(lines))]);
+    const WT = join(BOX, `wt-bad-${i}`);
+    git(R, ['worktree', 'add', '-q', '-b', `feat/bad-${i}`, WT]);
+    const doc = hoff(['init', WT, 'arch', what]);
+    const before = frozenOf(doc);
+    const r = runFail([R, WT, `feat/bad-${i}`, blockFile(`bad-${i}.md`, blockWith(lines))]);
     assert.notEqual(r.status, 0, `${what}: the freeze must refuse`);
+    if (named) assert.ok(r.stderr.includes(named), `${what}: the refusal names the line: ${r.stderr}`);
+    assert.doesNotMatch(r.log, /tab create/, `${what}: nothing launched`);
+    assert.equal(frozenOf(doc), before, `${what}: Frozen gates untouched`);
     const R2 = repo();
     const other = hoff(['init', R2, 'arch', 'bad']);
     hoff(['section', 'set', other, 'Frozen gates', '--text', blockWith(lines)]);
     hoff(['section', 'append', other, 'Gate results', '--text', `Head: ${git(R2, ['rev-parse', 'HEAD'])}\nC1: MET`]);
     const q = spawnSync(NODE, [HANDOFF, 'ready', other], { encoding: 'utf8', env: spawnEnv() });
     assert.notEqual(q.status, 0, `${what}: ready must refuse`);
-  }
-});
-
-test('C1g/C1h: a malformed local line in the block refuses the dispatch: nothing launched, Frozen gates untouched', () => {
-  for (const [what, lines] of [['empty', ['L1: local:']], ['duplicate', ['L1: local: true', 'L1: local: echo again']]]) {
-    const R = repo();
-    const WT = join(BOX, `wt-refuse-${what}`);
-    git(R, ['worktree', 'add', '-q', '-b', `feat/refuse-${what}`, WT]);
-    const doc = hoff(['init', WT, 'arch', what]);
-    const before = readFileSync(doc, 'utf8').match(/^## Frozen gates\n[\s\S]*?(?=^## )/m)[0];
-    const r = runFail([R, WT, `feat/refuse-${what}`, blockFile(`refuse-${what}.md`, blockWith(lines))]);
-    assert.notEqual(r.status, 0, what);
-    assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
-    assert.equal(readFileSync(doc, 'utf8').match(/^## Frozen gates\n[\s\S]*?(?=^## )/m)[0], before);
   }
 });
 
@@ -1260,34 +1252,8 @@ test('C2e: the same criterion IDs with different local lines refuse the dispatch
   assert.equal(frozenOf(doc), before);
 });
 
-test('C2f: a failed launch restores Frozen gates, local lines included', () => {
-  const R = repo();
-  const WT = join(BOX, 'wt-lfail');
-  const r = runFail([R, WT, 'feat/lfail', blockFile('lfail.md', blockWith(['L1: local: true']))], { HERDR_STUB_MODE: 'fail-create' });
-  assert.notEqual(r.status, 0);
-  const doc = hoff(['path', WT, 'arch']);
-  assert.ok(!/L1: local/.test(frozenOf(doc)), 'the failed dispatch left a local line behind');
-  assert.ok(!/C1: x/.test(frozenOf(doc)));
-});
-
 test('C9h: the dispatch-slice.sh header documents freezing local lines', () => {
   const head = readFileSync(SLICE, 'utf8').split('\nset -uo pipefail')[0];
   assert.match(head, /local: <command>/);
   assert.match(head, /malformed|empty command/);
-});
-
-test('K1: a near-miss local line in the block refuses the dispatch, naming the line: nothing launched, Frozen gates untouched', () => {
-  for (const line of ['**L1**: local: make', '`L1: local: make`', '| L1: local: make |', '- **L1: local:** make', 'L1: Local: make']) {
-    const R = repo();
-    const tag = Buffer.from(line).toString('hex').slice(0, 10);
-    const WT = join(BOX, `wt-near-${tag}`);
-    git(R, ['worktree', 'add', '-q', '-b', `feat/near-${tag}`, WT]);
-    const doc = hoff(['init', WT, 'arch', 'near']);
-    const before = frozenOf(doc);
-    const r = runFail([R, WT, `feat/near-${tag}`, blockFile(`near-${tag}.md`, blockWith([line]))]);
-    assert.notEqual(r.status, 0, line);
-    assert.ok(r.stderr.includes(line), `the refusal names the line: ${r.stderr}`);
-    assert.doesNotMatch(r.log, /tab create/, 'nothing launched');
-    assert.equal(frozenOf(doc), before);
-  }
 });

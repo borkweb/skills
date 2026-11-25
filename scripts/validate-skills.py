@@ -11,6 +11,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,6 +39,28 @@ def lines_of(text: str):
 def clean(path: Path) -> Path:
     """Lexical normalization: collapse . and .. without touching the filesystem."""
     return Path(os.path.normpath(path))
+
+
+def ignored_paths() -> set[str]:
+    """What git ignores here and does not track, such as local output: files, and `dir/` for a nested repository."""
+    # Nothing inherited: no GIT_DIR, and no HOME, so no per-user ignore file. The ceiling keeps git from answering for
+    # a repository above ROOT, whose rules may ignore this whole tree.
+    env = {'PATH': os.environ.get('PATH', os.defpath), 'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_NOSYSTEM': '1',
+           'GIT_CEILING_DIRECTORIES': str(ROOT.parent)}
+    try:
+        done = subprocess.run(['git', '-C', str(ROOT), 'ls-files', '-z', '--others', '--ignored', '--exclude-standard'],
+                              env=env, capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return set()  # git cannot say, so nothing is skipped
+    return {os.fsdecode(p) for p in done.stdout.split(b'\0') if p}
+
+
+IGNORED = ignored_paths()
+
+
+def is_ignored(rel: str) -> bool:
+    parts = rel.split('/')
+    return rel in IGNORED or any('/'.join(parts[:i]) + '/' in IGNORED for i in range(1, len(parts)))
 
 
 manifests = [json.loads((ROOT / p).read_text(encoding='utf-8')) for p in ('.claude-plugin/plugin.json', '.codex-plugin/plugin.json')]
@@ -235,7 +258,7 @@ try:
             sources.update(glob.glob(f'{top}/**/*.{ext}', root_dir=ROOT, recursive=True))
     offenders: dict[str, list[int]] = {}
     for rel in sorted(sources):
-        if 'node_modules' in rel.split('/') or TEST_FILE.match(os.path.basename(rel)):
+        if 'node_modules' in rel.split('/') or TEST_FILE.match(os.path.basename(rel)) or is_ignored(rel):
             continue
         for n, line in lines_of(read_text(ROOT / rel)):
             pinned = PINNED_ENV.search(line) or ('GIT_CONFIG_GLOBAL' in line and 'GIT_CONFIG_NOSYSTEM' in line)
@@ -265,7 +288,7 @@ for folder, dirs, files in os.walk(ROOT):
     for file in sorted(files):
         path = Path(folder) / file
         rel = rel_of(path)
-        if file in SKIP_DIRS or rel.startswith('docs/superpowers/') or path.is_symlink():
+        if file in SKIP_DIRS or rel.startswith('docs/superpowers/') or path.is_symlink() or is_ignored(rel):
             continue
         if os.path.splitext(file)[1] not in TEXT_EXT and rel not in ('AGENTS.md', 'README.md'):
             continue

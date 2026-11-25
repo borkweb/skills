@@ -2,7 +2,7 @@
 // Criteria C5a-C5o, C19, C20, C27. Environments are built from scratch by testkit.mjs.
 import assert from 'node:assert';
 import test from 'node:test';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   debris, mkRun, newBox, readRec, recPath, run, runAsync, sha, writeRec,
@@ -53,26 +53,6 @@ test('C5d a missing or empty --ref exits 2 and writes nothing', () => {
   assert.equal(run(b, ['escape', id, '--kind', 'revert']).code, 2);
   assert.equal(esc(id, 'revert', '').code, 2);
   assert.equal(sha(recPath(dir)), before);
-});
-
-test('C5e escape is a writer: OFFLOAD_HANDOFF refuses it and nothing is written', () => {
-  const { id, dir } = mkRun(b);
-  const before = sha(recPath(dir));
-  const r = esc(id, 'revert', 'abc1234', [], { OFFLOAD_HANDOFF: '/x' });
-  assert.notEqual(r.code, 0);
-  assert.ok(r.err.includes('OFFLOAD_HANDOFF'), r.err);
-  assert.equal(sha(recPath(dir)), before);
-});
-
-test('C5f a run that is not a direct child of the runs home is refused with exit 1 and nothing changes', () => {
-  mkRun(b);
-  const out = join(b.root, 'outside');
-  mkdirSync(out, { recursive: true });
-  writeFileSync(join(out, 'run.json'), '{}');
-  const r = esc(out, 'revert', 'abc1234');
-  assert.equal(r.code, 1, r.err);
-  assert.equal(readFileSync(join(out, 'run.json'), 'utf8'), '{}');
-  assert.deepEqual(readdirSync(out), ['run.json']);
 });
 
 test('C5g escape works on done and failed runs without changing their state', () => {

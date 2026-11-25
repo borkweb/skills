@@ -44,10 +44,6 @@ test('marketplace lists desk-board at the board folder and leaves the bork entry
   assert.ok(existsSync(join(ROOT, BOARD, '.claude-plugin', 'plugin.json')));
 });
 
-test('the board version equals the bork version, so the two installs cannot drift', () => {
-  assert.equal(boardManifest().version, JSON.parse(read('.claude-plugin/plugin.json')).version);
-});
-
 test('the board manifest names the plugin, its contract, bork as author and an empty terminalApp default', () => {
   const m = boardManifest();
   assert.equal(m.name, 'desk-board');

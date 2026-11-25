@@ -1,6 +1,8 @@
 // test_agent.mjs — the herdr agent status in runs.mjs list and show (display only; criteria C20-C27).
 import assert from 'node:assert';
 import test from 'node:test';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { barePath, calls, mkRun, newBox, readRec, recPath, resetLog, run, sha, writeRec } from './testkit.mjs';
 
 const arch = (pane) => ({ harness: 'claude', session_id: null, frontend: 'herdr', tab: 'w9:t7', pane });
@@ -13,15 +15,27 @@ function world(panes) {
 const lineOf = (out, id) => out.split('\n').find((l) => l.startsWith(`${id}  `));
 const ok = (r) => assert.equal(r.code, 0, r.err);
 
+// The runs C20 and C26 share, built once: one running run per status, each on its own pane. herdr does not list the
+// `gone` pane. `before` is each record's sha at build time, so a write by either test shows in C26.
+let shared;
+function statusRuns() {
+  if (shared) return shared;
+  const statuses = ['working', 'blocked', 'idle', 'done', 'unknown', 'zz-new', 'constructor', 'toString', 'gone'];
+  const { b, runs } = world(statuses.map((_, i) => `w9:p${i + 1}`));
+  const listed = runs.map((r, i) => [r.pane, statuses[i]]).filter(([, raw]) => raw !== 'gone');
+  const extra = { HERDR_STUB_AGENTS: listed.map(([pane]) => pane).join(','), HERDR_STUB_STATUS: JSON.stringify(Object.fromEntries(listed)) };
+  const byStatus = Object.fromEntries(runs.map((r, i) => [statuses[i], { ...r, before: sha(recPath(r.dir)) }]));
+  shared = { b, extra, byStatus };
+  return shared;
+}
+
 test('C20 list words: one row per raw status, the bare word "done" never describes the agent', () => {
   const rows = [['working', 'agent working'], ['blocked', 'agent blocked'], ['idle', 'agent idle'], ['done', 'agent turn ended'], ['unknown', 'agent unknown'], ['zz-new', 'agent unknown'], ['constructor', 'agent unknown'], ['toString', 'agent unknown']];
-  for (const [raw, word] of rows) {
-    const { b, runs } = world(['w9:p1']);
-    const r = run(b, ['list'], { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_STATUS: JSON.stringify({ 'w9:p1': raw }) });
-    ok(r);
-    assert.ok(lineOf(r.out, runs[0].id).includes(`running [${word}]`), `${raw}: ${r.out}`);
-    assert.ok(!/agent done\b/.test(r.out), r.out);
-  }
+  const { b, extra, byStatus } = statusRuns();
+  const r = run(b, ['list'], extra);
+  ok(r);
+  for (const [raw, word] of rows) assert.ok(lineOf(r.out, byStatus[raw].id).includes(`running [${word}]`), `${raw}: ${r.out}`);
+  assert.ok(!/agent done\b/.test(r.out), r.out);
 });
 
 test('C20 an agent_status that is not a string (an array that coerces to a known word) reads as unknown, in text and JSON', () => {
@@ -44,11 +58,14 @@ test('C21 a pane missing from a successful list is architect gone, placed before
   assert.deepEqual(j.find((x) => x.id === runs[0].id).flags, ['architect gone', 'stale'], 'G8: JSON flags keep architect gone');
 });
 
-test('C22 herdr missing, failing, hanging or unreadable gives no status, no gone and exit 0', { timeout: 120000 }, () => {
+test('C22 herdr missing, failing or unreadable gives no status, no gone and exit 0', { timeout: 120000 }, () => {
+  // A directory named herdr passes the PATH check and then fails to spawn.
+  const dirbin = join(newBox().root, 'dirbin');
+  mkdirSync(join(dirbin, 'herdr'), { recursive: true });
   const rows = [
     ['not on PATH', { PATH: barePath() }],
     ['exit 1', { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_AGENT_MODE: 'fail' }],
-    ['hang', { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_AGENT_MODE: 'hang' }],
+    ['spawn error', { PATH: `${dirbin}:${barePath()}` }],
     ['not JSON', { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_AGENT_MODE: 'malformed' }],
     ['cut mid-JSON', { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_AGENT_MODE: 'truncated' }],
   ];
@@ -79,8 +96,12 @@ test('C23b herdr is called only when a shown non-terminal run has a pane', () =>
   const x = mkRun(b);
   writeRec(x.dir, { architect: arch(null) });
   ok(run(b, ['set', runs[0].id, '--state', 'done']));
-  // A done run with a pane and a running run without one: nothing to ask about.
-  ok(run(b, ['list']));
+  // A done run with a pane and a running run without one: nothing to ask about, and no pane is not a gone architect.
+  for (const args of [['list'], ['show', x.id]]) {
+    const r = run(b, args);
+    ok(r);
+    assert.ok(!/architect gone/.test(r.out), `${args[0]}: ${r.out}`);
+  }
   assert.deepEqual(calls(b), []);
   ok(run(b, ['show', runs[0].id]));
   assert.deepEqual(calls(b), [], 'show on a terminal run');
@@ -109,7 +130,9 @@ test('C24a/b JSON agent_status: raw value, unknown for a new word, gone for an a
 test('C25 show prints an agent line for a non-terminal run with a pane, never for a terminal run or without a status', () => {
   const { b, runs } = world(['w9:p1']);
   const live = { HERDR_STUB_AGENTS: 'w9:p1', HERDR_STUB_STATUS: JSON.stringify({ 'w9:p1': 'done' }) };
-  assert.match(run(b, ['show', runs[0].id], live).out, /^agent: turn ended$/m);
+  const shown = run(b, ['show', runs[0].id], live).out;
+  assert.match(shown, /^agent: turn ended$/m);
+  assert.ok(!/architect gone/.test(shown), shown);
   assert.ok(!/^agent:/m.test(run(b, ['show', runs[0].id], { ...live, HERDR_STUB_AGENT_MODE: 'fail' }).out));
   assert.ok(!/^agent:/m.test(run(b, ['show', runs[0].id], { HERDR_STUB_AGENTS: undefined }).out), 'gone shows only as the flag');
   assert.match(run(b, ['show', runs[0].id], { HERDR_STUB_AGENTS: undefined }).out, /\(architect gone\)/);
@@ -120,13 +143,17 @@ test('C25 show prints an agent line for a non-terminal run with a pane, never fo
 });
 
 test('C26 status is display only: list and show never change the record, for every status including gone', () => {
-  for (const raw of ['working', 'blocked', 'idle', 'done', 'unknown', 'gone']) {
-    const { b, runs } = world(['w9:p1']);
-    const extra = { HERDR_STUB_AGENTS: raw === 'gone' ? undefined : 'w9:p1', HERDR_STUB_STATUS: JSON.stringify({ 'w9:p1': raw }) };
-    const before = sha(recPath(runs[0].dir));
-    for (const args of [['list'], ['list', '--json'], ['show', runs[0].id], ['show', runs[0].id, '--json']]) ok(run(b, args, extra));
-    assert.equal(sha(recPath(runs[0].dir)), before, raw);
-    assert.equal(readRec(runs[0].dir).state, 'running');
+  const { b, extra, byStatus } = statusRuns();
+  const statuses = ['working', 'blocked', 'idle', 'done', 'unknown', 'gone'];
+  for (const args of [['list'], ['list', '--json']]) ok(run(b, args, extra));
+  for (const raw of statuses) {
+    const { id } = byStatus[raw];
+    for (const args of [['show', id], ['show', id, '--json']]) ok(run(b, args, extra));
+  }
+  for (const raw of statuses) {
+    const { dir, before } = byStatus[raw];
+    assert.equal(sha(recPath(dir)), before, raw);
+    assert.equal(readRec(dir).state, 'running');
   }
 });
 

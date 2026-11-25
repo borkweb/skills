@@ -1,6 +1,6 @@
 # run-env.sh — sourced by dispatch-slice.sh and dispatch.sh. One liveness predicate for the
 # BORK_RUN_DIR pointer, so the dispatcher's run-dir fallback and the builder's launch env agree
-# (stop-hook.mjs envRunDir() is the JS twin; test_k1_env.mjs checks that they agree on every row).
+# (stop-hook.mjs envRunDir() is the JS twin; test_k1_env.mjs C14b and test_stop_hook.mjs together check every row).
 #
 # env_run_dir_live: succeeds while $BORK_RUN_DIR names a live run: a directory that exists whose
 # run.json (when there is one) is not done or failed. A run.json that is missing or unreadable

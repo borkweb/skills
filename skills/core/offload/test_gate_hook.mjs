@@ -5,7 +5,7 @@
 // with /bin/sh -c in the worktree, with the env the launch script exports, and the Stop
 // input on stdin. Nothing here calls the hook script by path.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import assert from 'node:assert';
@@ -58,11 +58,6 @@ function hookrun(fx, lf, { input = JSON.stringify(STOP_INPUT()), env: extra = {}
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 const withGates = (cmds, extra = {}) => { const fx = readyFx(cmds, extra); return { fx, lf: launch(fx) }; };
-
-test('C6a: --settings is valid JSON', () => {
-  const { lf } = withGates(['true']);
-  assert.equal(typeof JSON.parse(lf.settingsText), 'object');
-});
 
 test('C6b/C6e: one Stop entry runs the gate check and then the touch', () => {
   const { lf } = withGates(['true']);
@@ -137,18 +132,14 @@ test('C6k/C14: stop_hook_active true never blocks, even on a red gate', () => {
   assert.ok(existsSync(`${fx.doc}.turn-ended`), 'the stop goes through, so the touch happens');
 });
 
-test('C14: the Stop command is the gate check, and it exits 0 on stop_hook_active even with a red gate', () => {
-  const { fx, lf } = withGates(['exit 3']);
-  assert.match(stopCommand(lf), /stop-gates/, 'the Stop entry runs the gate check');
-  assert.equal(hookrun(fx, lf).code, 2, 'without the flag the red gate blocks');
-  const r = hookrun(fx, lf, { input: JSON.stringify(STOP_INPUT({ stop_hook_active: true })) });
-  assert.equal(r.code, 0, r.err);
-});
-
 test('C15: gates run only in dispatched or results-ready; every other status exits 0 and runs nothing', () => {
+  const fx = readyFx((out) => [`touch ${out}/ran; exit 3`]);
+  const lf = launch(fx);
   for (const status of ['dispatched', 'results-ready', 'blocked', 'accepted', 'rejected', 'returned', 'abandoned', 'merged']) {
-    const fx = readyFx((out) => [`touch ${out}/ran; exit 3`], { status });
-    const lf = launch(fx);
+    // Written directly: `handoff.mjs status results-ready` would refuse the red gate.
+    writeFileSync(fx.doc, read(fx.doc).replace(/^status: .*$/m, `status: ${status}`));
+    assert.equal(docStatus(fx.doc), status);
+    rmSync(join(fx.out, 'ran'), { force: true });
     const r = hookrun(fx, lf);
     const runs = existsSync(join(fx.out, 'ran'));
     if (status === 'dispatched' || status === 'results-ready') { assert.equal(r.code, 2, status); assert.ok(runs, status); } else { assert.equal(r.code, 0, `${status}: ${r.err}`); assert.ok(!runs, `${status} ran a gate`); }

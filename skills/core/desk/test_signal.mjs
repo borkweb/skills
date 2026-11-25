@@ -5,7 +5,7 @@ import test from 'node:test';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  HERE, QOPTS, ask, barePath, calls, claim, mkRun, newBox, nudges, orchestratorRun, rawLog, readRec, recPath, resetLog, run,
+  QOPTS, ask, barePath, calls, claim, debris, mkRun, newBox, nudges, orchestratorRun, rawLog, readRec, recPath, resetLog, run,
   runAsync, sha, sleep, spawnChild, writeRec,
 } from './testkit.mjs';
 
@@ -149,7 +149,6 @@ test('wait without --timeout is still waiting after 2 s (default 3600 s)', async
   w.kill();
   const r = await w.done;
   assert.equal(r.sig, 'SIGKILL');
-  assert.match(readFileSync(join(HERE, 'runs.mjs'), 'utf8'), /3600/);
 });
 
 test('a second signal after an atomic rename is caught: fire, ack, wait again, ask again', async () => {
@@ -309,15 +308,29 @@ test('text planted in summary, note, question, context, options, answer and goal
 });
 
 test('a failed send (non-zero exit, error body, agent_blocked) warns once, exits 0 and keeps the record', () => {
-  for (const mode of ['prompt-fail', 'prompt-error', 'prompt-blocked']) {
+  const warnings = (s) => s.split('\n').filter((l) => /warn/i.test(l));
+  // [stub mode, the reason the warning gives]. The prompt-live rows are herdr 0.9.3: exit 1, JSON error body on stderr.
+  const rows = [
+    ['prompt-fail', 'exit 1'], ['prompt-error', 'agent_not_found'], ['prompt-blocked', 'agent_blocked'],
+    ['prompt-stderr-error', 'agent_not_found'], ['prompt-live-notfound', 'agent_not_found'], ['prompt-live-blocked', 'agent_blocked'],
+  ];
+  for (const [mode, reason] of rows) {
     const nb = newBox();
     ok(claim(nb));
     const { dir, id } = orchestratorRun(nb);
     const r = run(nb, ['set', id, '--state', 'blocked', '--summary', 's'], { HERDR_STUB_MODE: mode });
     ok(r, mode);
-    assert.equal(r.err.split('\n').filter((l) => /warn/i.test(l)).length, 1, `${mode}: ${r.err}`);
+    assert.equal(warnings(r.err).length, 1, `${mode}: ${r.err}`);
+    assert.ok(r.err.includes(`(${reason})`), `${mode}: ${r.err}`);
     assert.equal(readRec(dir).state, 'blocked');
+    assert.deepEqual(debris(dir), []);
   }
+  const nb = newBox();
+  ok(claim(nb));
+  const { id } = orchestratorRun(nb);
+  const calm = run(nb, ['set', id, '--state', 'blocked', '--summary', 's']);
+  ok(calm, 'a good send');
+  assert.equal(warnings(calm.err).length, 0, 'a good send stays silent');
 });
 
 test('with herdr absent, no claim, or a null pane, set/ask/answer succeed and send nothing', () => {

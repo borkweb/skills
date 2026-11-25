@@ -12,15 +12,18 @@ import support  # noqa: E402
 
 
 class GraderSealTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix='replay-seal-'))
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.out = self.tmp / 'out'
-        self.fx = fixture.build(self.tmp / 'fx', gates=('echo GATE-OK-STRING',))
-        run = support.replay(self.fx, self.out)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.raw = (support.trial_dir(self.out, 'current') / 'grader-stdin.json').read_text()
-        self.data = json.loads(self.raw)
+    @classmethod
+    def setUpClass(cls):
+        """One replay run for the class. The tests only read what it wrote."""
+        tmp = Path(tempfile.mkdtemp(prefix='replay-seal-'))
+        cls.addClassCleanup(shutil.rmtree, tmp, True)
+        cls.out = tmp / 'out'
+        cls.fx = fixture.build(tmp / 'fx', gates=('echo GATE-OK-STRING',))
+        run = support.replay(cls.fx, cls.out)
+        if run.returncode != 0:
+            raise AssertionError(run.stderr)
+        cls.raw = (support.trial_dir(cls.out, 'current') / 'grader-stdin.json').read_text()
+        cls.data = json.loads(cls.raw)
 
     def test_commit_message_and_work_summary_sentinels_never_reach_the_grader(self):
         self.assertNotIn(fake_adapter.SENTINEL_COMMIT, self.raw)

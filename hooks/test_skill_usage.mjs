@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
+import test from 'node:test';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(HERE, 'skill-usage.mjs');
@@ -22,10 +23,18 @@ const run = (args, input, env = {}) =>
 const fire = (payload, env) => run([], payload, env);
 const lines = () => (existsSync(LOG) ? readFileSync(LOG, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
-let failed = 0;
-const check = (name, fn) => {
-  try { fn(); console.log(`ok   - ${name}`); }
-  catch (e) { failed = 1; console.log(`FAIL - ${name}\n       ${e.message}`); }
+// Most checks share one log, so each builds on the writes before it. A step runs
+// once and keeps its result or error; a test calls the steps it needs, so it
+// also passes when run alone.
+const once = (step) => {
+  let ran;
+  return () => {
+    if (!ran) {
+      try { ran = { value: step() }; } catch (error) { ran = { error }; }
+    }
+    if (ran.error) throw ran.error;
+    return ran.value;
+  };
 };
 
 const tool = (skill, extra = {}) => ({
@@ -34,46 +43,67 @@ const tool = (skill, extra = {}) => ({
 });
 const prompt = (text) => ({ hook_event_name: 'UserPromptSubmit', prompt: text, session_id: 's2', cwd: '/repo' });
 
-check('Skill tool call: logs one tool line with no output', () => {
+const toolLogged = once(() => {
   assert.strictEqual(fire(tool('bork:do')), '');
+});
+test('Skill tool call: logs one tool line with no output', () => {
+  toolLogged();
   const l = lines();
   assert.strictEqual(l.length, 1);
   assert.deepStrictEqual({ via: l[0].via, skill: l[0].skill, session: l[0].session, cwd: l[0].cwd }, { via: 'tool', skill: 'bork:do', session: 's1', cwd: '/repo' });
   assert.match(l[0].ts, /^\d{4}-\d{2}-\d{2}T/);
 });
 
-check('never records skill arguments', () => assert.doesNotMatch(readFileSync(LOG, 'utf8'), /secret/));
+test('never records skill arguments', () => {
+  toolLogged();
+  assert.doesNotMatch(readFileSync(LOG, 'utf8'), /secret/);
+});
 
-check('log directory is 700 and file is 600', () => {
+test('log directory is 700 and file is 600', () => {
+  toolLogged();
   assert.strictEqual(statSync(join(BOX, 'usage')).mode & 0o777, 0o700);
   assert.strictEqual(statSync(LOG).mode & 0o777, 0o600);
 });
 
-check('subagent call records the agent type', () => {
+const subagentLogged = once(() => {
+  toolLogged();
   fire(tool('bork:review', { agent_type: 'general-purpose' }));
+});
+test('subagent call records the agent type', () => {
+  subagentLogged();
   assert.strictEqual(lines().at(-1).agent, 'general-purpose');
 });
 
-check('other tools are ignored', () => {
+test('other tools are ignored', () => {
+  subagentLogged();
   const before = lines().length;
   fire({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'ls' }, session_id: 's1' });
   assert.strictEqual(lines().length, before);
 });
 
-check('slash prompt logs the command name only', () => {
+const slashLogged = once(() => {
+  subagentLogged();
   fire(prompt('/bork:review the auth branch please'));
+});
+test('slash prompt logs the command name only', () => {
+  slashLogged();
   const l = lines().at(-1);
   assert.deepStrictEqual([l.via, l.skill], ['slash', 'bork:review']);
   assert.doesNotMatch(readFileSync(LOG, 'utf8'), /auth branch/);
 });
 
-check('unprefixed slash and expanded command tag are both read', () => {
+const tagLogged = once(() => {
+  slashLogged();
   fire(prompt('  /do'));
   fire(prompt('<command-message>handoff</command-message>\n<command-name>/bork:handoff</command-name>'));
+});
+test('unprefixed slash and expanded command tag are both read', () => {
+  tagLogged();
   assert.deepStrictEqual(lines().slice(-2).map((l) => l.skill), ['do', 'bork:handoff']);
 });
 
-check('plain prompts and file paths are not logged', () => {
+test('plain prompts and file paths are not logged', () => {
+  tagLogged();
   const before = lines().length;
   fire(prompt('please review this'));
   fire(prompt('/Users/me/project/file.md has a bug'));
@@ -81,7 +111,7 @@ check('plain prompts and file paths are not logged', () => {
   assert.strictEqual(lines().length, before);
 });
 
-check('Code Mode background output (source poll_event) is never read as a slash command', () => {
+test('Code Mode background output (source poll_event) is never read as a slash command', () => {
   // Its own log directory, so the report checks below keep their counts.
   const box = mkdtempSync(join(tmpdir(), 'su-poll-'));
   const log = join(box, 'usage', 'skills.jsonl');
@@ -95,25 +125,35 @@ check('Code Mode background output (source poll_event) is never read as a slash 
   }
 });
 
-check('BORK_SKILL_USAGE_LOG=0 turns logging off', () => {
+test('BORK_SKILL_USAGE_LOG=0 turns logging off', () => {
+  tagLogged();
   const before = lines().length;
   fire(tool('bork:do'), { BORK_SKILL_USAGE_LOG: '0' });
   assert.strictEqual(lines().length, before);
 });
 
-check('bad input exits 0 silently', () => {
+test('bad input exits 0 silently', () => {
   assert.strictEqual(run([], 'not json'), '');
   assert.strictEqual(run([], ''), '');
 });
 
-check('hostile skill names are sanitized', () => {
+const hostileLogged = once(() => {
+  tagLogged();
   fire(tool('bork:do\n{"x":1}'));
+});
+test('hostile skill names are sanitized', () => {
+  hostileLogged();
   assert.strictEqual(lines().at(-1).skill, 'bork:do___x_:1_');
 });
 
-check('report counts, merges unprefixed bork slash names and lists unused skills', () => {
+// The log the report checks read: the calls above, one bad line and one 2020 entry.
+const reportLog = once(() => {
+  hostileLogged();
   appendFileSync(LOG, 'garbage line\n');
   appendFileSync(LOG, `${JSON.stringify({ ts: '2020-01-01T00:00:00.000Z', via: 'tool', skill: 'bork:council', session: 'old' })}\n`);
+});
+test('report counts, merges unprefixed bork slash names and lists unused skills', () => {
+  reportLog();
   const r = JSON.parse(run(['report', '--json']));
   const byName = Object.fromEntries(r.skills.map((s) => [s.skill, s]));
   assert.strictEqual(byName['bork:do'].tool, 1);
@@ -127,24 +167,27 @@ check('report counts, merges unprefixed bork slash names and lists unused skills
   assert.ok(!unused.includes('bork:council'), 'council used in 2020');
 });
 
-check('report --since excludes older entries', () => {
+test('report --since excludes older entries', () => {
+  reportLog();
   const r = JSON.parse(run(['report', '--since', '2021-01-01', '--json']));
   assert.ok(!r.skills.some((s) => s.skill === 'bork:council'));
   assert.ok(r.unused.some((u) => u.name === 'bork:council'));
 });
 
-check('report rejects a malformed --since', () => {
+test('report rejects a malformed --since', () => {
+  reportLog();
   assert.throws(() => run(['report', '--since', 'yesterday']), /YYYY-MM-DD/);
 });
 
-check('text report renders a table', () => {
+test('text report renders a table', () => {
+  reportLog();
   const out = run(['report']);
   assert.match(out, /^Skill usage: \d+ invocations/);
   assert.match(out, /bork:do\s+2\s+1\s+1/);
   assert.match(out, /no invocation in this window: .*bork:layman/);
 });
 
-check('a Skill call right after the same slash command is a reload, not a second use', () => {
+test('a Skill call right after the same slash command is a reload, not a second use', () => {
   const dir = join(BOX, 'reload');
   const log = join(dir, 'usage', 'skills.jsonl');
   const at = (s) => new Date(Date.parse('2026-11-13T14:00:00.000Z') + s * 1000).toISOString();
@@ -161,10 +204,8 @@ check('a Skill call right after the same slash command is a reload, not a second
   assert.deepStrictEqual([s['bork:do'].slash, s['bork:do'].reload, s['bork:do'].tool], [1, 0, 1]);
 });
 
-check('report on a missing log is empty, not an error', () => {
+test('report on a missing log is empty, not an error', () => {
   const r = JSON.parse(run(['report', '--json'], '', { AGENT_HANDOFFS_DIR: join(BOX, 'none') }));
   assert.strictEqual(r.total, 0);
   assert.ok(r.unused.length > 20);
 });
-
-process.exit(failed);

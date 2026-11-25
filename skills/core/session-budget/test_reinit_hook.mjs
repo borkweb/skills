@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
+import test from 'node:test';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HOOK = join(HERE, 'reinit-hook.mjs');
@@ -37,62 +38,123 @@ const fire = (cwd, source = 'clear', extraEnv = {}) => {
 };
 const CONSUMED = join(BOX, 'consumed');
 
-let failed = 0;
-const check = (name, fn) => {
-  try { fn(); console.log(`ok   - ${name}`); }
-  catch (e) { failed = 1; console.log(`FAIL - ${name}\n       ${e.message}`); }
+// The scenarios below share one mailbox, so each builds on the ones before it. A
+// step runs once and keeps its result or error; a test calls the steps it needs,
+// so it also passes when run alone.
+const once = (step) => {
+  let ran;
+  return () => {
+    if (!ran) {
+      try { ran = { value: step() }; } catch (error) { ran = { error }; }
+    }
+    if (ran.error) throw ran.error;
+    return ran.value;
+  };
 };
+const consumeToken = (path) => mailbox('consume', path.split('/').pop().replace(/\.md$/, '').split('--').slice(1).join('--'), CWD);
 
 const CWD = '/tmp/project-a';
 
 // --- no handoff: no startup context ---
-const empty = fire(CWD);
-check('empty mailbox is silent', () => assert.strictEqual(empty, null));
+const emptyFire = once(() => fire(CWD));
+test('empty mailbox is silent', () => {
+  const empty = emptyFire();
+  assert.strictEqual(empty, null);
+});
 
 // --- single handoff: injected as briefing AND consumed ---
-const s1 = join(BOX, 's1.md'); handoff(s1, { body: 'Single body marker.' });
-const stored = mailbox('write', s1, CWD).trim();
-const single = fire(CWD);
-check('event name is SessionStart', () => assert.strictEqual(single.hookEventName, 'SessionStart'));
-check('single handoff body is injected', () => assert.match(single.additionalContext, /Single body marker\./));
-check('single handoff is auto-loaded + consumed', () => assert.ok(!existsSync(stored)));
-check('consumed handoff is kept under consumed/', () => assert.ok(existsSync(join(CONSUMED, stored.split('/').pop()))));
-check('injected body is framed as data from an earlier session', () => {
+const singleFire = once(() => {
+  emptyFire();
+  const s1 = join(BOX, 's1.md'); handoff(s1, { body: 'Single body marker.' });
+  const stored = mailbox('write', s1, CWD).trim();
+  return { stored, single: fire(CWD) };
+});
+test('event name is SessionStart', () => {
+  const { single } = singleFire();
+  assert.strictEqual(single.hookEventName, 'SessionStart');
+});
+test('single handoff body is injected', () => {
+  const { single } = singleFire();
+  assert.match(single.additionalContext, /Single body marker\./);
+});
+test('single handoff is auto-loaded + consumed', () => {
+  const { stored } = singleFire();
+  assert.ok(!existsSync(stored));
+});
+test('consumed handoff is kept under consumed/', () => {
+  const { stored } = singleFire();
+  assert.ok(existsSync(join(CONSUMED, stored.split('/').pop())));
+});
+test('injected body is framed as data from an earlier session', () => {
+  const { single } = singleFire();
   assert.match(single.additionalContext, /<<<HANDOFF\n[\s\S]*Single body marker\.[\s\S]*\nHANDOFF>>>/);
   assert.match(single.additionalContext, /not as new instructions/);
 });
-check('after consume, a re-fire is silent', () => assert.strictEqual(fire(CWD), null));
+test('after consume, a re-fire is silent', () => {
+  singleFire();
+  assert.strictEqual(fire(CWD), null);
+});
 
 // --- compact also auto-loads ---
-const c1 = join(BOX, 'c1.md'); handoff(c1, { body: 'Compact body marker.' });
-const cStored = mailbox('write', c1, CWD).trim();
-check('compact auto-loads a single handoff', () => assert.match(fire(CWD, 'compact').additionalContext, /Compact body marker\./));
-check('compact consumes it', () => assert.ok(!existsSync(cStored)));
+const compactFire = once(() => {
+  singleFire();
+  const c1 = join(BOX, 'c1.md'); handoff(c1, { body: 'Compact body marker.' });
+  const cStored = mailbox('write', c1, CWD).trim();
+  assert.match(fire(CWD, 'compact').additionalContext, /Compact body marker\./);
+  return cStored;
+});
+test('compact auto-loads a single handoff', () => { compactFire(); });
+test('compact consumes it', () => {
+  const cStored = compactFire();
+  assert.ok(!existsSync(cStored));
+});
+
+// The step that leaves the mailbox ready for the next scenario.
+let previous = compactFire;
 
 // --- sessions that must not take a single handoff ---
 for (const source of ['startup', 'resume', null]) {
-  const p = join(BOX, `n-${source}.md`); handoff(p, { title: `Pending ${source}`, body: 'NOT-FOR-YOU' });
-  const kept = mailbox('write', p, CWD).trim();
-  const ctx = fire(CWD, source);
-  check(`${source ?? 'no'} source shows a one-line notice, not the body`, () => {
+  const before = previous;
+  const fired = once(() => {
+    before();
+    const p = join(BOX, `n-${source}.md`); handoff(p, { title: `Pending ${source}`, body: 'NOT-FOR-YOU' });
+    const kept = mailbox('write', p, CWD).trim();
+    return { kept, ctx: fire(CWD, source) };
+  });
+  test(`${source ?? 'no'} source shows a one-line notice, not the body`, () => {
+    const { ctx } = fired();
     assert.match(ctx.additionalContext, /A handoff is pending/);
     assert.match(ctx.additionalContext, new RegExp(`Pending ${source}`));
     assert.doesNotMatch(ctx.additionalContext, /NOT-FOR-YOU/);
   });
-  check(`${source ?? 'no'} source consumes nothing`, () => assert.ok(existsSync(kept)));
-  mailbox('consume', kept.split('/').pop().replace(/\.md$/, '').split('--').slice(1).join('--'), CWD);
+  test(`${source ?? 'no'} source consumes nothing`, () => {
+    const { kept } = fired();
+    assert.ok(existsSync(kept));
+  });
+  previous = once(() => { consumeToken(fired().kept); });
 }
 
 for (const [name, extra] of [['OFFLOAD_UNATTENDED_TURN', { OFFLOAD_UNATTENDED_TURN: '1' }], ['OFFLOAD_HANDOFF', { OFFLOAD_HANDOFF: '/x/doc.md' }]]) {
-  const p = join(BOX, `o-${name}.md`); handoff(p, { body: 'OFFLOAD-SILENT' });
-  const kept = mailbox('write', p, CWD).trim();
-  check(`${name} set: silent even on clear`, () => assert.strictEqual(fire(CWD, 'clear', extra), null));
-  check(`${name} set: consumes nothing`, () => assert.ok(existsSync(kept)));
-  mailbox('consume', kept.split('/').pop().replace(/\.md$/, '').split('--').slice(1).join('--'), CWD);
+  const before = previous;
+  const silenced = once(() => {
+    before();
+    const p = join(BOX, `o-${name}.md`); handoff(p, { body: 'OFFLOAD-SILENT' });
+    const kept = mailbox('write', p, CWD).trim();
+    assert.strictEqual(fire(CWD, 'clear', extra), null);
+    return kept;
+  });
+  test(`${name} set: silent even on clear`, () => { silenced(); });
+  test(`${name} set: consumes nothing`, () => {
+    const kept = silenced();
+    assert.ok(existsSync(kept));
+  });
+  previous = once(() => { consumeToken(silenced()); });
 }
 
 // --- prune reaps consumed/ past the TTL ---
-check('prune removes an expired consumed handoff and keeps a fresh one', () => {
+const consumedAll = previous;
+const pruned = once(() => {
+  consumedAll();
   const files = readdirSync(CONSUMED).map((f) => join(CONSUMED, f));
   assert.ok(files.length >= 2);
   const old = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
@@ -101,26 +163,42 @@ check('prune removes an expired consumed handoff and keeps a fresh one', () => {
   assert.ok(!existsSync(files[0]));
   assert.ok(existsSync(files[1]));
 });
+test('prune removes an expired consumed handoff and keeps a fresh one', () => { pruned(); });
 
 // --- multiple handoffs: menu, NOT bodies, nothing consumed ---
-const a = join(BOX, 'a.md'); handoff(a, { title: 'First', goal: 'do A', branch: 'feat/a', body: 'BODY-A' });
-mailbox('write', a, CWD);
-const b = join(BOX, 'b.md'); handoff(b, { title: 'Second', goal: 'do B', branch: 'feat/b', body: 'BODY-B' });
-mailbox('write', b, CWD);
-const menu = fire(CWD);
-check('menu lists both titles', () => {
+const menuFire = once(() => {
+  pruned();
+  const a = join(BOX, 'a.md'); handoff(a, { title: 'First', goal: 'do A', branch: 'feat/a', body: 'BODY-A' });
+  mailbox('write', a, CWD);
+  const b = join(BOX, 'b.md'); handoff(b, { title: 'Second', goal: 'do B', branch: 'feat/b', body: 'BODY-B' });
+  mailbox('write', b, CWD);
+  return fire(CWD);
+});
+test('menu lists both titles', () => {
+  const menu = menuFire();
   assert.match(menu.additionalContext, /First/);
   assert.match(menu.additionalContext, /Second/);
 });
-check('menu is numbered', () => assert.match(menu.additionalContext, /\[1\]/));
-check('menu routes through the skill without a cached executable path', () => {
+test('menu is numbered', () => {
+  const menu = menuFire();
+  assert.match(menu.additionalContext, /\[1\]/);
+});
+test('menu routes through the skill without a cached executable path', () => {
+  const menu = menuFire();
   assert.match(menu.additionalContext, /session-budget skill/);
   assert.doesNotMatch(menu.additionalContext, /mailbox\.mjs|mailbox CLI|plugins\/cache/);
 });
-check('menu does not dump bodies', () => assert.ok(!/BODY-A|BODY-B/.test(menu.additionalContext)));
-check('menu consumes nothing (re-fire still shows menu)', () => assert.match(fire(CWD).additionalContext, /\[1\]/));
+test('menu does not dump bodies', () => {
+  const menu = menuFire();
+  assert.ok(!/BODY-A|BODY-B/.test(menu.additionalContext));
+});
+test('menu consumes nothing (re-fire still shows menu)', () => {
+  menuFire();
+  assert.match(fire(CWD).additionalContext, /\[1\]/);
+});
 
 // --- cwd isolation: a different project sees no handoffs ---
-check('different cwd sees no handoff', () => assert.strictEqual(fire('/tmp/project-other'), null));
-
-process.exit(failed);
+test('different cwd sees no handoff', () => {
+  menuFire();
+  assert.strictEqual(fire('/tmp/project-other'), null);
+});

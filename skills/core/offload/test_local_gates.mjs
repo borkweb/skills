@@ -32,35 +32,41 @@ test('C1c: a local line never counts as a criterion: coverage prints nothing and
   assert.deepEqual([b.code, b.out, b.err], [0, '', '']);
 });
 
-test('C1d: a criterion line is never run as a gate, even when it says local:', () => {
-  const fx = readyFx((out) => [`touch ${out}/real`], {});
-  const out = fx.out;
-  const doc = mkGateDoc({ frozen: [`C7: local: touch ${out}/m7`, `- C8 local: touch ${out}/m8`], results: `Head: ${fx.head}\nC1: MET\nC7: MET\nC8: MET\n`, head: fx.head, cwd: fx.dir });
-  const r = cli(['ready', doc], { session: 's' });
-  assert.equal(r.code, 0, r.err);
-  assert.ok(!existsSync(join(out, 'm7')) && !existsSync(join(out, 'm8')), 'a criterion line ran as a gate');
-});
+// Each row is one doc: its Frozen lines, the gate markers that must and must not appear, and
+// whether `ready` passes or refuses red. A line wrongly read as a gate either writes its marker
+// or fails (`make` and prose exit non-zero), so a passing row also proves nothing extra ran.
+const SYNTAX_ROWS = [
+  {
+    name: 'a criterion line is never run as a gate, even when it says local:',
+    frozen: (out) => [`C7: local: touch ${out}/m7`, `- C8 local: touch ${out}/m8`],
+    results: 'C1: MET\nC7: MET\nC8: MET\n',
+    absent: ['m7', 'm8'],
+  },
+  {
+    name: 'a review-lead ID with no local marker, or a bare block line, is not a gate',
+    frozen: (out) => ['L5: run-env.sh passes -- before the run dir', `L6: touch ${out}/m6`],
+    absent: ['m6'],
+  },
+  {
+    name: 'a local line inside a comment (one line, or an unclosed opener) is not run; after the blank line it is a gate again',
+    frozen: (out) => [`<!-- ${L('L1', `touch ${out}/one`)} -->`, '<!-- unclosed', L('L2', `touch ${out}/two`), '', L('L3', `touch ${out}/three`)],
+    absent: ['one', 'two'],
+    present: ['three'],
+  },
+  { name: 'local lines are found in a CRLF doc', frozen: () => [L('L1', 'exit 3')], eol: '\r\n', red: true },
+  { name: 'a lowercase id, a mid-line mention and prose that says locally are not near-misses', frozen: () => ['l11: local: make', 'see L9: local: make', 'L12: runs locally'] },
+];
 
-test('C1e: a review-lead ID with no local marker, or a bare block line, is not a gate', () => {
-  const repo = gitRepo();
-  const out = scratch();
-  const doc = mkGateDoc({ frozen: ['L5: run-env.sh passes -- before the run dir', `L6: touch ${out}/m6`], head: repo.head, cwd: repo.dir });
-  const r = cli(['ready', doc], { session: 's' });
-  assert.equal(r.code, 0, r.err);
-  assert.ok(!existsSync(join(out, 'm6')));
-});
-
-test('C1f: a local line inside a comment (one line, or an unclosed opener) is not run', () => {
-  const repo = gitRepo();
-  const out = scratch();
-  const doc = mkGateDoc({
-    frozen: [`<!-- ${L('L1', `touch ${out}/one`)} -->`, '<!-- unclosed', L('L2', `touch ${out}/two`), '', L('L3', `touch ${out}/three`)],
-    head: repo.head, cwd: repo.dir,
-  });
-  const r = cli(['ready', doc], { session: 's' });
-  assert.equal(r.code, 0, r.err);
-  assert.ok(!existsSync(join(out, 'one')) && !existsSync(join(out, 'two')), 'a commented local line ran');
-  assert.ok(existsSync(join(out, 'three')), 'the line after the blank line is a gate again');
+test('C1d-f/C1j/K1: ready runs only whole local gate lines, from one table', () => {
+  for (const { name, frozen, results = 'C1: MET\n', eol, red = false, absent = [], present = [] } of SYNTAX_ROWS) {
+    const repo = gitRepo();
+    const out = scratch();
+    const doc = mkGateDoc({ frozen: frozen(out), results: `Head: ${repo.head}\n${results}`, cwd: repo.dir, eol });
+    const r = cli(['ready', doc], { session: 's' });
+    if (red) refused(r, name); else assert.equal(r.code, 0, `${name}: ${r.err}`);
+    for (const m of absent) assert.ok(!existsSync(join(out, m)), `${name}: ${m} ran`);
+    for (const m of present) assert.ok(existsSync(join(out, m)), `${name}: ${m} did not run`);
+  }
 });
 
 test('C1i: a malformed local line in a hand-edited doc refuses ready, byte-identical, never skipped', () => {
@@ -77,12 +83,6 @@ test('C1i: a malformed local line in a hand-edited doc refuses ready, byte-ident
     assert.equal(read(doc), before, `${what}: doc byte-identical`);
     assert.equal(docStatus(doc), 'dispatched');
   }
-});
-
-test('C1j: local lines are found in a CRLF doc', () => {
-  const repo = gitRepo();
-  const doc = mkGateDoc({ frozen: [L('L1', 'exit 3')], head: repo.head, cwd: repo.dir, eol: '\r\n' });
-  refused(cli(['ready', doc], { session: 's' }), 'crlf');
 });
 
 // --- ready runs them ---------------------------------------------------------------
@@ -136,18 +136,41 @@ test('C3h/C3i: the saved output holds stdout and stderr, and lies outside the wo
 });
 
 test('C3j: overlapping runs keep their own saved output', async () => {
-  const fx = readyFx((out) => [`if [ -e ${out}/flip ]; then echo green-$$; sleep 2; else echo red-$$; sleep 2; exit 3; fi`]);
+  // Each gate says it started, then waits (at most 100 x 0.2 s) for the test to release it.
+  const hold = (out, who) => `touch ${out}/${who}-started; i=0; while [ ! -e ${out}/release-${who} ] && [ $i -lt 100 ]; do sleep 0.2; i=$((i+1)); done`;
+  const fx = readyFx((out) => [`if [ -e ${out}/flip ]; then echo green-$$; ${hold(out, 'second')}; else echo red-$$; ${hold(out, 'first')}; exit 3; fi`]);
   const run = () => new Promise((res) => {
     const c = spawn(NODE, [HANDOFF, 'ready', fx.doc], { env: { ...baseEnv(), CLAUDE_CODE_SESSION_ID: 's' } });
     let err = '';
     c.stderr.on('data', (d) => { err += d; });
     c.on('close', (code) => res({ code, err }));
   });
-  const a = run();
-  await new Promise((r) => setTimeout(r, 700));
-  writeFileSync(join(fx.out, 'flip'), '');
-  const b = run();
-  const [ra, rb] = await Promise.all([a, b]);
+  const started = async (who) => {
+    for (const until = Date.now() + 15000; Date.now() < until;) {
+      if (existsSync(join(fx.out, `${who}-started`))) return true;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return false;
+  };
+  const release = (who) => writeFileSync(join(fx.out, `release-${who}`), '');
+  let aClosed = false;
+  const a = run().finally(() => { aClosed = true; });
+  let b;
+  let ra;
+  try {
+    assert.ok(await started('first'), 'the first gate never started');
+    writeFileSync(join(fx.out, 'flip'), '');
+    b = run();
+    assert.ok(await started('second'), 'the second gate never started while the first was running');
+    assert.equal(aClosed, false, 'the two runs did not overlap: the first had already ended');
+    release('first');
+    ra = await a;
+  } finally {
+    release('first');
+    release('second');
+    await Promise.all([a, b]);
+  }
+  const rb = await b;
   refused(ra, 'first');
   assert.equal(rb.code, 0, `second run is green: ${rb.err}`);
   const path = /(\/[^\s]+)/.exec(ra.err.replace(/^red:/, ''))?.[1];
@@ -176,7 +199,7 @@ test('C3l: the gate runs in the doc cwd at HEAD', () => {
 });
 
 test('C3m: gates run one at a time in Frozen order', () => {
-  const step = (id) => (out) => `mkdir ${out}/lock && echo ${id} >> ${out}/order && sleep 1 && rmdir ${out}/lock`;
+  const step = (id) => (out) => `mkdir ${out}/lock && echo ${id} >> ${out}/order && sleep 0.2 && rmdir ${out}/lock`;
   const fx = readyFx((out) => [step('L1')(out), step('L2')(out)]);
   assert.equal(ready(fx).code, 0);
   assert.deepEqual(must(join(fx.out, 'order')).trim().split('\n'), ['L1', 'L2']);
@@ -408,8 +431,8 @@ test('C18: ready runs every gate and names every red one, each with its saved pa
   for (const p of paths) assert.ok(existsSync(p), `saved output ${p}`);
 });
 
-test('C11: the timeout knob is read by the runner only: a line cannot set it and a bad value falls back', () => {
-  const fx = readyFx(['sleep 2; exit 0']);
+test('C11: a non-numeric timeout knob falls back to the default timeout', () => {
+  const fx = readyFx(['sleep 0.2; exit 0']);
   const bad = ready(fx, { env: { OFFLOAD_LOCAL_GATE_TIMEOUT_S: 'nope' } });
   assert.equal(bad.code, 0, 'a non-numeric knob falls back to the default, not to a zero timeout');
 });
@@ -429,12 +452,6 @@ test('K1: decorated, backticked, table-row, bold-list and wrong-case local lines
     assert.equal(read(doc), before, line);
     assert.ok(!existsSync(join(out, 'ran')), `${line}: no gate ran`);
   }
-});
-
-test('K1: the lines that are not near-misses still pass: a lowercase id, a mid-line mention, a criterion line', () => {
-  const repo = gitRepo();
-  const doc = mkGateDoc({ frozen: ['l11: local: make', 'see L9: local: make', 'L12: runs locally'], head: repo.head, cwd: repo.dir });
-  assert.equal(cli(['ready', doc], { session: 's' }).code, 0);
 });
 
 // K2: the old-output sweep never follows a symlinked <doc>.gates and deletes only run directories.

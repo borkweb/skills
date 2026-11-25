@@ -28,7 +28,9 @@ import { closeSync, constants, openSync, readSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // dispatch.sh's tab label. Changing it here without changing dispatch.sh makes
-// every dispatch look hand-rolled; launch_contract.test.mjs pins both.
+// every dispatch look hand-rolled. Two tests pin the label:
+// test_dispatch.mjs 'inside herdr -> creates a herdr tab labeled builder' (dispatch.sh) and
+// test_pane.mjs 'a tab still labeled builder verifies by label when the sidecar is missing' (here).
 export const BUILDER_TAB_LABEL = 'builder';
 
 // Tab lookups repeat across a board's slices; one process, one probe per tab.

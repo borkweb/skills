@@ -7,13 +7,6 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import support  # noqa: E402
 
-REAL_STORE = Path.home() / '.agent-handoffs'
-
-
-def replay_entries():
-    """Every replay* entry in the real store, recursively, with size, hash and mtime."""
-    return support.store_snapshot(REAL_STORE)
-
 
 def demo_args(root):
     """The command documented in evals/replay/README.md, minus the interpreter and script."""
@@ -26,11 +19,20 @@ class EndToEndTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix='replay-e2e-'))
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
+    def planted_store(self, store):
+        """Make a store this test owns, holding one entry a run must leave as it is; return its snapshot."""
+        store.mkdir(parents=True)
+        (store / 'replay-sentinel').write_text('sentinel\n')
+        return support.store_snapshot(store)
+
     def test_documented_demo_command_runs_both_arms_and_leaves_no_worktree(self):
-        before = replay_entries()
+        store, home = self.tmp / 'store', self.tmp / 'home'
+        home.mkdir()
+        before = self.planted_store(store)
         scratch = self.tmp / 'scratch'
         scratch.mkdir()
-        run = support.run_cli(support.RUNNER, demo_args(self.tmp), env={'TMPDIR': str(scratch)})
+        run = support.run_cli(support.RUNNER, demo_args(self.tmp),
+                              env={'TMPDIR': str(scratch), 'HOME': str(home), 'AGENT_HANDOFFS_DIR': str(store)})
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(list(scratch.glob('replay-*')), [], 'no trial clone dir is left behind')
         out = self.tmp / 'out'
@@ -41,7 +43,7 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(sorted(arms), ['current', 'revised'])
         listing = support.git(self.tmp / 'fx' / 'repo', 'worktree', 'list', '--porcelain')
         self.assertEqual(listing.count('worktree '), 1)
-        self.assertEqual(replay_entries(), before)
+        self.assertEqual(support.store_snapshot(store), before)
 
     def test_readme_records_the_same_command(self):
         readme = (support.HERE / 'README.md').read_text()
@@ -49,15 +51,14 @@ class EndToEndTests(unittest.TestCase):
         self.assertIn('--fake --trials 2 --current-ref 94bdb26', readme)
 
     def test_with_home_in_a_temp_dir_and_no_store_variable_it_writes_only_there(self):
-        before = replay_entries()
         home = self.tmp / 'home'
-        home.mkdir()
+        before = self.planted_store(home / '.agent-handoffs')
         run = support.run_cli(support.RUNNER, ['--demo', home / 'fx', '--fake', '--trials', '2', '--current-ref',
                                                support.BASE_REF, '--output', home / 'out'],
                               env={'AGENT_HANDOFFS_DIR': None, 'HOME': str(home), 'TMPDIR': str(home)})
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertTrue((home / 'out' / 'summary.json').is_file())
-        self.assertEqual(replay_entries(), before)
+        self.assertEqual(support.store_snapshot(home / '.agent-handoffs'), before)
 
 
 if __name__ == '__main__':

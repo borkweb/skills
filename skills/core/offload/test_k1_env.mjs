@@ -119,29 +119,38 @@ const rowDir = ([, , make, asFile]) => {
   return d;
 };
 
-const HARNESSES = ['claude', 'codex', 'opencode', 'custom'];
+const rowNamed = (name) => ROWS.find((r) => r[0] === name);
 
-for (const harness of HARNESSES) {
-  test(`C12/C14: headless ${harness} builder env follows the liveness table and keeps the user's auth`, () => {
-    for (const row of ROWS) {
-      const [name, live] = row;
-      const dir = rowDir(row);
-      const { env, parentPath, handoff } = dispatchHeadless(harness, dir);
-      const label = `${harness} / ${name}`;
-      if (live) {
-        assert.equal(env.get('BORK_RUN_DIR'), dir, `${label}: BORK_RUN_DIR kept`);
-        assert.equal(env.get('BORK_RUN_ID'), 'hostile-run', `${label}: BORK_RUN_ID travels with it`);
-      } else {
-        assert.equal(env.has('BORK_RUN_DIR'), false, `${label}: BORK_RUN_DIR dropped`);
-        assert.equal(env.has('BORK_RUN_ID'), false, `${label}: BORK_RUN_ID dropped`);
-      }
-      assert.equal(env.has('CLAUDE_CODE_SESSION_ID'), false, `${label}: no Claude session id`);
-      assert.equal(env.has('CODEX_SESSION_ID'), false, `${label}: no Codex session id`);
-      assert.equal(env.get('OFFLOAD_SESSION_ID'), SID, label);
-      assert.equal(env.get('OFFLOAD_HANDOFF'), handoff, label);
-      assert.equal(env.get('OPENAI_API_KEY'), AUTH, `${label}: the builder exception keeps the user's auth`);
-      assert.equal(env.get('PATH'), parentPath, `${label}: PATH unchanged`);
-    }
+// One headless dispatch of `harness` with the row's run pointer, and every env assert on it.
+function checkHeadlessRow(harness, row) {
+  const [name, live] = row;
+  const dir = rowDir(row);
+  const { env, parentPath, handoff } = dispatchHeadless(harness, dir);
+  const label = `${harness} / ${name}`;
+  if (live) {
+    assert.equal(env.get('BORK_RUN_DIR'), dir, `${label}: BORK_RUN_DIR kept`);
+    assert.equal(env.get('BORK_RUN_ID'), 'hostile-run', `${label}: BORK_RUN_ID travels with it`);
+  } else {
+    assert.equal(env.has('BORK_RUN_DIR'), false, `${label}: BORK_RUN_DIR dropped`);
+    assert.equal(env.has('BORK_RUN_ID'), false, `${label}: BORK_RUN_ID dropped`);
+  }
+  assert.equal(env.has('CLAUDE_CODE_SESSION_ID'), false, `${label}: no Claude session id`);
+  assert.equal(env.has('CODEX_SESSION_ID'), false, `${label}: no Codex session id`);
+  assert.equal(env.get('OFFLOAD_SESSION_ID'), SID, label);
+  assert.equal(env.get('OFFLOAD_HANDOFF'), handoff, label);
+  assert.equal(env.get('OPENAI_API_KEY'), AUTH, `${label}: the builder exception keeps the user's auth`);
+  assert.equal(env.get('PATH'), parentPath, `${label}: PATH unchanged`);
+}
+
+// The liveness predicate is shared (run-env.sh), so one harness runs the whole table.
+test(`C12/C14: headless claude builder env follows the liveness table and keeps the user's auth`, () => {
+  for (const row of ROWS) checkHeadlessRow('claude', row);
+});
+
+// Every other run_headless branch carries its own unset, scrub call and OFFLOAD_* assignments.
+for (const harness of ['codex', 'opencode', 'custom']) {
+  test(`C12/C14: headless ${harness} builder env keeps a live run pointer, drops a dead one, drops session ids and keeps the user's auth`, () => {
+    for (const name of ['running', 'done']) checkHeadlessRow(harness, rowNamed(name));
   });
 }
 
@@ -262,8 +271,9 @@ function stopHookChoosesEnvDir(envDir) {
   return needsMeLedger !== '' || runningLedger === '';
 }
 
-test('C14b: for every truth-table row the builder env agrees with the Stop hook’s envRunDir', () => {
-  for (const row of ROWS) {
+// test_stop_hook.mjs covers the done, failed, missing, regular-file and needs-me rows of envRunDir.
+test('C14b: on the rows test_stop_hook lacks, the builder env agrees with the Stop hook envRunDir', () => {
+  for (const row of ['running', 'blocked', 'directory with no run.json', 'unreadable run.json'].map(rowNamed)) {
     const [name, , make, asFile] = row;
     // the Stop hook only counts a complete schema-1 record as needs-me, so each row writes one
     const full = (d) => { if (make) { make(d); const f = join(d, 'run.json'); try { const j = JSON.parse(readFileSync(f, 'utf8')); writeFileSync(f, JSON.stringify({ ...RUN_FIELDS(j.state), ...j })); } catch { /* missing or unreadable stays so */ } } };
@@ -290,7 +300,7 @@ test('C15a: harness.mjs exports QUOTA_ENV_PASS with the names quota-axi needs, a
   assert.equal(readdirSync(BOX).length, before, 'importing wrote nothing');
 });
 
-const quotaRun = () => {
+const runQuotaSelect = () => {
   const s = stubs();
   writeFileSync(join(s.dir, 'quota-axi'), `#!/usr/bin/env bash\nenv > '${s.dump}'\necho '{"providers":[]}'\n`);
   chmodSync(join(s.dir, 'quota-axi'), 0o755);
@@ -305,6 +315,9 @@ const quotaRun = () => {
   assert.equal(r.status, 0, r.stderr);
   return { parent, child: readDump(s.dump), out: JSON.parse(r.stdout), stderr: r.stderr };
 };
+// C15b-e read one `select` run. Lazy, so each of them also passes when run alone.
+let quota;
+const quotaRun = () => (quota ??= runQuotaSelect());
 
 test('C15b: the quota-axi stub runs under the allowlist and no "unavailable" note appears', () => {
   const { out, stderr } = quotaRun();

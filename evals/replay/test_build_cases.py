@@ -7,8 +7,11 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_cases  # noqa: E402
+import caselib  # noqa: E402
 import fixture  # noqa: E402
 import support  # noqa: E402
 
@@ -91,35 +94,32 @@ class BuilderCase(unittest.TestCase):
 
 
 class ExtractionTests(BuilderCase):
-    def test_named_tag_is_found_in_every_real_spelling(self):
+    def test_named_ids_in_every_real_spelling_in_process(self):
         table = [('DO NOT LAND r1 named C41: B1 redirect host too long', ['C41']),
                  ('LAND WITH CAUTION (named C2)', ['C2']),
                  ('DO NOT LAND r1 named C5a)', ['C5a']),
-                 ('r1 fixes accepted; unnamed: replay survivors', None),
-                 ('plain verdict with no tag', None),
+                 ('r1 fixes accepted; unnamed: replay survivors', []),
+                 ('plain verdict with no tag', []),
                  ('DO NOT LAND r1 named C10: x', ['C10']),
-                 ('DO NOT LAND r1 named CP-01: x', None)]
+                 ('DO NOT LAND r1 named CP-01: x', []),
+                 ('r1 unnamed C7: replay survivors', [])]  # `unnamed` is not the tag, even before an ID
         for verdict, expected in table:
             with self.subTest(verdict=verdict):
-                self.setUp()
-                self.add_slice(1, verdict)
-                self.write_ledger()
-                self.full_source()
-                run, out = self.build()
-                self.assertEqual(run.returncode, 0, run.stderr)
-                cases = self.cases(out)
-                if expected is None:
-                    self.assertEqual(cases, [])
-                    self.assertEqual(self.counts(run)[0], 0)
-                else:
-                    self.assertEqual(json.loads(cases[0].read_text())['missed_ids'], expected)
+                self.assertEqual(build_cases.named_ids(verdict), expected)
 
     def test_candidate_is_found_in_the_on_disk_ledger_not_via_a_json_report_command(self):
         self.add_slice(1, 'DO NOT LAND r1 named C3: x')
+        # a verdict that names no criterion is not a candidate: it is neither counted nor built
+        self.add_slice(2, 'r1 fixes accepted; unnamed: replay survivors')
+        self.add_slice(3, 'plain verdict with no tag')
+        self.add_slice(4, 'DO NOT LAND r1 named CP-01: x')
         self.write_ledger()
         self.full_source()
         run, out = self.build()
+        self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(self.counts(run)[0], 1)
+        (path,) = self.cases(out)
+        self.assertEqual(json.loads(path.read_text())['missed_ids'], ['C3'])
 
 
 class SkipTests(BuilderCase):
@@ -317,6 +317,13 @@ class SafetyTests(BuilderCase):
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual((home / '.agent-handoffs' / 'replay-cases').stat().st_mode & 0o777, 0o700)
 
+    def test_store_dir_follows_the_variable_then_home(self):
+        named, home = self.tmp / 'named', self.tmp / 'home'
+        with patch.dict(os.environ, {'AGENT_HANDOFFS_DIR': str(named), 'HOME': str(home)}):
+            self.assertEqual(caselib.store_dir(), named)
+            del os.environ['AGENT_HANDOFFS_DIR']
+            self.assertEqual(caselib.store_dir(), home / '.agent-handoffs')
+
     def test_existing_group_readable_dir_is_tightened_before_writing(self):
         self.add_slice(1, 'DO NOT LAND r1 named C3: x')
         self.write_ledger()
@@ -350,15 +357,16 @@ class SafetyTests(BuilderCase):
         self.assertIn('case file exists', run.stdout)
 
     def test_the_test_suite_leaves_the_real_store_alone(self):
-        real = Path.home() / '.agent-handoffs' / 'replay-cases'
-        self.assertEqual(os.environ.get('AGENT_HANDOFFS_DIR') != str(real.parent), True)
-        before = sorted(p.name for p in real.glob('*')) if real.exists() else None
+        home = self.tmp / 'sentinel-home'  # stands in for the user's home: with the variable set, no store appears there
+        home.mkdir()
         self.add_slice(1, 'DO NOT LAND r1 named C3: x')
         self.write_ledger()
         self.full_source()
-        self.build()
-        after = sorted(p.name for p in real.glob('*')) if real.exists() else None
-        self.assertEqual(before, after)
+        run = support.run_cli(support.BUILDER, ['--ledgers', self.store / 'offload'],  # no --out: the default
+                              env={'AGENT_HANDOFFS_DIR': str(self.store), 'HOME': str(home)})
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(len(self.cases(self.store / 'replay-cases')), 1)
+        self.assertFalse((home / '.agent-handoffs').exists())
 
 
 if __name__ == '__main__':

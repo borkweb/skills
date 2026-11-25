@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert';
+import test from 'node:test';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MB = join(HERE, 'mailbox.mjs');
@@ -17,10 +18,18 @@ const run = (...args) =>
     encoding: 'utf8',
   });
 
-let failed = 0;
-const check = (name, fn) => {
-  try { fn(); console.log(`ok   - ${name}`); }
-  catch (e) { failed = 1; console.log(`FAIL - ${name}\n       ${e.message}`); }
+// Some checks build on earlier mailbox calls. A step runs once and keeps its
+// result or error; a test calls the steps it needs, so it also passes when run
+// alone.
+const once = (step) => {
+  let ran;
+  return () => {
+    if (!ran) {
+      try { ran = { value: step() }; } catch (error) { ran = { error }; }
+    }
+    if (ran.error) throw ran.error;
+    return ran.value;
+  };
 };
 
 const handoff = (path, o = {}) => {
@@ -31,59 +40,119 @@ const handoff = (path, o = {}) => {
 const CWD = '/tmp/project-a';
 
 // --- write ---
-const src = join(BOX, 'src.md'); handoff(src);
-const stored = run('write', src, CWD).trim();
-check('write prints a stored path', () => assert.ok(existsSync(stored)));
-check('write removes the source file', () => assert.ok(!existsSync(src)));
+const src = join(BOX, 'src.md');
+const written = once(() => {
+  handoff(src);
+  return run('write', src, CWD).trim();
+});
+test('write prints a stored path', () => {
+  const stored = written();
+  assert.ok(existsSync(stored));
+});
+test('write removes the source file', () => {
+  written();
+  assert.ok(!existsSync(src));
+});
 
 // --- single reinit ---
-const out = run('reinit', CWD);
-check('reinit single emits the handoff body', () => assert.match(out, /Do the thing\./));
-check('reinit single emits a consume token', () => assert.match(out, /CONSUME_TOKEN=/));
+const singleReinit = once(() => {
+  written();
+  return run('reinit', CWD);
+});
+test('reinit single emits the handoff body', () => {
+  const out = singleReinit();
+  assert.match(out, /Do the thing\./);
+});
+test('reinit single emits a consume token', () => {
+  const out = singleReinit();
+  assert.match(out, /CONSUME_TOKEN=/);
+});
 
 // --- empty ---
-check('reinit with no handoffs prints NONE', () => assert.strictEqual(run('reinit', '/tmp/project-zzz').trim(), 'NONE'));
+test('reinit with no handoffs prints NONE', () => assert.strictEqual(run('reinit', '/tmp/project-zzz').trim(), 'NONE'));
 
 // --- menu (two handoffs, same cwd) ---
 const CWD2 = '/tmp/project-b';
-const s1 = join(BOX, 's1.md'); handoff(s1); run('write', s1, CWD2);
-const s2 = join(BOX, 's2.md'); handoff(s2, { title: 'Second task', goal: 'Write the spec', branch: 'feat/second', body: 'Write the spec.' });
-const p2 = run('write', s2, CWD2).trim();
-const menu = run('reinit', CWD2);
-check('menu shows first title', () => assert.match(menu, /Sample work/));
-check('menu shows second title', () => assert.match(menu, /Second task/));
-check('menu is numbered', () => assert.match(menu, /\[1\]/));
-check('menu starts with MENU', () => assert.match(menu, /^MENU/));
-check('menu withholds body', () => assert.ok(!menu.includes('Write the spec.')));
+const twoHandoffs = once(() => {
+  const s1 = join(BOX, 's1.md'); handoff(s1); run('write', s1, CWD2);
+  const s2 = join(BOX, 's2.md'); handoff(s2, { title: 'Second task', goal: 'Write the spec', branch: 'feat/second', body: 'Write the spec.' });
+  const p2 = run('write', s2, CWD2).trim();
+  return { p2, menu: run('reinit', CWD2) };
+});
+test('menu shows first title', () => {
+  const { menu } = twoHandoffs();
+  assert.match(menu, /Sample work/);
+});
+test('menu shows second title', () => {
+  const { menu } = twoHandoffs();
+  assert.match(menu, /Second task/);
+});
+test('menu is numbered', () => {
+  const { menu } = twoHandoffs();
+  assert.match(menu, /\[1\]/);
+});
+test('menu starts with MENU', () => {
+  const { menu } = twoHandoffs();
+  assert.match(menu, /^MENU/);
+});
+test('menu withholds body', () => {
+  const { menu } = twoHandoffs();
+  assert.ok(!menu.includes('Write the spec.'));
+});
 
 // --- show / consume by token ---
-const tok2 = p2.replace(/.*--/, '').replace(/\.md$/, '');
-check('show emits chosen body', () => assert.match(run('show', tok2, CWD2), /Write the spec\./));
-run('consume', tok2, CWD2);
-check('after consuming one, the other auto-loads', () => assert.match(run('reinit', CWD2), /Do the thing\./));
+const shown = once(() => {
+  const tok2 = twoHandoffs().p2.replace(/.*--/, '').replace(/\.md$/, '');
+  assert.match(run('show', tok2, CWD2), /Write the spec\./);
+  return tok2;
+});
+test('show emits chosen body', () => { shown(); });
+test('after consuming one, the other auto-loads', () => {
+  run('consume', shown(), CWD2);
+  assert.match(run('reinit', CWD2), /Do the thing\./);
+});
 
 // --- TTL prune ---
 const CWD3 = '/tmp/project-c';
-const s3 = join(BOX, 's3.md'); handoff(s3); const p3 = run('write', s3, CWD3).trim();
-const old = new Date('2020-01-01T00:00:00Z'); utimesSync(p3, old, old);
-check('stale handoff is pruned, mailbox reads empty', () => assert.strictEqual(run('reinit', CWD3).trim(), 'NONE'));
-check('stale handoff file is deleted', () => assert.ok(!existsSync(p3)));
-const s4 = join(BOX, 's4.md'); handoff(s4); run('write', s4, CWD3);
-check('fresh handoff survives prune', () => assert.match(run('reinit', CWD3), /Do the thing\./));
+const stalePruned = once(() => {
+  const s3 = join(BOX, 's3.md'); handoff(s3); const p3 = run('write', s3, CWD3).trim();
+  const old = new Date('2020-01-01T00:00:00Z'); utimesSync(p3, old, old);
+  assert.strictEqual(run('reinit', CWD3).trim(), 'NONE');
+  return p3;
+});
+test('stale handoff is pruned, mailbox reads empty', () => { stalePruned(); });
+test('stale handoff file is deleted', () => {
+  const p3 = stalePruned();
+  assert.ok(!existsSync(p3));
+});
+test('fresh handoff survives prune', () => {
+  stalePruned();
+  const s4 = join(BOX, 's4.md'); handoff(s4); run('write', s4, CWD3);
+  assert.match(run('reinit', CWD3), /Do the thing\./);
+});
 
 // --- default cwd fallback (omit cwd arg -> process.cwd()) ---
-const sDef = join(BOX, 'sDef.md'); handoff(sDef, { body: 'Default cwd body.' });
-run('write', sDef);            // no cwd -> child process.cwd()
-const defOut = run('reinit');  // no cwd -> same default cwd
-check('default cwd: write+reinit round-trips without explicit cwd', () => assert.match(defOut, /Default cwd body\./));
+test('default cwd: write+reinit round-trips without explicit cwd', () => {
+  const sDef = join(BOX, 'sDef.md'); handoff(sDef, { body: 'Default cwd body.' });
+  run('write', sDef);            // no cwd -> child process.cwd()
+  const defOut = run('reinit');  // no cwd -> same default cwd
+  assert.match(defOut, /Default cwd body\./);
+});
 
 // --- prune subcommand (global, age-based) ---
 const CWD4 = '/tmp/project-d';
-const sOld = join(BOX, 'sOld.md'); handoff(sOld); const pOld = run('write', sOld, CWD4).trim();
-const oldDate = new Date('2020-01-01T00:00:00Z'); utimesSync(pOld, oldDate, oldDate);
-const sNew = join(BOX, 'sNew.md'); handoff(sNew); const pNew = run('write', sNew, CWD4).trim();
-run('prune');
-check('prune subcommand deletes stale files', () => assert.ok(!existsSync(pOld)));
-check('prune subcommand keeps fresh files', () => assert.ok(existsSync(pNew)));
-
-process.exit(failed);
+const pruneRan = once(() => {
+  const sOld = join(BOX, 'sOld.md'); handoff(sOld); const pOld = run('write', sOld, CWD4).trim();
+  const oldDate = new Date('2020-01-01T00:00:00Z'); utimesSync(pOld, oldDate, oldDate);
+  const sNew = join(BOX, 'sNew.md'); handoff(sNew); const pNew = run('write', sNew, CWD4).trim();
+  run('prune');
+  return { pOld, pNew };
+});
+test('prune subcommand deletes stale files', () => {
+  const { pOld } = pruneRan();
+  assert.ok(!existsSync(pOld));
+});
+test('prune subcommand keeps fresh files', () => {
+  const { pNew } = pruneRan();
+  assert.ok(existsSync(pNew));
+});
